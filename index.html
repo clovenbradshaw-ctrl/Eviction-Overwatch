@@ -471,6 +471,43 @@
 // PASSWORD GATE
 // ══════════════════════════════════════════════════════════
 const PASSWORD_HASH = "04406d560e538ea7e8b0c4e3061953003cf4039d116f9056503c13f39bee6a98";
+// Google Maps API key, encrypted with AES-256-GCM keyed from the password hash
+const GMAPS_ENC = "391cbcbb4bb4e9ebf5014ab2179105c57f3fae18b58808f59547d553f6aadd7176da772bb4db3591f60173ac8aec5eb01b542220a405b425f9f338ad6df97fa25a8875229fcb8843efc89e217d84bd687821c0";
+let _gmapsKey = null; // decrypted at login
+
+function hexToBytes(hex) {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) bytes[i / 2] = parseInt(hex.substr(i, 2), 16);
+  return bytes;
+}
+
+async function decryptGmapsKey(passwordHash) {
+  try {
+    const blob = hexToBytes(GMAPS_ENC);
+    const salt = blob.slice(0, 16);
+    const iv = blob.slice(16, 28);
+    const authTag = blob.slice(28, 44);
+    const ciphertext = blob.slice(44);
+    // Combine ciphertext + authTag for WebCrypto (it expects them concatenated)
+    const combined = new Uint8Array(ciphertext.length + authTag.length);
+    combined.set(ciphertext);
+    combined.set(authTag, ciphertext.length);
+    // Derive AES key from password hash using PBKDF2
+    const keyMaterial = await crypto.subtle.importKey("raw", new TextEncoder().encode(passwordHash), "PBKDF2", false, ["deriveKey"]);
+    const aesKey = await crypto.subtle.deriveKey(
+      { name: "PBKDF2", salt: salt, iterations: 100000, hash: "SHA-256" },
+      keyMaterial,
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["decrypt"]
+    );
+    const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv: iv }, aesKey, combined);
+    return new TextDecoder().decode(decrypted);
+  } catch (e) {
+    console.warn("Failed to decrypt Google Maps key:", e);
+    return null;
+  }
+}
 
 async function hashInput(str) {
   const data = new TextEncoder().encode(str);
@@ -485,6 +522,8 @@ async function checkPassword() {
     sessionStorage.setItem("eo_auth", "1");
     document.getElementById("loginOverlay").style.display = "none";
     document.getElementById("mainShell").style.display = "";
+    // Decrypt the Google Maps API key in the background
+    _gmapsKey = await decryptGmapsKey(hashed);
   } else {
     document.getElementById("loginError").textContent = "Incorrect password. Please try again.";
     document.getElementById("loginPassword").value = "";
@@ -496,6 +535,8 @@ async function checkPassword() {
 if (sessionStorage.getItem("eo_auth") === "1") {
   document.getElementById("loginOverlay").style.display = "none";
   document.getElementById("mainShell").style.display = "";
+  // Decrypt Google Maps key using the stored password hash
+  decryptGmapsKey(PASSWORD_HASH).then(k => { _gmapsKey = k; });
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1381,7 +1422,7 @@ const GEOCODE_DELAY = 1100;   // Nominatim asks for 1 req/sec — stay just abov
 const DISTRICT_DELAY = 200;   // Nashville GIS is fast, no strict rate limit
 
 let enrichRunning = false;
-let enrichStats = { geocoded: 0, districts: 0, errors: 0, total: 0, processed: 0, skippedFailed: 0, rateLimited: 0 };
+let enrichStats = { geocoded: 0, districts: 0, errors: 0, total: 0, processed: 0, skippedFailed: 0, rateLimited: 0, googleFallbacks: 0, googleSuccesses: 0 };
 let enrichLog = [];
 let enrichPaused = false;
 // Track failed geocodes so we don't retry the same address endlessly
@@ -1447,32 +1488,71 @@ function normalizeAddressForGeocode(addr) {
 
 async function geocodeAddress(addressStr) {
   const cleaned = normalizeAddressForGeocode(addressStr);
-  const params = new URLSearchParams({
-    q: cleaned,
-    format: "json",
-    limit: "1",
-    countrycodes: "us",
-  });
-  const resp = await fetch(`${NOMINATIM_URL}?${params}`, {
-    headers: { "Accept": "application/json" }
-  });
-  if (resp.status === 429) {
-    enrichStats.rateLimited++;
-    consecutiveGeoErrors++;
-    geocodeBackoff = Math.min(geocodeBackoff * 2, GEOCODE_BACKOFF_MAX);
-    throw new Error(`Rate limited (429) — backing off to ${(geocodeBackoff/1000).toFixed(0)}s`);
+  // --- Primary: Nominatim ---
+  let nominatimFailed = false;
+  try {
+    const params = new URLSearchParams({
+      q: cleaned,
+      format: "json",
+      limit: "1",
+      countrycodes: "us",
+    });
+    const resp = await fetch(`${NOMINATIM_URL}?${params}`, {
+      headers: { "Accept": "application/json" }
+    });
+    if (resp.status === 429) {
+      enrichStats.rateLimited++;
+      consecutiveGeoErrors++;
+      geocodeBackoff = Math.min(geocodeBackoff * 2, GEOCODE_BACKOFF_MAX);
+      nominatimFailed = true;
+    } else if (!resp.ok) {
+      nominatimFailed = true;
+    } else {
+      consecutiveGeoErrors = 0;
+      geocodeBackoff = GEOCODE_DELAY;
+      const data = await resp.json();
+      if (data.length) {
+        return {
+          lat: parseFloat(data[0].lat),
+          lng: parseFloat(data[0].lon),
+          displayName: data[0].display_name || "",
+          source: "nominatim",
+        };
+      }
+      // No results from Nominatim — fall through to Google
+      nominatimFailed = true;
+    }
+  } catch (e) {
+    nominatimFailed = true;
   }
-  if (!resp.ok) throw new Error(`Nominatim ${resp.status}`);
-  // Successful response — reset backoff
-  consecutiveGeoErrors = 0;
-  geocodeBackoff = GEOCODE_DELAY;
-  const data = await resp.json();
-  if (!data.length) return null;
-  return {
-    lat: parseFloat(data[0].lat),
-    lng: parseFloat(data[0].lon),
-    displayName: data[0].display_name || "",
-  };
+
+  // --- Fallback: Google Maps Geocoding API ---
+  if (nominatimFailed && _gmapsKey) {
+    try {
+      enrichStats.googleFallbacks = (enrichStats.googleFallbacks || 0) + 1;
+      const gParams = new URLSearchParams({ address: cleaned, key: _gmapsKey });
+      const gResp = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?${gParams}`);
+      if (gResp.ok) {
+        const gData = await gResp.json();
+        if (gData.status === "OK" && gData.results && gData.results.length) {
+          const loc = gData.results[0].geometry.location;
+          enrichStats.googleSuccesses = (enrichStats.googleSuccesses || 0) + 1;
+          return {
+            lat: loc.lat,
+            lng: loc.lng,
+            displayName: gData.results[0].formatted_address || "",
+            source: "google",
+          };
+        }
+      }
+    } catch (ge) {
+      // Google also failed — fall through to return null
+    }
+  }
+
+  // Both failed
+  if (!nominatimFailed) return null; // Nominatim returned empty, no Google key
+  return null;
 }
 
 async function lookupNashvilleDistrict(lat, lng) {
@@ -1543,13 +1623,15 @@ async function enrichOneCase(c) {
         stateData.longitude = String(geo.lng);
         stateData.geocoded_address = geo.displayName;
         stateData.geocode_status = "success";
+        stateData.geocode_source = geo.source || "nominatim";
         c.lat = geo.lat;
         c.lng = geo.lng;
         c.addressFormatted = geo.displayName;
         c.geocodeStatus = "success";
         didGeocode = true;
         enrichStats.geocoded++;
-        enrichLog.push({ type: "ok", msg: `${c.docket}: geocoded → ${geo.lat.toFixed(4)}, ${geo.lng.toFixed(4)}` });
+        const srcTag = geo.source === "google" ? " [Google fallback]" : "";
+        enrichLog.push({ type: "ok", msg: `${c.docket}: geocoded → ${geo.lat.toFixed(4)}, ${geo.lng.toFixed(4)}${srcTag}` });
       } else {
         stateData.geocode_status = "no_match";
         geocodeFailedAddresses.add(addrStr);
@@ -1742,8 +1824,8 @@ function renderEnrich() {
       </span>
     </div>
     <div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6">
-      Enrichment auto-starts on page load. District lookups run fast (~5/sec). Geocoding respects Nominatim's 1 req/sec limit
-      with automatic backoff on rate limits. Failed addresses are skipped on retry.
+      Enrichment auto-starts on page load. District lookups run fast (~5/sec). Geocoding uses Nominatim (1 req/sec)
+      with Google Maps as a backup when Nominatim returns no match. Automatic backoff on rate limits. Failed addresses are skipped on retry.
     </div>
     <div class="enrich-stats">
       <div class="enrich-stat-card">
@@ -1777,6 +1859,10 @@ function renderEnrich() {
       <div class="enrich-stat-card">
         <div class="enrich-stat-val">${enrichStats.rateLimited}</div>
         <div class="enrich-stat-lbl">Rate Limited</div>
+      </div>
+      <div class="enrich-stat-card">
+        <div class="enrich-stat-val">${enrichStats.googleSuccesses || 0}/${enrichStats.googleFallbacks || 0}</div>
+        <div class="enrich-stat-lbl">Google Fallback</div>
       </div>
     </div>
   </div>`;
