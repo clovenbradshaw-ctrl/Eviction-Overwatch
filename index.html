@@ -157,18 +157,6 @@
     overflow-x: auto; white-space: pre-wrap; word-break: break-all; max-height: 400px; overflow-y: auto;
   }
 
-  .pipeline { display: flex; gap: 0; margin-bottom: 20px; flex-wrap: wrap; }
-  .pipe-step {
-    flex: 1; min-width: 90px; padding: 8px 6px; text-align: center;
-    font-size: 11px; font-weight: 600; border: 1px solid var(--border);
-    background: #f8f9fb; color: var(--muted);
-  }
-  .pipe-step:first-child { border-radius: 6px 0 0 6px; }
-  .pipe-step:last-child { border-radius: 0 6px 6px 0; }
-  .pipe-step.reached { background: #dbeafe; color: #1e40af; border-color: #93c5fd; }
-  .pipe-step.current { background: #4a6cf7; color: #fff; border-color: #4a6cf7; }
-  .pipe-step.danger  { background: #fce4ec; color: #b71c1c; border-color: #f9a8d4; }
-  .pipe-step .pipe-date { font-size: 9px; font-weight: 400; margin-top: 2px; font-family: 'JetBrains Mono', monospace; }
 
   /* ── Upload panel ── */
   .upload-zone {
@@ -809,7 +797,6 @@ function chipClass(s){return s==="PENDING"?"chip-pending":s==="CLOSED"?"chip-clo
 function opBorderClass(o){if(!o)return"";const u=o.toUpperCase();return u==="INS"?"op-ins-border":u.startsWith("UPD")?"op-upd-border":u.startsWith("DEL")?"op-del-border":"";}
 function opBadgeClass(o){if(!o)return"op-default";const u=o.toUpperCase();return u==="INS"?"op-ins":u.startsWith("UPD")?"op-upd":u.startsWith("DEL")?"op-del":"op-default";}
 function formatTS(t){if(!t)return"";try{return new Date(t).toLocaleString("en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit",second:"2-digit",hour12:true})}catch{return t;}}
-function renderPipeline(c){const stages=[{label:"Filed",reached:!!c.fileDate,date:c.fileDate},{label:"Served",reached:!!c.serviceDate||c.pleadings.some(p=>(p.description||"").includes("SERVED")),date:c.serviceDate||""},{label:"Judgment",reached:!!c.judgmentDate||c.pleadings.some(p=>(p.code||"")==="DJD"||(p.description||"").includes("JUDGMENT")),date:c.judgmentDate||""},{label:"Writ Issued",reached:!!c.writIssuedDate||c.pleadings.some(p=>(p.description||"").includes("WRIT")),date:c.writIssuedDate||"",danger:true},{label:"Executed",reached:c.evictionExecuted||c.pleadings.some(p=>(p.description||"").includes("SHERIFF PAPER")),date:c.evictionDate||"",danger:true}];let last=-1;stages.forEach((s,i)=>{if(s.reached)last=i;});return`<div class="pipeline">${stages.map((s,i)=>{let cls="pipe-step";if(s.reached&&i===last)cls+=s.danger?" danger":" current";else if(s.reached)cls+=" reached";return`<div class="${cls}" title="Based on last snapshot — may not reflect current state">${esc(s.label)}${s.date?`<div class="pipe-date">${esc(s.date)}</div>`:""}</div>`;}).join("")}</div><div class="data-age" style="margin-top:-14px;margin-bottom:14px">Pipeline stages reflect the last observed state of this case, not a live connection to court systems.</div>`;}
 const LOG_SKIP=new Set(["op","ts"]);
 function renderLogEntry(e){const f=Object.keys(e).filter(k=>!LOG_SKIP.has(k)&&e[k]!==undefined&&e[k]!==null&&e[k]!=="");return`<div class="log-entry ${opBorderClass(e.op)}"><div class="log-header"><span class="badge ${opBadgeClass(e.op)}">${esc(e.op||"STATE")}</span>${e.source?`<span class="badge op-default">${esc(e.source)}</span>`:""}${e.step?`<span class="badge op-default">${esc(e.step)}</span>`:""}<span class="log-ts">${formatTS(e.ts||e.scraped_at)}</span></div><div class="log-fields">${f.filter(k=>k!=="source"&&k!=="step").map(k=>{let v=e[k];if(typeof v==="object")v=Array.isArray(v)?`[${v.length} items]`:JSON.stringify(v).substring(0,80);if(typeof v==="boolean")v=v?"true":"false";return`<span class="log-kv"><span class="log-field-label">${esc(k)}:</span> <span class="log-field-value">${esc(String(v))}</span></span>`;}).join("")}</div></div>`;}
 
@@ -821,7 +808,7 @@ function renderDetail(c){
   const totalE=(c._rawStateData||[]).length;
   function sec(t,f){if(!f.length)return"";return`<div class="section-title">${t}</div><div class="field-grid">${f.map(f=>`<div class="field-card"><div class="field-label">${esc(f.l)}</div><div class="field-value">${esc(f.v)}</div></div>`).join("")}</div>`;}
   const scrapedNote = c.scrapedAt ? `Last observed: ${formatTS(c.scrapedAt)}` : "Observation date unknown";
-  let h=`<div class="detail"><button class="back-btn" onclick="selectedCase=null;render()"><span style="font-size:16px">←</span> Back to list</button><div class="detail-header"><h2>${esc(c.docket)}</h2><span class="badge ${statusBadgeClass(c.status)}" title="Status as of last observation — may have changed">${esc(c.status)}</span><span class="badge ${outcomeBadgeClass(c.outcome)}" title="Derived outcome — verify with court records">${esc(c.outcome)}</span><span class="data-age">${esc(scrapedNote)}</span></div><div class="snapshot-note">This case snapshot may be outdated. Statuses and dates reflect when the record was last observed, not necessarily the current state of the case.</div>${renderPipeline(c)}<div class="tabs"><button class="tab ${detailTab==="overview"?"active":""}" onclick="detailTab='overview';render()">Overview</button><button class="tab ${detailTab==="log"?"active":""}" onclick="detailTab='log';render()">Activity Log <span class="tab-count">${totalE}</span></button><button class="tab ${detailTab==="raw"?"active":""}" onclick="detailTab='raw';render()">Raw JSON</button></div>`;
+  let h=`<div class="detail"><button class="back-btn" onclick="selectedCase=null;render()"><span style="font-size:16px">←</span> Back to list</button><div class="detail-header"><h2>${esc(c.docket)}</h2><span class="badge ${statusBadgeClass(c.status)}" title="Status as of last observation — may have changed">${esc(c.status)}</span><span class="badge ${outcomeBadgeClass(c.outcome)}" title="Derived outcome — verify with court records">${esc(c.outcome)}</span><span class="data-age">${esc(scrapedNote)}</span></div><div class="snapshot-note">This case snapshot may be outdated. Statuses and dates reflect when the record was last observed, not necessarily the current state of the case.</div><div class="tabs"><button class="tab ${detailTab==="overview"?"active":""}" onclick="detailTab='overview';render()">Overview</button><button class="tab ${detailTab==="log"?"active":""}" onclick="detailTab='log';render()">Activity Log <span class="tab-count">${totalE}</span></button><button class="tab ${detailTab==="raw"?"active":""}" onclick="detailTab='raw';render()">Raw JSON</button></div>`;
   if(detailTab==="overview"){
     h+=sec("Case Info",caseF)+sec("Parties",partyF)+sec("Location",locF);
     if(tlF.length)h+=sec("Timeline & Outcome",tlF);
