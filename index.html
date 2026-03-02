@@ -365,6 +365,20 @@
   .export-btn:hover { background: #f3f5fa; border-color: var(--accent); color: var(--accent); }
   .export-btn svg { width: 13px; height: 13px; }
 
+  /* ── Enrich panel ── */
+  .enrich-panel { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 20px; }
+  .enrich-header { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+  .enrich-header h3 { font-size: 15px; font-weight: 700; }
+  .enrich-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .enrich-stat-card { background: var(--faint); border-radius: 6px; padding: 10px 14px; text-align: center; }
+  .enrich-stat-val { font-size: 18px; font-weight: 700; color: var(--ink); font-family: 'JetBrains Mono', monospace; }
+  .enrich-stat-lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; margin-top: 2px; }
+  .enrich-log { max-height: 300px; overflow-y: auto; font-family: 'JetBrains Mono', monospace; font-size: 11px; padding: 10px; background: #f8f9fb; border-radius: 6px; border: 1px solid var(--border); margin-top: 12px; }
+  .enrich-log .e-ok { color: #065f46; }
+  .enrich-log .e-err { color: #b91c1c; }
+  .enrich-log .e-skip { color: #92400e; }
+  .enrich-log .e-info { color: #1e40af; }
+
   @keyframes spin { to { transform: rotate(360deg); } }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 </style>
@@ -395,10 +409,12 @@
     <button class="top-nav-btn active" id="navExplore" onclick="switchView('explore')">Explorer</button>
     <button class="top-nav-btn" id="navActivity" onclick="switchView('activity')">Scraper Activity</button>
     <button class="top-nav-btn" id="navUpload" onclick="switchView('upload')">CSV Upload</button>
+    <button class="top-nav-btn" id="navEnrich" onclick="switchView('enrich')">Enrich Data</button>
   </div>
   <div id="exploreView"><div class="spinner-wrap"><div class="spinner"></div><span style="color:#666;font-size:13px">Loading cases…</span></div></div>
   <div id="activityView" style="display:none"></div>
   <div id="uploadView" style="display:none"></div>
+  <div id="enrichView" style="display:none"></div>
 </div>
 
 <script>
@@ -448,11 +464,14 @@ function switchView(view) {
   document.getElementById("navExplore").classList.toggle("active", view === "explore");
   document.getElementById("navActivity").classList.toggle("active", view === "activity");
   document.getElementById("navUpload").classList.toggle("active", view === "upload");
+  document.getElementById("navEnrich").classList.toggle("active", view === "enrich");
   document.getElementById("exploreView").style.display = view === "explore" ? "" : "none";
   document.getElementById("activityView").style.display = view === "activity" ? "" : "none";
   document.getElementById("uploadView").style.display = view === "upload" ? "" : "none";
+  document.getElementById("enrichView").style.display = view === "enrich" ? "" : "none";
   if (view === "upload") renderUpload();
   if (view === "activity") renderActivity();
+  if (view === "enrich") renderEnrich();
 }
 
 // ══════════════════════════════════════════════════════════
@@ -716,7 +735,7 @@ function renderUpload() {
 let allCases = [], totalFromAPI = 0;
 let search = "", statusFilter = "ALL", outcomeFilter = "ALL";
 let page = 1, selectedCase = null, detailTab = "overview";
-let sortCol = "fileDate", sortDir = "desc";
+let sortCol = "updated", sortDir = "desc";
 
 function normalizeResolved(raw) {
   function pick(...keys) { for (const k of keys) { const v = raw[k]; if (v !== undefined && v !== null && v !== "") return v; } return ""; }
@@ -768,6 +787,8 @@ function extractCase(item) {
   else if(n.status==="CLOSED"&&!n.pleadings.length&&!n.judgments.length)outcome="Closed (minimal)";
   else if(n.status==="CLOSED")outcome="Closed";
   const addr=[n.address1,n.address2,n.cityStateZip].filter(Boolean).join(", ");
+  const rawUpdated=item.updated_at||item.updated||null;
+  const updatedParsed=rawUpdated?new Date(rawUpdated):null;
   return {id:item.id,docket:item.docket_number,status:n.status||"UNKNOWN",plaintiff:n.plaintiff,defendant:n.defendant,
     attorney:n.attorney,defAttorney:n.defAttorney,defendantName:n.defendantName||"",
     address1:n.address1,address2:n.address2,cityStateZip:n.cityStateZip,addressFormatted:n.addressFormatted,
@@ -775,6 +796,7 @@ function extractCase(item) {
     geocodeStatus:n.geocodeStatus,district:n.councilDistrict,districtNum:n.councilDistrictNumber,
     councilMember:n.councilMember,fileDate:n.fileDate||item.fileDate||"",
     fileDateParsed:parseDate(n.fileDate||item.fileDate||""),
+    updated:rawUpdated,updatedParsed:updatedParsed,
     filingDate:n.filingDate,serviceDate:n.serviceDate,office:n.office,description:n.description,
     step:n.step,scrapedAt:n.scrapedAt,individualLL:n.individualLL,
     judgmentDate:n.judgmentDate,judgmentType:n.judgmentType,judgmentFor:n.judgmentFor,
@@ -785,9 +807,9 @@ function extractCase(item) {
     pleadings:n.pleadings,judgments:n.judgments,outcome,
     _log,_resolved:n,_rawResolved,_rawStateData:item.stateData};
 }
-const SORT_FN={docket:c=>c.docket,status:c=>c.status,outcome:c=>c.outcome,plaintiff:c=>c.plaintiff.toLowerCase(),defendant:c=>c.defendant.toLowerCase(),fileDate:c=>c.fileDateParsed?c.fileDateParsed.getTime():0,district:c=>c.districtNum||999};
+const SORT_FN={docket:c=>c.docket,status:c=>c.status,outcome:c=>c.outcome,plaintiff:c=>c.plaintiff.toLowerCase(),defendant:c=>c.defendant.toLowerCase(),fileDate:c=>c.fileDateParsed?c.fileDateParsed.getTime():0,district:c=>c.districtNum||999,updated:c=>c.updatedParsed?c.updatedParsed.getTime():0};
 function sortCases(a){const fn=SORT_FN[sortCol]||SORT_FN.fileDate,m=sortDir==="asc"?1:-1;return[...a].sort((a,b)=>{const va=fn(a),vb=fn(b);return va<vb?-1*m:va>vb?1*m:0;});}
-function toggleSort(c){if(sortCol===c)sortDir=sortDir==="asc"?"desc":"asc";else{sortCol=c;sortDir=c==="fileDate"?"desc":"asc";}page=1;render();}
+function toggleSort(c){if(sortCol===c)sortDir=sortDir==="asc"?"desc":"asc";else{sortCol=c;sortDir=(c==="fileDate"||c==="updated")?"desc":"asc";}page=1;render();}
 function sortArrow(c){if(sortCol!==c)return'<span class="sort-arrow">⇅</span>';return'<span class="sort-arrow">'+(sortDir==="asc"?"↑":"↓")+'</span>';}
 function getFiltered(){let o=allCases;if(statusFilter!=="ALL")o=o.filter(c=>c.status===statusFilter);if(outcomeFilter!=="ALL")o=o.filter(c=>c.outcome===outcomeFilter);if(search.trim()){const q=search.toLowerCase();o=o.filter(c=>c.docket.toLowerCase().includes(q)||c.plaintiff.toLowerCase().includes(q)||c.defendant.toLowerCase().includes(q)||c.attorney.toLowerCase().includes(q)||c.address.toLowerCase().includes(q)||c.district.toLowerCase().includes(q)||c.description.toLowerCase().includes(q)||c.councilMember.toLowerCase().includes(q)||c.defendantName.toLowerCase().includes(q));}return sortCases(o);}
 function countBy(a,k){const m={};a.forEach(c=>{const v=c[k];m[v]=(m[v]||0)+1});return Object.entries(m).sort((a,b)=>b[1]-a[1]);}
@@ -829,7 +851,7 @@ function render(){
   if(page>pageCount&&pageCount>0)page=pageCount;
   const slice=filtered.slice((page-1)*PER_PAGE,page*PER_PAGE);
   const sc=countBy(allCases,"status"),oc=countBy(allCases,"outcome");
-  const cols=[{key:"docket",label:"Docket"},{key:"status",label:"Status"},{key:"outcome",label:"Outcome"},{key:"plaintiff",label:"Plaintiff"},{key:"defendant",label:"Defendant"},{key:"fileDate",label:"Filed"},{key:"district",label:"District"}];
+  const cols=[{key:"docket",label:"Docket"},{key:"status",label:"Status"},{key:"outcome",label:"Outcome"},{key:"plaintiff",label:"Plaintiff"},{key:"defendant",label:"Defendant"},{key:"fileDate",label:"Filed"},{key:"updated",label:"Updated"},{key:"district",label:"District"}];
   const newestScrape = allCases.reduce((best, c) => { const t = c.scrapedAt ? new Date(c.scrapedAt).getTime() : 0; return t > best ? t : best; }, 0);
   const dataAgeStr = newestScrape ? formatTS(new Date(newestScrape).toISOString()) : "unknown";
   const refreshLabel = isRefreshing ? '<span class="refresh-icon" style="display:inline-block;animation:spin .8s linear infinite">&#8635;</span> Refreshing…' : '<span class="refresh-icon">&#8635;</span> Refresh';
@@ -839,7 +861,7 @@ function render(){
     <div class="match-count">${filtered.length} case${filtered.length!==1?"s":""} matched · <span class="data-age">Statuses may not reflect current court records</span></div>
     <div class="table-wrap"><table><thead><tr>${cols.map(c=>`<th class="${sortCol===c.key?"sorted":""}" onclick="toggleSort('${c.key}')">${c.label}${sortArrow(c.key)}</th>`).join("")}<th>Log</th></tr></thead><tbody>`;
   slice.forEach(c=>{const logN=(c._rawStateData||[]).length;
-    h+=`<tr onclick="selectedCase=allCases.find(x=>x.id===${c.id});detailTab='overview';render()"><td class="mono docket">${esc(c.docket)}</td><td><span class="badge ${statusBadgeClass(c.status)}">${esc(c.status)}</span></td><td><span class="badge ${outcomeBadgeClass(c.outcome)}">${esc(c.outcome)}</span></td><td class="ellip">${c.plaintiff?esc(c.plaintiff):"—"}</td><td class="ellip">${c.defendant?esc(c.defendant):"—"}</td><td class="mono dim">${c.fileDate?esc(c.fileDate):"—"}</td><td class="dim" style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.districtNum?"Dist. "+c.districtNum:"—"}</td><td class="dim" style="text-align:center">${logN>1?`<span style="background:#eef2ff;color:#4a6cf7;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600">${logN}</span>`:logN}</td></tr>`;});
+    h+=`<tr onclick="selectedCase=allCases.find(x=>x.id===${c.id});detailTab='overview';render()"><td class="mono docket">${esc(c.docket)}</td><td><span class="badge ${statusBadgeClass(c.status)}">${esc(c.status)}</span></td><td><span class="badge ${outcomeBadgeClass(c.outcome)}">${esc(c.outcome)}</span></td><td class="ellip">${c.plaintiff?esc(c.plaintiff):"—"}</td><td class="ellip">${c.defendant?esc(c.defendant):"—"}</td><td class="mono dim">${c.fileDate?esc(c.fileDate):"—"}</td><td class="mono dim" style="font-size:10px;white-space:nowrap">${c.updatedParsed?formatTS(c.updatedParsed.toISOString()):"—"}</td><td class="dim" style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.districtNum?"Dist. "+c.districtNum:"—"}</td><td class="dim" style="text-align:center">${logN>1?`<span style="background:#eef2ff;color:#4a6cf7;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600">${logN}</span>`:logN}</td></tr>`;});
   h+=`</tbody></table></div>`;
   if(pageCount>1)h+=`<div class="pager"><button ${page<=1?"disabled":""} onclick="page--;render()">← Prev</button><span>Page ${page} of ${pageCount}</span><button ${page>=pageCount?"disabled":""} onclick="page++;render()">Next →</button></div>`;
   app.innerHTML=h;
@@ -859,10 +881,10 @@ function renderTableOnly() {
   const filtered=getFiltered();const pageCount=Math.ceil(filtered.length/PER_PAGE);
   if(page>pageCount&&pageCount>0)page=pageCount;
   const slice=filtered.slice((page-1)*PER_PAGE,page*PER_PAGE);
-  const cols=[{key:"docket",label:"Docket"},{key:"status",label:"Status"},{key:"outcome",label:"Outcome"},{key:"plaintiff",label:"Plaintiff"},{key:"defendant",label:"Defendant"},{key:"fileDate",label:"Filed"},{key:"district",label:"District"}];
+  const cols=[{key:"docket",label:"Docket"},{key:"status",label:"Status"},{key:"outcome",label:"Outcome"},{key:"plaintiff",label:"Plaintiff"},{key:"defendant",label:"Defendant"},{key:"fileDate",label:"Filed"},{key:"updated",label:"Updated"},{key:"district",label:"District"}];
   let h=`<table><thead><tr>${cols.map(c=>`<th class="${sortCol===c.key?"sorted":""}" onclick="toggleSort('${c.key}')">${c.label}${sortArrow(c.key)}</th>`).join("")}<th>Log</th></tr></thead><tbody>`;
   slice.forEach(c=>{const logN=(c._rawStateData||[]).length;
-    h+=`<tr onclick="selectedCase=allCases.find(x=>x.id===${c.id});detailTab='overview';render()"><td class="mono docket">${esc(c.docket)}</td><td><span class="badge ${statusBadgeClass(c.status)}">${esc(c.status)}</span></td><td><span class="badge ${outcomeBadgeClass(c.outcome)}">${esc(c.outcome)}</span></td><td class="ellip">${c.plaintiff?esc(c.plaintiff):"—"}</td><td class="ellip">${c.defendant?esc(c.defendant):"—"}</td><td class="mono dim">${c.fileDate?esc(c.fileDate):"—"}</td><td class="dim" style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.districtNum?"Dist. "+c.districtNum:"—"}</td><td class="dim" style="text-align:center">${logN>1?`<span style="background:#eef2ff;color:#4a6cf7;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600">${logN}</span>`:logN}</td></tr>`;});
+    h+=`<tr onclick="selectedCase=allCases.find(x=>x.id===${c.id});detailTab='overview';render()"><td class="mono docket">${esc(c.docket)}</td><td><span class="badge ${statusBadgeClass(c.status)}">${esc(c.status)}</span></td><td><span class="badge ${outcomeBadgeClass(c.outcome)}">${esc(c.outcome)}</span></td><td class="ellip">${c.plaintiff?esc(c.plaintiff):"—"}</td><td class="ellip">${c.defendant?esc(c.defendant):"—"}</td><td class="mono dim">${c.fileDate?esc(c.fileDate):"—"}</td><td class="mono dim" style="font-size:10px;white-space:nowrap">${c.updatedParsed?formatTS(c.updatedParsed.toISOString()):"—"}</td><td class="dim" style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.districtNum?"Dist. "+c.districtNum:"—"}</td><td class="dim" style="text-align:center">${logN>1?`<span style="background:#eef2ff;color:#4a6cf7;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600">${logN}</span>`:logN}</td></tr>`;});
   h+=`</tbody></table>`;
   const tableWrap = document.querySelector("#exploreView .table-wrap");
   if (tableWrap) tableWrap.innerHTML = h;
@@ -906,6 +928,7 @@ function getExportRows() {
     "Case Dismissed": c.caseDismissed ? "Yes" : "",
     "Dismissal Date": c.dismissalDate || "",
     "Last Observed": c.scrapedAt ? formatTS(c.scrapedAt) : "",
+    "Last Updated": c.updatedParsed ? formatTS(c.updatedParsed.toISOString()) : "",
     "Individual Landlord": c.individualLL === true ? "Yes" : c.individualLL === false ? "No" : "",
   }));
 }
@@ -1132,9 +1155,316 @@ function renderActivity() {
   el.innerHTML = h;
 }
 
+// ══════════════════════════════════════════════════════════
+// ENRICH MODULE — background geocoding + district lookup
+// ══════════════════════════════════════════════════════════
+const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
+const NASHVILLE_DISTRICT_URL = "https://maps.nashville.gov/arcgis/rest/services/Elections/Precincts/MapServer/1/query";
+const NASHVILLE_DISTRICT_FALLBACK_URL = "https://maps.nashville.gov/arcgis/rest/services/Elections/PoliticalDistricts/MapServer/0/query";
+const ENRICH_DELAY = 3000;    // ms between enrichment attempts (gentle on APIs)
+const GEOCODE_DELAY = 1200;   // Nominatim asks for 1 req/sec
+
+let enrichRunning = false;
+let enrichStats = { geocoded: 0, districts: 0, errors: 0, total: 0, processed: 0 };
+let enrichLog = [];
+let enrichPaused = false;
+
+function getCasesNeedingGeocode() {
+  return allCases.filter(c => {
+    const hasAddress = c.address1 || c.address || c.addressFormatted;
+    const hasLatLng = c.lat && c.lng;
+    return hasAddress && !hasLatLng;
+  });
+}
+
+function getCasesNeedingDistrict() {
+  return allCases.filter(c => {
+    return c.lat && c.lng && !c.districtNum && !c.district;
+  });
+}
+
+function pickRandom(arr) {
+  if (!arr.length) return null;
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+async function geocodeAddress(addressStr) {
+  const params = new URLSearchParams({
+    q: addressStr,
+    format: "json",
+    limit: "1",
+    countrycodes: "us",
+  });
+  const resp = await fetch(`${NOMINATIM_URL}?${params}`, {
+    headers: { "Accept": "application/json" }
+  });
+  if (!resp.ok) throw new Error(`Nominatim ${resp.status}`);
+  const data = await resp.json();
+  if (!data.length) return null;
+  return {
+    lat: parseFloat(data[0].lat),
+    lng: parseFloat(data[0].lon),
+    displayName: data[0].display_name || "",
+  };
+}
+
+async function lookupNashvilleDistrict(lat, lng) {
+  const params = new URLSearchParams({
+    geometry: `${lng},${lat}`,
+    geometryType: "esriGeometryPoint",
+    inSR: "4326",
+    spatialRel: "esriSpatialRelIntersects",
+    outFields: "*",
+    f: "json",
+  });
+  // Try the representatives layer first (has council member info)
+  let resp = await fetch(`${NASHVILLE_DISTRICT_URL}?${params}`);
+  if (resp.ok) {
+    const data = await resp.json();
+    if (data.features && data.features.length > 0) {
+      const attrs = data.features[0].attributes;
+      const distName = attrs.DistrictName || attrs.DISTRICT || attrs.District || "";
+      const numMatch = distName.match(/(\d+)/);
+      return {
+        district: distName,
+        districtNumber: numMatch ? parseInt(numMatch[1]) : null,
+        councilMember: attrs.Representative || attrs.Name || [attrs.FirstName, attrs.LastName].filter(Boolean).join(" ") || "",
+      };
+    }
+  }
+  // Fallback to PoliticalDistricts layer
+  resp = await fetch(`${NASHVILLE_DISTRICT_FALLBACK_URL}?${params}`);
+  if (resp.ok) {
+    const data = await resp.json();
+    if (data.features && data.features.length > 0) {
+      const attrs = data.features[0].attributes;
+      const distName = attrs.DistrictName || attrs.DISTRICT || attrs.District || attrs.NAME || "";
+      const numMatch = distName.match(/(\d+)/);
+      return {
+        district: distName,
+        districtNumber: numMatch ? parseInt(numMatch[1]) : null,
+        councilMember: "",
+      };
+    }
+  }
+  return null;
+}
+
+async function enrichOneCase(c) {
+  const now = new Date().toISOString();
+  const stateData = { step: "client_enrich", scraped_at: now };
+  let didGeocode = false;
+  let didDistrict = false;
+
+  // Step 1: Geocode if needed
+  if (!c.lat || !c.lng) {
+    const addrStr = c.addressFormatted || c.address || [c.address1, c.cityStateZip].filter(Boolean).join(", ");
+    if (!addrStr) {
+      enrichLog.push({ type: "skip", msg: `${c.docket}: no address to geocode` });
+      return false;
+    }
+    try {
+      const geo = await geocodeAddress(addrStr);
+      if (geo) {
+        // Determine op: INS if fields didn't exist, ALT if they did
+        stateData.op = (c.lat || c.lng) ? "ALT" : "INS";
+        stateData.latitude = String(geo.lat);
+        stateData.longitude = String(geo.lng);
+        stateData.geocoded_address = geo.displayName;
+        stateData.geocode_status = "success";
+        c.lat = geo.lat;
+        c.lng = geo.lng;
+        c.addressFormatted = geo.displayName;
+        c.geocodeStatus = "success";
+        didGeocode = true;
+        enrichStats.geocoded++;
+        enrichLog.push({ type: "ok", msg: `${c.docket}: geocoded → ${geo.lat.toFixed(4)}, ${geo.lng.toFixed(4)}` });
+      } else {
+        stateData.geocode_status = "no_match";
+        enrichLog.push({ type: "err", msg: `${c.docket}: no geocode match for "${addrStr}"` });
+      }
+      await new Promise(r => setTimeout(r, GEOCODE_DELAY));
+    } catch (e) {
+      enrichLog.push({ type: "err", msg: `${c.docket}: geocode error — ${e.message}` });
+      enrichStats.errors++;
+      return false;
+    }
+  }
+
+  // Step 2: District lookup if we have coordinates
+  if (c.lat && c.lng && !c.districtNum && !c.district) {
+    try {
+      const dist = await lookupNashvilleDistrict(c.lat, c.lng);
+      if (dist) {
+        // Determine op: ALT if already had district, INS if new
+        if (!stateData.op) stateData.op = (c.district || c.districtNum) ? "ALT" : "INS";
+        stateData.council_district = dist.district;
+        if (dist.districtNumber) stateData.council_district_number = dist.districtNumber;
+        if (dist.councilMember) stateData.council_member = dist.councilMember;
+        c.district = dist.district;
+        c.districtNum = dist.districtNumber;
+        c.councilMember = dist.councilMember || c.councilMember;
+        didDistrict = true;
+        enrichStats.districts++;
+        enrichLog.push({ type: "ok", msg: `${c.docket}: district → ${dist.district}${dist.councilMember ? " (" + dist.councilMember + ")" : ""}` });
+      } else {
+        enrichLog.push({ type: "skip", msg: `${c.docket}: no district found (may be outside Nashville)` });
+      }
+    } catch (e) {
+      enrichLog.push({ type: "err", msg: `${c.docket}: district lookup error — ${e.message}` });
+      enrichStats.errors++;
+    }
+  }
+
+  // Step 3: Write back to API if we have new data
+  if (didGeocode || didDistrict) {
+    if (!stateData.op) stateData.op = "INS";
+    try {
+      await fetch(API_WRITE, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          docket_number: c.docket,
+          state_data: stateData,
+          updated_at: now,
+        }),
+      });
+      enrichLog.push({ type: "info", msg: `${c.docket}: saved to API (${stateData.op})` });
+    } catch (e) {
+      enrichLog.push({ type: "err", msg: `${c.docket}: API write error — ${e.message}` });
+      enrichStats.errors++;
+    }
+  }
+
+  enrichStats.processed++;
+  return didGeocode || didDistrict;
+}
+
+async function enrichLoop() {
+  if (enrichRunning) return;
+  enrichRunning = true;
+
+  while (enrichRunning && !enrichPaused) {
+    // Randomly pick a case needing geocode OR district
+    const needGeo = getCasesNeedingGeocode();
+    const needDist = getCasesNeedingDistrict();
+    const candidates = [...needGeo, ...needDist];
+    // Deduplicate by id
+    const seen = new Set();
+    const unique = candidates.filter(c => { if (seen.has(c.id)) return false; seen.add(c.id); return true; });
+
+    enrichStats.total = unique.length;
+
+    if (!unique.length) {
+      enrichLog.push({ type: "info", msg: "All available cases enriched. Pausing." });
+      break;
+    }
+
+    const picked = pickRandom(unique);
+    try {
+      await enrichOneCase(picked);
+    } catch (e) {
+      enrichLog.push({ type: "err", msg: `Unexpected error: ${e.message}` });
+      enrichStats.errors++;
+    }
+
+    // Update the enrich panel if visible
+    if (currentView === "enrich") renderEnrich();
+
+    // Wait before next attempt
+    await new Promise(r => setTimeout(r, ENRICH_DELAY));
+  }
+
+  enrichRunning = false;
+  if (currentView === "enrich") renderEnrich();
+}
+
+function stopEnrich() {
+  enrichPaused = true;
+  enrichRunning = false;
+}
+
+function startEnrich() {
+  enrichPaused = false;
+  enrichLoop();
+}
+
+function renderEnrich() {
+  const el = document.getElementById("enrichView");
+  const needGeo = getCasesNeedingGeocode();
+  const needDist = getCasesNeedingDistrict();
+  // Deduplicate
+  const seen = new Set();
+  const allNeed = [...needGeo, ...needDist].filter(c => { if (seen.has(c.id)) return false; seen.add(c.id); return true; });
+
+  const statusDot = enrichRunning ? "active" : enrichPaused ? "idle" : "idle";
+  const statusLabel = enrichRunning ? "Running" : enrichPaused ? "Paused" : "Idle";
+  const statusClass = enrichRunning ? "active" : "idle";
+
+  let h = `<div class="enrich-panel">
+    <div class="enrich-header">
+      <h3>Background Data Enrichment</h3>
+      <span class="scraper-status-dot ${statusDot}"></span>
+      <span class="scraper-status-label ${statusClass}">${esc(statusLabel)}</span>
+      <span style="margin-left:auto">
+        ${enrichRunning
+          ? `<button class="btn btn-secondary" onclick="stopEnrich()" style="font-size:12px;padding:5px 14px">Pause</button>`
+          : `<button class="btn btn-primary" onclick="startEnrich()" style="font-size:12px;padding:5px 14px" ${!allNeed.length?"disabled":""}>${allNeed.length ? "Start Enrichment" : "All Enriched"}</button>`
+        }
+      </span>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6">
+      Enrichment runs in the background, randomly selecting cases that are missing location or council district data.
+      It geocodes addresses via Nominatim and looks up Nashville Metro Council districts from the city's GIS service.
+    </div>
+    <div class="enrich-stats">
+      <div class="enrich-stat-card">
+        <div class="enrich-stat-val">${needGeo.length}</div>
+        <div class="enrich-stat-lbl">Need Geocoding</div>
+      </div>
+      <div class="enrich-stat-card">
+        <div class="enrich-stat-val">${needDist.length}</div>
+        <div class="enrich-stat-lbl">Need District</div>
+      </div>
+      <div class="enrich-stat-card">
+        <div class="enrich-stat-val">${enrichStats.geocoded}</div>
+        <div class="enrich-stat-lbl">Geocoded</div>
+      </div>
+      <div class="enrich-stat-card">
+        <div class="enrich-stat-val">${enrichStats.districts}</div>
+        <div class="enrich-stat-lbl">Districts Found</div>
+      </div>
+      <div class="enrich-stat-card">
+        <div class="enrich-stat-val">${enrichStats.processed}</div>
+        <div class="enrich-stat-lbl">Processed</div>
+      </div>
+      <div class="enrich-stat-card">
+        <div class="enrich-stat-val">${enrichStats.errors}</div>
+        <div class="enrich-stat-lbl">Errors</div>
+      </div>
+    </div>
+  </div>`;
+
+  // Log
+  if (enrichLog.length) {
+    h += `<div class="section-title">Enrichment Log</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:6px">${enrichLog.length} entries (newest first)</div>
+    <div class="enrich-log">`;
+    [...enrichLog].reverse().slice(0, 200).forEach(l => {
+      const cls = l.type === "ok" ? "e-ok" : l.type === "err" ? "e-err" : l.type === "skip" ? "e-skip" : "e-info";
+      h += `<div class="${cls}">${esc(l.msg)}</div>`;
+    });
+    h += `</div>`;
+  }
+
+  el.innerHTML = h;
+}
+
 // ── Init ──
 loadData().then(() => {
   render();
+  // Auto-start background enrichment after a short delay
+  setTimeout(() => { enrichLoop(); }, 5000);
 }).catch(err => {
   document.getElementById("exploreView").innerHTML = `<div class="error-box">Error: ${esc(err.message)}</div>`;
 });
