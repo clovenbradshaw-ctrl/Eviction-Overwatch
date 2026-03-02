@@ -1426,8 +1426,12 @@ function getCasesGeocodeFailed() {
  */
 function normalizeAddressForGeocode(addr) {
   let s = addr;
-  // Remove unit designators and their values (e.g., "APT. 233", "UNIT 618", "STE 4B", "# 12")
-  s = s.replace(/\b(APT\.?|APARTMENT|UNIT|STE\.?|SUITE|RM\.?|ROOM|BLDG\.?|BUILDING|FL\.?|FLOOR|#)\s*\.?\s*\S+/gi, "");
+  // Remove unit designators and their values (e.g., "APT. 233", "UNIT 618", "STE 4B", "LOT A-4")
+  s = s.replace(/\b(APT\.?|APARTMENT|UNIT|STE\.?|SUITE|RM\.?|ROOM|BLDG\.?|BUILDING|FL\.?|FLOOR|LOT|TRLR|TRAILER|SP\.?|SPACE)\s*\.?\s*\S+/gi, "");
+  // Handle # designator separately — \b before # never fires because # is a non-word char
+  s = s.replace(/,?\s*#\s*\S+/gi, "");
+  // Remove bare secondary unit codes like "B204" (single letter + digits, no prefix)
+  s = s.replace(/(?<=\s)[A-Z]-?\d{2,}(?=\s)/gi, "");
   // Expand common abbreviations that can trip up Nominatim
   const abbrevs = [
     [/\bRD\b/gi, "ROAD"], [/\bDR\b/gi, "DRIVE"], [/\bCT\b/gi, "COURT"],
