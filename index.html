@@ -1418,9 +1418,33 @@ function getCasesGeocodeFailed() {
   });
 }
 
+/**
+ * Normalize an address string for geocoding:
+ * - Strip unit/apt/suite/# designators (Nominatim lacks sub-address data)
+ * - Expand common street-type abbreviations
+ * - Collapse extra whitespace and trailing commas
+ */
+function normalizeAddressForGeocode(addr) {
+  let s = addr;
+  // Remove unit designators and their values (e.g., "APT. 233", "UNIT 618", "STE 4B", "# 12")
+  s = s.replace(/\b(APT\.?|APARTMENT|UNIT|STE\.?|SUITE|RM\.?|ROOM|BLDG\.?|BUILDING|FL\.?|FLOOR|#)\s*\.?\s*\S+/gi, "");
+  // Expand common abbreviations that can trip up Nominatim
+  const abbrevs = [
+    [/\bRD\b/gi, "ROAD"], [/\bDR\b/gi, "DRIVE"], [/\bCT\b/gi, "COURT"],
+    [/\bLN\b/gi, "LANE"], [/\bST\b/gi, "STREET"], [/\bAVE\b/gi, "AVENUE"],
+    [/\bBLVD\b/gi, "BOULEVARD"], [/\bPL\b/gi, "PLACE"], [/\bPKWY\b/gi, "PARKWAY"],
+    [/\bCIR\b/gi, "CIRCLE"], [/\bTRL\b/gi, "TRAIL"], [/\bHWY\b/gi, "HIGHWAY"],
+  ];
+  for (const [re, full] of abbrevs) s = s.replace(re, full);
+  // Clean up extra whitespace and stray commas
+  s = s.replace(/,\s*,/g, ",").replace(/\s{2,}/g, " ").trim();
+  return s;
+}
+
 async function geocodeAddress(addressStr) {
+  const cleaned = normalizeAddressForGeocode(addressStr);
   const params = new URLSearchParams({
-    q: addressStr,
+    q: cleaned,
     format: "json",
     limit: "1",
     countrycodes: "us",
