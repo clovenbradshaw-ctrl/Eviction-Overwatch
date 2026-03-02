@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nashville Eviction Cases</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --ink: #1a1a2e; --muted: #8a919e; --faint: #f0f0f5; --border: #e2e8f0;
+    --accent: #4a6cf7; --bg: #fafbfd; --card: #ffffff;
+  }
+  body { font-family: 'IBM Plex Sans', -apple-system, sans-serif; background: var(--bg); color: var(--ink); line-height: 1.5; -webkit-font-smoothing: antialiased; }
+  .shell { max-width: 1060px; margin: 0 auto; padding: 28px 20px 60px; }
+  h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.03em; }
+  .subtitle { font-size: 13px; color: var(--muted); margin-top: 4px; }
+
+  /* ── Top nav ── */
+  .top-nav { display: flex; gap: 0; margin-bottom: 24px; border-bottom: 2px solid var(--border); }
+  .top-nav-btn {
+    padding: 10px 20px; font-size: 14px; font-weight: 600; cursor: pointer;
+    color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -2px;
+    transition: color .15s, border-color .15s; background: none; border-top: none;
+    border-left: none; border-right: none; font-family: inherit;
+  }
+  .top-nav-btn:hover { color: var(--ink); }
+  .top-nav-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  .chip-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 18px 0 14px; }
+  .chip {
+    padding: 5px 12px; border-radius: 6px; font-size: 12px; font-weight: 600;
+    cursor: pointer; border: 2px solid transparent; transition: border-color .15s, transform .1s; user-select: none;
+  }
+  .chip:hover { transform: translateY(-1px); }
+  .chip.active { border-color: currentColor; }
+  .chip-pending { background: #fef3c7; color: #92400e; }
+  .chip-closed  { background: #e0e7ff; color: #3730a3; }
+  .chip-unknown { background: #f3f4f6; color: #6b7280; }
+
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+  .controls input, .controls select {
+    padding: 8px 12px; border-radius: 6px; border: 1.5px solid var(--border);
+    font-size: 13px; font-family: inherit; background: var(--card); color: var(--ink);
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .controls input:focus, .controls select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2.5px rgba(74,108,247,.12); }
+  .controls input { flex: 1; min-width: 220px; }
+  .controls select { cursor: pointer; }
+  .match-count { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  thead th {
+    text-align: left; padding: 8px; color: var(--muted); font-weight: 600;
+    font-size: 10px; text-transform: uppercase; letter-spacing: .06em; white-space: nowrap;
+    border-bottom: 2px solid var(--border); position: sticky; top: 0; background: var(--bg);
+    cursor: pointer; user-select: none; transition: color .15s;
+  }
+  thead th:hover { color: var(--ink); }
+  thead th .sort-arrow { font-size: 10px; margin-left: 3px; opacity: 0.4; }
+  thead th.sorted .sort-arrow { opacity: 1; color: var(--accent); }
+  thead th.no-sort { cursor: default; }
+  tbody tr { border-bottom: 1px solid var(--faint); cursor: pointer; transition: background .1s; }
+  tbody tr:hover { background: #f3f5fa; }
+  td { padding: 8px; }
+  td.mono { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+  td.docket { color: var(--accent); font-weight: 500; }
+  td.ellip { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  td.dim { color: #6b7280; font-size: 11px; }
+
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; letter-spacing: .03em; white-space: nowrap; }
+  .b-pending  { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
+  .b-closed   { background: #e0e7ff; color: #3730a3; border: 1px solid #a5b4fc; }
+  .b-unknown  { background: #f3f4f6; color: #6b7280; border: 1px solid #d1d5db; }
+  .b-writ       { background: #fce4ec; color: #b71c1c; }
+  .b-possession { background: #fff3e0; color: #e65100; }
+  .b-nonsuit    { background: #e8f5e9; color: #2e7d32; }
+  .b-closedout  { background: #e0e7ff; color: #3730a3; }
+  .b-minimal    { background: #f3f4f6; color: #6b7280; }
+  .b-pendingout { background: #fef3c7; color: #92400e; }
+  .b-dismissed  { background: #f3e8ff; color: #7c3aed; }
+  .b-executed   { background: #fce4ec; color: #9f1239; }
+  .op-ins { background: #dbeafe; color: #1e40af; }
+  .op-upd { background: #fef3c7; color: #92400e; }
+  .op-del { background: #fce4ec; color: #b71c1c; }
+  .op-default { background: #f3f4f6; color: #6b7280; }
+
+  .pager { display: flex; justify-content: center; align-items: center; gap: 8px; margin-top: 18px; }
+  .pager button {
+    padding: 5px 12px; border-radius: 4px; border: 1px solid var(--border); background: var(--card);
+    font-size: 12px; font-family: inherit; cursor: pointer; transition: background .1s;
+  }
+  .pager button:hover:not(:disabled) { background: #f3f5fa; }
+  .pager button:disabled { opacity: .4; cursor: default; }
+  .pager span { font-size: 12px; color: var(--muted); }
+
+  .detail { animation: fadeIn .2s ease; }
+  .back-btn {
+    background: none; border: none; cursor: pointer; color: #4a5568;
+    font-size: 13px; font-family: inherit; padding: 4px 0; margin-bottom: 16px;
+    display: flex; align-items: center; gap: 4px;
+  }
+  .back-btn:hover { color: var(--accent); }
+  .detail-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
+  .detail-header h2 { font-family: 'JetBrains Mono', monospace; font-size: 20px; }
+
+  .field-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .field-card { background: #f8f9fb; border-radius: 6px; padding: 10px 14px; }
+  .field-label { font-size: 10px; text-transform: uppercase; color: var(--muted); letter-spacing: .06em; margin-bottom: 3px; font-weight: 600; }
+  .field-value { font-size: 13px; color: var(--ink); font-weight: 500; word-break: break-word; }
+  .section-title { font-size: 14px; font-weight: 600; margin: 20px 0 10px; color: var(--ink); }
+
+  .tabs { display: flex; gap: 0; margin-bottom: 16px; border-bottom: 2px solid var(--border); }
+  .tab {
+    padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+    color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -2px;
+    transition: color .15s, border-color .15s; background: none; border-top: none;
+    border-left: none; border-right: none; font-family: inherit;
+  }
+  .tab:hover { color: var(--ink); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-count { display: inline-block; background: var(--faint); color: var(--muted); font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-left: 5px; font-weight: 600; }
+
+  .timeline { border-left: 2px solid var(--border); padding-left: 18px; margin-bottom: 24px; }
+  .tl-item { position: relative; margin-bottom: 12px; }
+  .tl-dot { position: absolute; left: -23px; top: 4px; width: 8px; height: 8px; border-radius: 50%; border: 2px solid #fff; }
+  .tl-dot.has-img { background: var(--accent); }
+  .tl-dot.no-img  { background: #cbd5e0; }
+  .tl-date { font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
+  .tl-desc { font-size: 13px; font-weight: 500; color: var(--ink); }
+  .tl-detail { font-size: 11px; color: #6b7280; }
+
+  .j-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .j-table th { text-align: left; padding: 6px 8px; color: var(--muted); font-weight: 600; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; border-bottom: 2px solid var(--border); }
+  .j-table td { padding: 6px 8px; border-bottom: 1px solid var(--faint); }
+  .j-table .jmono { font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+  .j-table .jdim { color: #6b7280; }
+
+  .log-entry { padding: 10px 14px; border-radius: 6px; background: #f8f9fb; margin-bottom: 8px; border-left: 3px solid var(--border); transition: background .1s; }
+  .log-entry:hover { background: #f0f2f7; }
+  .log-entry.op-ins-border { border-left-color: #3b82f6; }
+  .log-entry.op-upd-border { border-left-color: #f59e0b; }
+  .log-entry.op-del-border { border-left-color: #ef4444; }
+  .log-header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+  .log-ts { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted); }
+  .log-fields { font-size: 12px; color: #4a5568; line-height: 1.7; }
+  .log-field-label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
+  .log-field-value { font-weight: 500; }
+  .log-kv { display: inline-flex; gap: 4px; margin-right: 12px; margin-top: 2px; }
+
+  .raw-block {
+    padding: 10px; background: #1a1a2e; color: #a5b4fc; border-radius: 6px;
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    overflow-x: auto; white-space: pre-wrap; word-break: break-all; max-height: 400px; overflow-y: auto;
+  }
+
+  .pipeline { display: flex; gap: 0; margin-bottom: 20px; flex-wrap: wrap; }
+  .pipe-step {
+    flex: 1; min-width: 90px; padding: 8px 6px; text-align: center;
+    font-size: 11px; font-weight: 600; border: 1px solid var(--border);
+    background: #f8f9fb; color: var(--muted);
+  }
+  .pipe-step:first-child { border-radius: 6px 0 0 6px; }
+  .pipe-step:last-child { border-radius: 0 6px 6px 0; }
+  .pipe-step.reached { background: #dbeafe; color: #1e40af; border-color: #93c5fd; }
+  .pipe-step.current { background: #4a6cf7; color: #fff; border-color: #4a6cf7; }
+  .pipe-step.danger  { background: #fce4ec; color: #b71c1c; border-color: #f9a8d4; }
+  .pipe-step .pipe-date { font-size: 9px; font-weight: 400; margin-top: 2px; font-family: 'JetBrains Mono', monospace; }
+
+  /* ── Upload panel ── */
+  .upload-zone {
+    border: 2px dashed var(--border); border-radius: 10px; padding: 40px 20px;
+    text-align: center; cursor: pointer; transition: border-color .2s, background .2s;
+    margin-bottom: 20px; background: var(--card);
+  }
+  .upload-zone:hover, .upload-zone.dragover { border-color: var(--accent); background: #eef2ff; }
+  .upload-zone input[type="file"] { display: none; }
+  .upload-zone .uz-icon { font-size: 36px; margin-bottom: 8px; }
+  .upload-zone .uz-label { font-size: 14px; font-weight: 600; color: var(--ink); }
+  .upload-zone .uz-hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+  .upload-preview { margin-bottom: 20px; }
+  .upload-preview table { font-size: 12px; }
+  .upload-preview tbody tr { cursor: default; }
+  .upload-preview tbody tr:hover { background: #f8f9fb; }
+
+  .upload-actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 20px; }
+  .btn {
+    padding: 8px 20px; border-radius: 6px; font-size: 13px; font-weight: 600;
+    font-family: inherit; cursor: pointer; transition: background .15s, transform .1s; border: none;
+  }
+  .btn:hover { transform: translateY(-1px); }
+  .btn:disabled { opacity: .5; cursor: default; transform: none; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover:not(:disabled) { background: #3b5de7; }
+  .btn-secondary { background: var(--faint); color: var(--ink); border: 1px solid var(--border); }
+  .btn-secondary:hover:not(:disabled) { background: #e2e8f0; }
+  .btn-danger { background: #fce4ec; color: #b71c1c; }
+
+  .progress-bar-wrap {
+    width: 100%; height: 8px; background: var(--faint); border-radius: 4px;
+    overflow: hidden; margin: 12px 0;
+  }
+  .progress-bar {
+    height: 100%; background: var(--accent); border-radius: 4px;
+    transition: width .2s ease;
+  }
+
+  .upload-log {
+    max-height: 200px; overflow-y: auto; font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; padding: 10px; background: #f8f9fb; border-radius: 6px;
+    border: 1px solid var(--border); margin-top: 12px;
+  }
+  .upload-log .log-ok { color: #065f46; }
+  .upload-log .log-err { color: #b91c1c; }
+  .upload-log .log-skip { color: #92400e; }
+
+  .upload-stats {
+    display: flex; gap: 16px; flex-wrap: wrap; margin: 12px 0;
+  }
+  .upload-stat {
+    padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 600;
+  }
+
+  .row-status-ok { color: #065f46; }
+  .row-status-err { color: #b91c1c; }
+  .row-status-skip { color: #92400e; }
+  .row-status-pending { color: var(--muted); }
+
+  .spinner-wrap { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 50px 0; }
+  .spinner { width: 22px; height: 22px; border: 2.5px solid #ddd; border-top: 2.5px solid var(--ink); border-radius: 50%; animation: spin .8s linear infinite; }
+  .error-box { padding: 20px; background: #fef2f2; border-radius: 8px; color: #b91c1c; font-size: 13px; }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+</head>
+<body>
+<div class="shell">
+  <h1>Nashville Eviction Cases</h1>
+  <div class="top-nav">
+    <button class="top-nav-btn active" id="navExplore" onclick="switchView('explore')">Explorer</button>
+    <button class="top-nav-btn" id="navUpload" onclick="switchView('upload')">CSV Upload</button>
+  </div>
+  <div id="exploreView"><div class="spinner-wrap"><div class="spinner"></div><span style="color:#666;font-size:13px">Loading cases…</span></div></div>
+  <div id="uploadView" style="display:none"></div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════════
+// SHARED
+// ══════════════════════════════════════════════════════════
+const API_READ = "https://xvkq-pq7i-idtl.n7d.xano.io/api:3CsVHkZK/eviction_current_state";
+const API_WRITE = "https://xvkq-pq7i-idtl.n7d.xano.io/api:3CsVHkZK/update_eviction_state";
+const PER_PAGE = 50;
+let currentView = "explore";
+
+function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+
+function switchView(view) {
+  currentView = view;
+  document.getElementById("navExplore").classList.toggle("active", view === "explore");
+  document.getElementById("navUpload").classList.toggle("active", view === "upload");
+  document.getElementById("exploreView").style.display = view === "explore" ? "" : "none";
+  document.getElementById("uploadView").style.display = view === "upload" ? "" : "none";
+  if (view === "upload") renderUpload();
+}
+
+// ══════════════════════════════════════════════════════════
+// UPLOAD MODULE
+// ══════════════════════════════════════════════════════════
+let uploadRows = [];       // parsed CSV rows
+let uploadResults = [];    // per-row status: null | 'ok' | 'error' | 'skip'
+let uploadRunning = false;
+let uploadDone = 0;
+let uploadErrors = 0;
+let uploadSkipped = 0;
+let uploadLogLines = [];
+
+// CSV column → state_data field mapping
+// CSV: Office, Docket #, Status, File Date, Description, Plaintiff, Pltf. Attorney, Defendant, Def. Attorney
+function csvRowToPayload(row) {
+  const docket = (row["Docket #"] || row["Docket_#"] || row["docket_number"] || row["Docket"] || "").trim();
+  if (!docket) return null;
+
+  const fileDateRaw = (row["File Date"] || row["File_Date"] || row["file_date"] || "").trim();
+  // Convert MM/DD/YYYY → YYYY-MM-DD for the file_date param
+  let fileDateISO = null;
+  const dm = fileDateRaw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (dm) fileDateISO = `${dm[3]}-${dm[1].padStart(2,"0")}-${dm[2].padStart(2,"0")}`;
+
+  const now = new Date().toISOString();
+
+  const stateData = {
+    step: "csv_upload",
+    office:        (row["Office"] || "").trim(),
+    status:        (row["Status"] || "").trim().toUpperCase(),
+    case_type:     (row["Description"] || "").trim(),
+    plaintiff:     (row["Plaintiff"] || row["Plaintiff_Petitioner"] || "").trim(),
+    defendant:     (row["Defendant"] || row["Defendant_Respondent"] || "").trim(),
+    attorney:      (row["Pltf. Attorney"] || row["Pltf_Attorney"] || row["Attorney"] || "").trim(),
+    def_attorney:  (row["Def. Attorney"] || row["Def_Attorney"] || "").trim(),
+    file_date_raw: fileDateRaw,
+    scraped_at:    now,
+    individual_ll: false,
+  };
+
+  // Strip empty strings
+  Object.keys(stateData).forEach(k => { if (stateData[k] === "") delete stateData[k]; });
+
+  return {
+    docket_number: docket,
+    state_data: stateData,
+    updated_at: now,
+    file_date: fileDateISO,
+  };
+}
+
+async function postOneRow(payload) {
+  const resp = await fetch(API_WRITE, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`${resp.status}: ${text.substring(0, 200)}`);
+  }
+  return await resp.json();
+}
+
+async function runUpload() {
+  if (uploadRunning || !uploadRows.length) return;
+  uploadRunning = true;
+  uploadDone = 0; uploadErrors = 0; uploadSkipped = 0;
+  uploadResults = new Array(uploadRows.length).fill(null);
+  uploadLogLines = [];
+  renderUpload();
+
+  const THROTTLE = 200; // ms between requests
+
+  for (let i = 0; i < uploadRows.length; i++) {
+    const row = uploadRows[i];
+    const payload = csvRowToPayload(row);
+
+    if (!payload) {
+      uploadResults[i] = "skip";
+      uploadSkipped++;
+      uploadLogLines.push({ type: "skip", msg: `Row ${i+1}: skipped (no docket number)` });
+      uploadDone++;
+      renderUpload();
+      continue;
+    }
+
+    try {
+      await postOneRow(payload);
+      uploadResults[i] = "ok";
+      uploadLogLines.push({ type: "ok", msg: `Row ${i+1}: ✓ ${payload.docket_number}` });
+    } catch (e) {
+      uploadResults[i] = "error";
+      uploadErrors++;
+      uploadLogLines.push({ type: "err", msg: `Row ${i+1}: ✗ ${payload.docket_number} — ${e.message}` });
+    }
+
+    uploadDone++;
+    // Render every 5 rows or on last
+    if (i % 5 === 0 || i === uploadRows.length - 1) renderUpload();
+    if (i < uploadRows.length - 1) await new Promise(r => setTimeout(r, THROTTLE));
+  }
+
+  uploadRunning = false;
+  renderUpload();
+}
+
+function clearUpload() {
+  uploadRows = [];
+  uploadResults = [];
+  uploadDone = 0; uploadErrors = 0; uploadSkipped = 0;
+  uploadLogLines = [];
+  uploadRunning = false;
+  renderUpload();
+}
+
+function handleCSVFile(file) {
+  if (!file) return;
+  Papa.parse(file, {
+    header: true,
+    skipEmptyLines: true,
+    complete: function(results) {
+      uploadRows = results.data.filter(r => {
+        // At least one non-empty field
+        return Object.values(r).some(v => v && v.trim());
+      });
+      uploadResults = new Array(uploadRows.length).fill(null);
+      uploadDone = 0; uploadErrors = 0; uploadSkipped = 0;
+      uploadLogLines = [];
+      renderUpload();
+    },
+    error: function(err) {
+      alert("CSV parse error: " + err.message);
+    }
+  });
+}
+
+function renderUpload() {
+  const el = document.getElementById("uploadView");
+  let h = "";
+
+  if (!uploadRows.length) {
+    // Drop zone
+    h += `<div class="upload-zone" id="dropZone" onclick="document.getElementById('csvInput').click()">
+      <input type="file" id="csvInput" accept=".csv,.tsv,.txt">
+      <div class="uz-icon">📄</div>
+      <div class="uz-label">Drop a CSV file here or click to browse</div>
+      <div class="uz-hint">Expected columns: Office, Docket #, Status, File Date, Description, Plaintiff, Pltf. Attorney, Defendant, Def. Attorney</div>
+    </div>
+    <div style="background:#f8f9fb;border-radius:8px;padding:16px;font-size:12px;color:var(--muted)">
+      <strong style="color:var(--ink)">How it works:</strong> Each CSV row is posted to the Xano API as a new state_data entry appended to the case's stateData array.
+      If the docket number already exists, the new data is appended. If it's new, a record is created.
+      <br><br>
+      <strong style="color:var(--ink)">Field mapping:</strong><br>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:11px">
+      Office → office &nbsp;|&nbsp; Status → status &nbsp;|&nbsp; Description → case_type<br>
+      Plaintiff → plaintiff &nbsp;|&nbsp; Pltf. Attorney → attorney<br>
+      Defendant → defendant &nbsp;|&nbsp; Def. Attorney → def_attorney<br>
+      File Date → file_date_raw + file_date (ISO) &nbsp;|&nbsp; step = "csv_upload"
+      </span>
+    </div>`;
+
+    el.innerHTML = h;
+
+    // Wire up events
+    const zone = document.getElementById("dropZone");
+    const input = document.getElementById("csvInput");
+    input.addEventListener("change", e => { if (e.target.files[0]) handleCSVFile(e.target.files[0]); });
+    zone.addEventListener("dragover", e => { e.preventDefault(); zone.classList.add("dragover"); });
+    zone.addEventListener("dragleave", () => { zone.classList.remove("dragover"); });
+    zone.addEventListener("drop", e => { e.preventDefault(); zone.classList.remove("dragover"); if (e.dataTransfer.files[0]) handleCSVFile(e.dataTransfer.files[0]); });
+    return;
+  }
+
+  // Preview + controls
+  const allDone = uploadDone === uploadRows.length && !uploadRunning && uploadDone > 0;
+  const pct = uploadRows.length ? Math.round((uploadDone / uploadRows.length) * 100) : 0;
+
+  h += `<div class="upload-actions">
+    <button class="btn btn-primary" onclick="runUpload()" ${uploadRunning || allDone ? "disabled" : ""}>
+      ${uploadRunning ? "Uploading…" : allDone ? "Done" : `Upload ${uploadRows.length} rows`}
+    </button>
+    <button class="btn btn-secondary" onclick="clearUpload()" ${uploadRunning ? "disabled" : ""}>Clear</button>
+    <span style="font-size:13px;color:var(--muted)">${uploadRows.length} rows parsed from CSV</span>
+  </div>`;
+
+  if (uploadRunning || allDone) {
+    h += `<div class="progress-bar-wrap"><div class="progress-bar" style="width:${pct}%"></div></div>`;
+    h += `<div class="upload-stats">
+      <div class="upload-stat" style="background:#d1fae5;color:#065f46">${uploadDone - uploadErrors - uploadSkipped} OK</div>
+      ${uploadErrors ? `<div class="upload-stat" style="background:#fce4ec;color:#b71c1c">${uploadErrors} Errors</div>` : ""}
+      ${uploadSkipped ? `<div class="upload-stat" style="background:#fef3c7;color:#92400e">${uploadSkipped} Skipped</div>` : ""}
+      <div class="upload-stat" style="background:var(--faint);color:var(--muted)">${uploadDone}/${uploadRows.length}</div>
+    </div>`;
+  }
+
+  // Preview table (show first 100)
+  const previewRows = uploadRows.slice(0, 100);
+  h += `<div class="upload-preview"><div class="table-wrap"><table>
+    <thead><tr>
+      <th class="no-sort">#</th><th class="no-sort">Status</th>
+      <th class="no-sort">Docket</th><th class="no-sort">Case Status</th>
+      <th class="no-sort">File Date</th><th class="no-sort">Description</th>
+      <th class="no-sort">Plaintiff</th><th class="no-sort">Defendant</th>
+      <th class="no-sort">Attorney</th>
+    </tr></thead><tbody>`;
+
+  previewRows.forEach((row, i) => {
+    const rs = uploadResults[i];
+    const rsClass = rs === "ok" ? "row-status-ok" : rs === "error" ? "row-status-err" : rs === "skip" ? "row-status-skip" : "row-status-pending";
+    const rsLabel = rs === "ok" ? "✓" : rs === "error" ? "✗" : rs === "skip" ? "skip" : "—";
+    const docket = (row["Docket #"] || row["Docket_#"] || row["docket_number"] || row["Docket"] || "").trim();
+
+    h += `<tr>
+      <td class="dim">${i+1}</td>
+      <td class="${rsClass}" style="font-weight:600;font-size:12px">${rsLabel}</td>
+      <td class="mono docket">${esc(docket)}</td>
+      <td><span class="badge ${(row["Status"]||"").trim().toUpperCase()==="PENDING"?"b-pending":"b-closed"}">${esc((row["Status"]||"").trim())}</span></td>
+      <td class="mono dim">${esc((row["File Date"]||row["File_Date"]||"").trim())}</td>
+      <td class="ellip dim">${esc((row["Description"]||"").trim())}</td>
+      <td class="ellip">${esc((row["Plaintiff"]||row["Plaintiff_Petitioner"]||"").trim()||"—")}</td>
+      <td class="ellip">${esc((row["Defendant"]||row["Defendant_Respondent"]||"").trim()||"—")}</td>
+      <td class="ellip dim">${esc((row["Pltf. Attorney"]||row["Attorney"]||"").trim()||"—")}</td>
+    </tr>`;
+  });
+
+  h += `</tbody></table></div>`;
+  if (uploadRows.length > 100) h += `<div style="font-size:12px;color:var(--muted);margin-top:6px">Showing first 100 of ${uploadRows.length} rows</div>`;
+  h += `</div>`;
+
+  // Upload log
+  if (uploadLogLines.length) {
+    h += `<div class="upload-log">`;
+    // Show newest first
+    [...uploadLogLines].reverse().forEach(l => {
+      h += `<div class="log-${l.type}">${esc(l.msg)}</div>`;
+    });
+    h += `</div>`;
+  }
+
+  el.innerHTML = h;
+}
+
+
+// ══════════════════════════════════════════════════════════
+// EXPLORE MODULE (same as before)
+// ══════════════════════════════════════════════════════════
+let allCases = [], totalFromAPI = 0;
+let search = "", statusFilter = "ALL", outcomeFilter = "ALL";
+let page = 1, selectedCase = null, detailTab = "overview";
+let sortCol = "fileDate", sortDir = "desc";
+
+function normalizeResolved(raw) {
+  function pick(...keys) { for (const k of keys) { const v = raw[k]; if (v !== undefined && v !== null && v !== "") return v; } return ""; }
+  function pickBool(...keys) { for (const k of keys) { if (raw[k] === true || raw[k] === false) return raw[k]; } return null; }
+  return {
+    status: pick("Status","status").toUpperCase(), office: pick("Office","office"),
+    description: pick("Description","case_type"), step: pick("step","source"), scrapedAt: pick("scraped_at"),
+    plaintiff: pick("Plaintiff_Petitioner","plaintiff"), defendant: pick("Defendant_Respondent","defendant"),
+    attorney: pick("Attorney","attorney"), defAttorney: pick("def_attorney"), defendantName: pick("defendant_name"),
+    fileDate: pick("File_Date","file_date_raw"), filingDate: pick("filing_date"), serviceDate: pick("service_date"),
+    address1: pick("Address_1","address1"), address2: pick("Address_2","address2"), cityStateZip: pick("city_state_zip"),
+    addressFormatted: pick("address_formatted","geocoded_address","formatted_address"),
+    latitude: pick("latitude"), longitude: pick("longitude"), geocodeStatus: pick("geocode_status"),
+    councilDistrict: pick("council_district"), councilDistrictNumber: raw.council_district_number||null,
+    councilMember: pick("council_member","council_representative"),
+    individualLL: pickBool("individual_ll"),
+    judgmentDate: pick("judgment_date"), judgmentType: pick("judgment_type"), judgmentFor: pick("judgment_for"),
+    writIssuedDate: pick("writ_issued_date"), writServedDate: pick("writ_served_date"),
+    evictionExecuted: pickBool("eviction_executed"), evictionDate: pick("eviction_date"), evictionMethod: pick("eviction_method"),
+    caseDismissed: pickBool("case_dismissed"), dismissalDate: pick("dismissal_date"),
+    pleadings: raw.pleadings||[], judgments: raw.judgments||[], docketNumber: pick("Docket_Number","docket_number"),
+  };
+}
+function resolveState(stateData) {
+  if (!stateData||!stateData.length) return {_log:[],_rawResolved:{},_resolved:normalizeResolved({})};
+  const log=[]; let rr={};
+  for (const e of stateData) {
+    if (e.op||e.step) { log.push(e); const f=Object.assign({},e); delete f.op; delete f.ts; delete f.source; delete f.step; Object.keys(f).forEach(k=>{if(f[k]!==undefined&&f[k]!==null&&f[k]!=="")rr[k]=f[k];}); }
+    else { Object.keys(e).forEach(k=>{if(e[k]!==undefined&&e[k]!==null)rr[k]=e[k];}); }
+  }
+  for (const e of stateData) { if(e.step&&!rr.step)rr.step=e.step; if(e.source&&!rr.source)rr.source=e.source; if(e.scraped_at&&!rr.scraped_at)rr.scraped_at=e.scraped_at; }
+  return {_log:log,_rawResolved:rr,_resolved:normalizeResolved(rr)};
+}
+function parseDate(str) { if(!str)return null; let m=str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); if(m)return new Date(+m[3],+m[1]-1,+m[2]); m=str.match(/^(\d{4})-(\d{2})-(\d{2})$/); if(m)return new Date(+m[1],+m[2]-1,+m[3]); return null; }
+function extractCase(item) {
+  const {_log,_rawResolved,_resolved:n}=resolveState(item.stateData);
+  const jT=(n.judgments||[]).map(j=>j.judgment_type).filter(Boolean);
+  const pD=(n.pleadings||[]).map(p=>p.description||"").filter(Boolean);
+  const allD=[...jT,...pD];
+  const amts=allD.map(t=>{const m=t.match(/[\d,]+\.\d{2}/);return m?parseFloat(m[0].replace(/,/g,"")):null}).filter(Boolean);
+  const hasWrit=allD.some(t=>t.includes("WRIT OF RESTITUTION")||t.includes("WRIT OF POSSESSION"));
+  const hasPoss=allD.some(t=>t.includes("POSSESSION")&&!t.includes("NON-SUIT"));
+  const hasNS=allD.some(t=>t.includes("NON-SUIT"));
+  const hasDis=n.caseDismissed===true||allD.some(t=>t.includes("DISMISSED")||t.includes("DISMISS"));
+  const hasExe=n.evictionExecuted===true||allD.some(t=>t.includes("SHERIFF PAPER RETURN")||t.includes("DC SHERIFF PAPER RETURN"));
+  let outcome="Pending";
+  if(hasExe)outcome="Executed";else if(hasWrit)outcome="Writ Issued";else if(hasDis)outcome="Dismissed";
+  else if(hasPoss)outcome="Possession";else if(hasNS)outcome="Non-Suit";
+  else if(n.status==="CLOSED"&&!n.pleadings.length&&!n.judgments.length)outcome="Closed (minimal)";
+  else if(n.status==="CLOSED")outcome="Closed";
+  const addr=[n.address1,n.address2,n.cityStateZip].filter(Boolean).join(", ");
+  return {id:item.id,docket:item.docket_number,status:n.status||"UNKNOWN",plaintiff:n.plaintiff,defendant:n.defendant,
+    attorney:n.attorney,defAttorney:n.defAttorney,defendantName:n.defendantName||"",
+    address1:n.address1,address2:n.address2,cityStateZip:n.cityStateZip,addressFormatted:n.addressFormatted,
+    address:addr,lat:n.latitude?parseFloat(n.latitude):null,lng:n.longitude?parseFloat(n.longitude):null,
+    geocodeStatus:n.geocodeStatus,district:n.councilDistrict,districtNum:n.councilDistrictNumber,
+    councilMember:n.councilMember,fileDate:n.fileDate||item.fileDate||"",
+    fileDateParsed:parseDate(n.fileDate||item.fileDate||""),
+    filingDate:n.filingDate,serviceDate:n.serviceDate,office:n.office,description:n.description,
+    step:n.step,scrapedAt:n.scrapedAt,individualLL:n.individualLL,
+    judgmentDate:n.judgmentDate,judgmentType:n.judgmentType,judgmentFor:n.judgmentFor,
+    judgmentAmount:amts.length?Math.max(...amts):null,
+    writIssuedDate:n.writIssuedDate,writServedDate:n.writServedDate,
+    evictionExecuted:n.evictionExecuted||false,evictionDate:n.evictionDate,evictionMethod:n.evictionMethod,
+    caseDismissed:n.caseDismissed||false,dismissalDate:n.dismissalDate,
+    pleadings:n.pleadings,judgments:n.judgments,outcome,
+    _log,_resolved:n,_rawResolved,_rawStateData:item.stateData};
+}
+const SORT_FN={docket:c=>c.docket,status:c=>c.status,outcome:c=>c.outcome,plaintiff:c=>c.plaintiff.toLowerCase(),defendant:c=>c.defendant.toLowerCase(),fileDate:c=>c.fileDateParsed?c.fileDateParsed.getTime():0,district:c=>c.districtNum||999};
+function sortCases(a){const fn=SORT_FN[sortCol]||SORT_FN.fileDate,m=sortDir==="asc"?1:-1;return[...a].sort((a,b)=>{const va=fn(a),vb=fn(b);return va<vb?-1*m:va>vb?1*m:0;});}
+function toggleSort(c){if(sortCol===c)sortDir=sortDir==="asc"?"desc":"asc";else{sortCol=c;sortDir=c==="fileDate"?"desc":"asc";}page=1;render();}
+function sortArrow(c){if(sortCol!==c)return'<span class="sort-arrow">⇅</span>';return'<span class="sort-arrow">'+(sortDir==="asc"?"↑":"↓")+'</span>';}
+function getFiltered(){let o=allCases;if(statusFilter!=="ALL")o=o.filter(c=>c.status===statusFilter);if(outcomeFilter!=="ALL")o=o.filter(c=>c.outcome===outcomeFilter);if(search.trim()){const q=search.toLowerCase();o=o.filter(c=>c.docket.toLowerCase().includes(q)||c.plaintiff.toLowerCase().includes(q)||c.defendant.toLowerCase().includes(q)||c.attorney.toLowerCase().includes(q)||c.address.toLowerCase().includes(q)||c.district.toLowerCase().includes(q)||c.description.toLowerCase().includes(q)||c.councilMember.toLowerCase().includes(q)||c.defendantName.toLowerCase().includes(q));}return sortCases(o);}
+function countBy(a,k){const m={};a.forEach(c=>{const v=c[k];m[v]=(m[v]||0)+1});return Object.entries(m).sort((a,b)=>b[1]-a[1]);}
+function statusBadgeClass(s){return s==="PENDING"?"b-pending":s==="CLOSED"?"b-closed":"b-unknown";}
+function outcomeBadgeClass(o){return{"Writ Issued":"b-writ",Possession:"b-possession","Non-Suit":"b-nonsuit",Closed:"b-closedout","Closed (minimal)":"b-minimal",Pending:"b-pendingout",Dismissed:"b-dismissed",Executed:"b-executed"}[o]||"b-minimal";}
+function chipClass(s){return s==="PENDING"?"chip-pending":s==="CLOSED"?"chip-closed":"chip-unknown";}
+function opBorderClass(o){if(!o)return"";const u=o.toUpperCase();return u==="INS"?"op-ins-border":u.startsWith("UPD")?"op-upd-border":u.startsWith("DEL")?"op-del-border":"";}
+function opBadgeClass(o){if(!o)return"op-default";const u=o.toUpperCase();return u==="INS"?"op-ins":u.startsWith("UPD")?"op-upd":u.startsWith("DEL")?"op-del":"op-default";}
+function formatTS(t){if(!t)return"";try{return new Date(t).toLocaleString("en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit",second:"2-digit",hour12:true})}catch{return t;}}
+function renderPipeline(c){const stages=[{label:"Filed",reached:!!c.fileDate,date:c.fileDate},{label:"Served",reached:!!c.serviceDate||c.pleadings.some(p=>(p.description||"").includes("SERVED")),date:c.serviceDate||""},{label:"Judgment",reached:!!c.judgmentDate||c.pleadings.some(p=>(p.code||"")==="DJD"||(p.description||"").includes("JUDGMENT")),date:c.judgmentDate||""},{label:"Writ Issued",reached:!!c.writIssuedDate||c.pleadings.some(p=>(p.description||"").includes("WRIT")),date:c.writIssuedDate||"",danger:true},{label:"Executed",reached:c.evictionExecuted||c.pleadings.some(p=>(p.description||"").includes("SHERIFF PAPER")),date:c.evictionDate||"",danger:true}];let last=-1;stages.forEach((s,i)=>{if(s.reached)last=i;});return`<div class="pipeline">${stages.map((s,i)=>{let cls="pipe-step";if(s.reached&&i===last)cls+=s.danger?" danger":" current";else if(s.reached)cls+=" reached";return`<div class="${cls}">${esc(s.label)}${s.date?`<div class="pipe-date">${esc(s.date)}</div>`:""}</div>`;}).join("")}</div>`;}
+const LOG_SKIP=new Set(["op","ts"]);
+function renderLogEntry(e){const f=Object.keys(e).filter(k=>!LOG_SKIP.has(k)&&e[k]!==undefined&&e[k]!==null&&e[k]!=="");return`<div class="log-entry ${opBorderClass(e.op)}"><div class="log-header"><span class="badge ${opBadgeClass(e.op)}">${esc(e.op||"STATE")}</span>${e.source?`<span class="badge op-default">${esc(e.source)}</span>`:""}${e.step?`<span class="badge op-default">${esc(e.step)}</span>`:""}<span class="log-ts">${formatTS(e.ts||e.scraped_at)}</span></div><div class="log-fields">${f.filter(k=>k!=="source"&&k!=="step").map(k=>{let v=e[k];if(typeof v==="object")v=Array.isArray(v)?`[${v.length} items]`:JSON.stringify(v).substring(0,80);if(typeof v==="boolean")v=v?"true":"false";return`<span class="log-kv"><span class="log-field-label">${esc(k)}:</span> <span class="log-field-value">${esc(String(v))}</span></span>`;}).join("")}</div></div>`;}
+
+function renderDetail(c){
+  const caseF=[{l:"Docket",v:c.docket},{l:"Office",v:c.office},{l:"Case Type",v:c.description},{l:"File Date",v:c.fileDate},{l:"Individual Landlord",v:c.individualLL===true?"Yes":c.individualLL===false?"No":""},{l:"Scrape Step",v:c.step},{l:"Scraped At",v:c.scrapedAt?formatTS(c.scrapedAt):""}].filter(f=>f.v);
+  const partyF=[{l:"Plaintiff / Petitioner",v:c.plaintiff},{l:"Defendant / Respondent",v:c.defendant},{l:"Defendant Name",v:c.defendantName},{l:"Plaintiff Attorney",v:c.attorney},{l:"Defendant Attorney",v:c.defAttorney}].filter(f=>f.v);
+  const locF=[{l:"Address",v:c.addressFormatted||c.address},{l:"Raw Address",v:!c.addressFormatted&&c.address?"":c.address},{l:"Council District",v:c.district?`${c.district}${c.councilMember?" — "+c.councilMember:""}`:""},{l:"Coordinates",v:c.lat&&c.lng?`${c.lat}, ${c.lng}`:""},{l:"Geocode Status",v:c.geocodeStatus}].filter(f=>f.v);
+  const tlF=[{l:"Filing Date",v:c.filingDate},{l:"Service Date",v:c.serviceDate},{l:"Judgment Date",v:c.judgmentDate},{l:"Judgment Type",v:c.judgmentType},{l:"Judgment For",v:c.judgmentFor},{l:"Judgment Amount",v:c.judgmentAmount?"$"+c.judgmentAmount.toLocaleString():""},{l:"Writ Issued",v:c.writIssuedDate},{l:"Writ Served",v:c.writServedDate},{l:"Eviction Executed",v:c.evictionExecuted?"Yes":c.evictionDate?"Yes":""},{l:"Eviction Date",v:c.evictionDate},{l:"Eviction Method",v:c.evictionMethod},{l:"Case Dismissed",v:c.caseDismissed?"Yes":""},{l:"Dismissal Date",v:c.dismissalDate}].filter(f=>f.v);
+  const totalE=(c._rawStateData||[]).length;
+  function sec(t,f){if(!f.length)return"";return`<div class="section-title">${t}</div><div class="field-grid">${f.map(f=>`<div class="field-card"><div class="field-label">${esc(f.l)}</div><div class="field-value">${esc(f.v)}</div></div>`).join("")}</div>`;}
+  let h=`<div class="detail"><button class="back-btn" onclick="selectedCase=null;render()"><span style="font-size:16px">←</span> Back to list</button><div class="detail-header"><h2>${esc(c.docket)}</h2><span class="badge ${statusBadgeClass(c.status)}">${esc(c.status)}</span><span class="badge ${outcomeBadgeClass(c.outcome)}">${esc(c.outcome)}</span></div>${renderPipeline(c)}<div class="tabs"><button class="tab ${detailTab==="overview"?"active":""}" onclick="detailTab='overview';render()">Overview</button><button class="tab ${detailTab==="log"?"active":""}" onclick="detailTab='log';render()">Activity Log <span class="tab-count">${totalE}</span></button><button class="tab ${detailTab==="raw"?"active":""}" onclick="detailTab='raw';render()">Raw JSON</button></div>`;
+  if(detailTab==="overview"){
+    h+=sec("Case Info",caseF)+sec("Parties",partyF)+sec("Location",locF);
+    if(tlF.length)h+=sec("Timeline & Outcome",tlF);
+    if(c.pleadings.length){h+=`<div class="section-title">Pleadings</div><div class="timeline">`;c.pleadings.forEach(p=>{h+=`<div class="tl-item"><div class="tl-dot ${p.has_image?"has-img":"no-img"}"></div><div class="tl-date">${esc(p.date||"")}</div><div class="tl-desc">${esc(p.description||p.code||"")}</div>${p.detail?`<div class="tl-detail">${esc(p.detail)}</div>`:""}</div>`;});h+=`</div>`;}
+    if(c.judgments.length){h+=`<div class="section-title">Judgments</div><div style="overflow-x:auto"><table class="j-table"><thead><tr><th>Date</th><th>Type</th><th>Party</th><th>Detail</th></tr></thead><tbody>`;c.judgments.forEach(j=>{h+=`<tr><td class="jmono">${esc(j.judgment_date||"")}</td><td style="font-weight:500">${esc(j.judgment_type||"")}</td><td class="jdim">${esc(j.party_name||"")}</td><td class="jdim">${esc(j.judge||"")}</td></tr>`;});h+=`</tbody></table></div>`;}
+    if(!c.pleadings.length&&!c.judgments.length&&caseF.length<=3)h+=`<div style="padding:20px;background:#f8f9fb;border-radius:8px;color:var(--muted);font-size:13px;text-align:center;margin-top:12px">Limited resolved data — check the <strong>Activity Log</strong> tab.</div>`;
+  }
+  if(detailTab==="log"){const entries=c._rawStateData||[];if(!entries.length)h+=`<div style="padding:20px;color:var(--muted);font-size:13px;text-align:center">No entries.</div>`;else{h+=`<div style="margin-bottom:8px;font-size:12px;color:var(--muted)">${entries.length} entries (newest first)</div>`;[...entries].reverse().forEach(entry=>{if(entry.op||entry.step){h+=renderLogEntry(entry);}else{h+=`<div class="log-entry" style="border-left-color:#10b981"><div class="log-header"><span class="badge" style="background:#d1fae5;color:#065f46">RESOLVED STATE</span></div><div class="log-fields">`;Object.keys(entry).filter(k=>entry[k]!==undefined&&entry[k]!==null&&entry[k]!=="").forEach(k=>{let v=entry[k];if(typeof v==="object")v=Array.isArray(v)?`[${v.length} items]`:JSON.stringify(v).substring(0,100);if(typeof v==="boolean")v=v?"true":"false";h+=`<span class="log-kv"><span class="log-field-label">${esc(k)}:</span> <span class="log-field-value">${esc(String(v))}</span></span>`;});h+=`</div></div>`;}});}}
+  if(detailTab==="raw")h+=`<div class="raw-block">${esc(JSON.stringify({id:c.id,docket_number:c.docket,stateData:c._rawStateData,fileDate:c.fileDate},null,2))}</div>`;
+  return h+`</div>`;
+}
+
+function render(){
+  const app=document.getElementById("exploreView");
+  if(selectedCase){app.innerHTML=renderDetail(selectedCase);return;}
+  const filtered=getFiltered();const pageCount=Math.ceil(filtered.length/PER_PAGE);
+  if(page>pageCount&&pageCount>0)page=pageCount;
+  const slice=filtered.slice((page-1)*PER_PAGE,page*PER_PAGE);
+  const sc=countBy(allCases,"status"),oc=countBy(allCases,"outcome");
+  const cols=[{key:"docket",label:"Docket"},{key:"status",label:"Status"},{key:"outcome",label:"Outcome"},{key:"plaintiff",label:"Plaintiff"},{key:"defendant",label:"Defendant"},{key:"fileDate",label:"Filed"},{key:"district",label:"District"}];
+  let h=`<p class="subtitle">${totalFromAPI.toLocaleString()} total cases · Showing first ${allCases.length.toLocaleString()}</p>
+    <div class="chip-row">${sc.map(([s,n])=>`<div class="chip ${chipClass(s)} ${statusFilter===s?"active":""}" onclick="statusFilter=statusFilter==='${s}'?'ALL':'${s}';page=1;render()">${esc(s)}: ${n}</div>`).join("")}</div>
+    <div class="controls"><input type="text" id="searchBox" placeholder="Search docket, plaintiff, defendant, address, attorney, council member…" value="${esc(search)}"><select id="outcomeSelect"><option value="ALL">All outcomes</option>${oc.map(([o,n])=>`<option value="${esc(o)}" ${outcomeFilter===o?"selected":""}>${esc(o)} (${n})</option>`).join("")}</select></div>
+    <div class="match-count">${filtered.length} case${filtered.length!==1?"s":""} matched</div>
+    <div class="table-wrap"><table><thead><tr>${cols.map(c=>`<th class="${sortCol===c.key?"sorted":""}" onclick="toggleSort('${c.key}')">${c.label}${sortArrow(c.key)}</th>`).join("")}<th>Log</th></tr></thead><tbody>`;
+  slice.forEach(c=>{const logN=(c._rawStateData||[]).length;
+    h+=`<tr onclick="selectedCase=allCases.find(x=>x.id===${c.id});detailTab='overview';render()"><td class="mono docket">${esc(c.docket)}</td><td><span class="badge ${statusBadgeClass(c.status)}">${esc(c.status)}</span></td><td><span class="badge ${outcomeBadgeClass(c.outcome)}">${esc(c.outcome)}</span></td><td class="ellip">${c.plaintiff?esc(c.plaintiff):"—"}</td><td class="ellip">${c.defendant?esc(c.defendant):"—"}</td><td class="mono dim">${c.fileDate?esc(c.fileDate):"—"}</td><td class="dim" style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.districtNum?"Dist. "+c.districtNum:"—"}</td><td class="dim" style="text-align:center">${logN>1?`<span style="background:#eef2ff;color:#4a6cf7;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600">${logN}</span>`:logN}</td></tr>`;});
+  h+=`</tbody></table></div>`;
+  if(pageCount>1)h+=`<div class="pager"><button ${page<=1?"disabled":""} onclick="page--;render()">← Prev</button><span>Page ${page} of ${pageCount}</span><button ${page>=pageCount?"disabled":""} onclick="page++;render()">Next →</button></div>`;
+  app.innerHTML=h;
+  document.getElementById("searchBox").addEventListener("input",e=>{search=e.target.value;page=1;render();});
+  document.getElementById("outcomeSelect").addEventListener("change",e=>{outcomeFilter=e.target.value;page=1;render();});
+}
+
+// ── Init ──
+fetch(API_READ).then(r=>r.json()).then(data=>{
+  allCases=(data.items||[]).map(extractCase);
+  totalFromAPI=data.itemsTotal||allCases.length;
+  render();
+}).catch(err=>{
+  document.getElementById("exploreView").innerHTML=`<div class="error-box">Error: ${esc(err.message)}</div>`;
+});
+</script>
+</body>
+</html>
