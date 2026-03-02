@@ -1377,19 +1377,28 @@ function renderActivity() {
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
 const NASHVILLE_DISTRICT_URL = "https://maps.nashville.gov/arcgis/rest/services/Elections/Precincts/MapServer/1/query";
 const NASHVILLE_DISTRICT_FALLBACK_URL = "https://maps.nashville.gov/arcgis/rest/services/Elections/PoliticalDistricts/MapServer/0/query";
-const ENRICH_DELAY = 3000;    // ms between enrichment attempts (gentle on APIs)
-const GEOCODE_DELAY = 1200;   // Nominatim asks for 1 req/sec
+const GEOCODE_DELAY = 1100;   // Nominatim asks for 1 req/sec — stay just above
+const DISTRICT_DELAY = 200;   // Nashville GIS is fast, no strict rate limit
 
 let enrichRunning = false;
-let enrichStats = { geocoded: 0, districts: 0, errors: 0, total: 0, processed: 0 };
+let enrichStats = { geocoded: 0, districts: 0, errors: 0, total: 0, processed: 0, skippedFailed: 0, rateLimited: 0 };
 let enrichLog = [];
 let enrichPaused = false;
+// Track failed geocodes so we don't retry the same address endlessly
+const geocodeFailedAddresses = new Set();
+// Rate limit backoff state
+let geocodeBackoff = GEOCODE_DELAY;
+const GEOCODE_BACKOFF_MAX = 60000;  // max 60s backoff
+let consecutiveGeoErrors = 0;
 
 function getCasesNeedingGeocode() {
   return allCases.filter(c => {
     const hasAddress = c.address1 || c.address || c.addressFormatted;
     const hasLatLng = c.lat && c.lng;
-    return hasAddress && !hasLatLng;
+    if (!hasAddress || hasLatLng) return false;
+    // Skip addresses that already failed geocoding
+    const addrStr = c.addressFormatted || c.address || [c.address1, c.cityStateZip].filter(Boolean).join(", ");
+    return !geocodeFailedAddresses.has(addrStr);
   });
 }
 
@@ -1399,9 +1408,14 @@ function getCasesNeedingDistrict() {
   });
 }
 
-function pickRandom(arr) {
-  if (!arr.length) return null;
-  return arr[Math.floor(Math.random() * arr.length)];
+function getCasesGeocodeFailed() {
+  return allCases.filter(c => {
+    const hasAddress = c.address1 || c.address || c.addressFormatted;
+    const hasLatLng = c.lat && c.lng;
+    if (!hasAddress || hasLatLng) return false;
+    const addrStr = c.addressFormatted || c.address || [c.address1, c.cityStateZip].filter(Boolean).join(", ");
+    return geocodeFailedAddresses.has(addrStr);
+  });
 }
 
 async function geocodeAddress(addressStr) {
@@ -1414,7 +1428,16 @@ async function geocodeAddress(addressStr) {
   const resp = await fetch(`${NOMINATIM_URL}?${params}`, {
     headers: { "Accept": "application/json" }
   });
+  if (resp.status === 429) {
+    enrichStats.rateLimited++;
+    consecutiveGeoErrors++;
+    geocodeBackoff = Math.min(geocodeBackoff * 2, GEOCODE_BACKOFF_MAX);
+    throw new Error(`Rate limited (429) — backing off to ${(geocodeBackoff/1000).toFixed(0)}s`);
+  }
   if (!resp.ok) throw new Error(`Nominatim ${resp.status}`);
+  // Successful response — reset backoff
+  consecutiveGeoErrors = 0;
+  geocodeBackoff = GEOCODE_DELAY;
   const data = await resp.json();
   if (!data.length) return null;
   return {
@@ -1479,10 +1502,14 @@ async function enrichOneCase(c) {
       enrichLog.push({ type: "skip", msg: `${c.docket}: no address to geocode` });
       return false;
     }
+    // Skip if this address already failed
+    if (geocodeFailedAddresses.has(addrStr)) {
+      enrichStats.skippedFailed++;
+      return false;
+    }
     try {
       const geo = await geocodeAddress(addrStr);
       if (geo) {
-        // Determine op: INS if fields didn't exist, ALT if they did
         stateData.op = (c.lat || c.lng) ? "ALT" : "INS";
         stateData.latitude = String(geo.lat);
         stateData.longitude = String(geo.lng);
@@ -1497,12 +1524,18 @@ async function enrichOneCase(c) {
         enrichLog.push({ type: "ok", msg: `${c.docket}: geocoded → ${geo.lat.toFixed(4)}, ${geo.lng.toFixed(4)}` });
       } else {
         stateData.geocode_status = "no_match";
-        enrichLog.push({ type: "err", msg: `${c.docket}: no geocode match for "${addrStr}"` });
+        geocodeFailedAddresses.add(addrStr);
+        enrichLog.push({ type: "err", msg: `${c.docket}: no geocode match for "${addrStr}" (won't retry)` });
       }
-      await new Promise(r => setTimeout(r, GEOCODE_DELAY));
+      await new Promise(r => setTimeout(r, geocodeBackoff));
     } catch (e) {
       enrichLog.push({ type: "err", msg: `${c.docket}: geocode error — ${e.message}` });
       enrichStats.errors++;
+      // On rate limit, wait the backoff before continuing
+      if (e.message.includes("429")) {
+        enrichLog.push({ type: "info", msg: `Rate limited — waiting ${(geocodeBackoff/1000).toFixed(0)}s before next request` });
+        await new Promise(r => setTimeout(r, geocodeBackoff));
+      }
       return false;
     }
   }
@@ -1512,7 +1545,6 @@ async function enrichOneCase(c) {
     try {
       const dist = await lookupNashvilleDistrict(c.lat, c.lng);
       if (dist) {
-        // Determine op: ALT if already had district, INS if new
         if (!stateData.op) stateData.op = (c.district || c.districtNum) ? "ALT" : "INS";
         stateData.council_district = dist.district;
         if (dist.districtNumber) stateData.council_district_number = dist.districtNumber;
@@ -1556,27 +1588,76 @@ async function enrichOneCase(c) {
   return didGeocode || didDistrict;
 }
 
+// District-only fast loop — runs quickly since Nashville GIS has no strict rate limit
+async function enrichDistrictLoop() {
+  const needDist = getCasesNeedingDistrict();
+  if (!needDist.length) return;
+  enrichLog.push({ type: "info", msg: `Fast district pass: ${needDist.length} cases with coords but no district` });
+  for (const c of needDist) {
+    if (!enrichRunning || enrichPaused) break;
+    try {
+      const now = new Date().toISOString();
+      const dist = await lookupNashvilleDistrict(c.lat, c.lng);
+      if (dist) {
+        const stateData = { step: "client_enrich", scraped_at: now, op: "INS" };
+        stateData.council_district = dist.district;
+        if (dist.districtNumber) stateData.council_district_number = dist.districtNumber;
+        if (dist.councilMember) stateData.council_member = dist.councilMember;
+        c.district = dist.district;
+        c.districtNum = dist.districtNumber;
+        c.councilMember = dist.councilMember || c.councilMember;
+        enrichStats.districts++;
+        enrichLog.push({ type: "ok", msg: `${c.docket}: district → ${dist.district}${dist.councilMember ? " (" + dist.councilMember + ")" : ""}` });
+        // Save to API
+        try {
+          await fetch(API_WRITE, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ docket_number: c.docket, state_data: stateData, updated_at: now }),
+          });
+          enrichLog.push({ type: "info", msg: `${c.docket}: saved to API (${stateData.op})` });
+        } catch (e) {
+          enrichLog.push({ type: "err", msg: `${c.docket}: API write error — ${e.message}` });
+          enrichStats.errors++;
+        }
+      } else {
+        enrichLog.push({ type: "skip", msg: `${c.docket}: no district found` });
+      }
+    } catch (e) {
+      enrichLog.push({ type: "err", msg: `${c.docket}: district error — ${e.message}` });
+      enrichStats.errors++;
+    }
+    enrichStats.processed++;
+    if (currentView === "enrich") renderEnrich();
+    await new Promise(r => setTimeout(r, DISTRICT_DELAY));
+  }
+}
+
 async function enrichLoop() {
   if (enrichRunning) return;
   enrichRunning = true;
 
+  // Phase 1: Fast district pass — process all cases that already have coords but need district
+  await enrichDistrictLoop();
+
+  // Phase 2: Geocode pass — process cases needing geocoding (rate-limited by Nominatim)
   while (enrichRunning && !enrichPaused) {
-    // Randomly pick a case needing geocode OR district
     const needGeo = getCasesNeedingGeocode();
     const needDist = getCasesNeedingDistrict();
     const candidates = [...needGeo, ...needDist];
-    // Deduplicate by id
     const seen = new Set();
     const unique = candidates.filter(c => { if (seen.has(c.id)) return false; seen.add(c.id); return true; });
 
     enrichStats.total = unique.length;
 
     if (!unique.length) {
-      enrichLog.push({ type: "info", msg: "All available cases enriched. Pausing." });
+      const failedCount = geocodeFailedAddresses.size;
+      enrichLog.push({ type: "info", msg: `All available cases enriched${failedCount ? ` (${failedCount} addresses had no geocode match)` : ""}. Pausing.` });
       break;
     }
 
-    const picked = pickRandom(unique);
+    // Prefer district-only cases (faster) over geocode cases
+    const picked = needDist.length ? needDist[0] : needGeo[0];
     try {
       await enrichOneCase(picked);
     } catch (e) {
@@ -1584,11 +1665,11 @@ async function enrichLoop() {
       enrichStats.errors++;
     }
 
-    // Update the enrich panel if visible
     if (currentView === "enrich") renderEnrich();
 
-    // Wait before next attempt
-    await new Promise(r => setTimeout(r, ENRICH_DELAY));
+    // Shorter delay for district-only, normal delay for geocode
+    const delay = (!picked.lat || !picked.lng) ? geocodeBackoff : DISTRICT_DELAY;
+    await new Promise(r => setTimeout(r, delay));
   }
 
   enrichRunning = false;
@@ -1609,13 +1690,16 @@ function renderEnrich() {
   const el = document.getElementById("enrichView");
   const needGeo = getCasesNeedingGeocode();
   const needDist = getCasesNeedingDistrict();
+  const failedGeo = getCasesGeocodeFailed();
   // Deduplicate
   const seen = new Set();
   const allNeed = [...needGeo, ...needDist].filter(c => { if (seen.has(c.id)) return false; seen.add(c.id); return true; });
 
   const statusDot = enrichRunning ? "active" : enrichPaused ? "idle" : "idle";
-  const statusLabel = enrichRunning ? "Running" : enrichPaused ? "Paused" : "Idle";
-  const statusClass = enrichRunning ? "active" : "idle";
+  const statusLabel = enrichRunning
+    ? (consecutiveGeoErrors > 0 ? `Running (backoff ${(geocodeBackoff/1000).toFixed(0)}s)` : "Running")
+    : enrichPaused ? "Paused" : "Idle";
+  const statusClass = enrichRunning ? (consecutiveGeoErrors > 0 ? "warning" : "active") : "idle";
 
   let h = `<div class="enrich-panel">
     <div class="enrich-header">
@@ -1630,8 +1714,8 @@ function renderEnrich() {
       </span>
     </div>
     <div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6">
-      Enrichment runs in the background, randomly selecting cases that are missing location or council district data.
-      It geocodes addresses via Nominatim and looks up Nashville Metro Council districts from the city's GIS service.
+      Enrichment auto-starts on page load. District lookups run fast (~5/sec). Geocoding respects Nominatim's 1 req/sec limit
+      with automatic backoff on rate limits. Failed addresses are skipped on retry.
     </div>
     <div class="enrich-stats">
       <div class="enrich-stat-card">
@@ -1658,6 +1742,14 @@ function renderEnrich() {
         <div class="enrich-stat-val">${enrichStats.errors}</div>
         <div class="enrich-stat-lbl">Errors</div>
       </div>
+      <div class="enrich-stat-card">
+        <div class="enrich-stat-val">${failedGeo.length}</div>
+        <div class="enrich-stat-lbl">No Match (skipped)</div>
+      </div>
+      <div class="enrich-stat-card">
+        <div class="enrich-stat-val">${enrichStats.rateLimited}</div>
+        <div class="enrich-stat-lbl">Rate Limited</div>
+      </div>
     </div>
   </div>`;
 
@@ -1679,8 +1771,8 @@ function renderEnrich() {
 // ── Init ──
 loadData().then(() => {
   render();
-  // Auto-start background enrichment after a short delay
-  setTimeout(() => { enrichLoop(); }, 5000);
+  // Auto-start enrichment immediately after data loads
+  enrichLoop();
 }).catch(err => {
   document.getElementById("exploreView").innerHTML = `<div class="error-box">Error: ${esc(err.message)}</div>`;
 });
