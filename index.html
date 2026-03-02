@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Nashville Eviction Cases</title>
+<title>Eviction Overwatch (EO)</title>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <style>
@@ -233,13 +233,71 @@
   .spinner { width: 22px; height: 22px; border: 2.5px solid #ddd; border-top: 2.5px solid var(--ink); border-radius: 50%; animation: spin .8s linear infinite; }
   .error-box { padding: 20px; background: #fef2f2; border-radius: 8px; color: #b91c1c; font-size: 13px; }
 
+  /* ── Password gate ── */
+  .login-overlay {
+    position: fixed; inset: 0; background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 1000;
+  }
+  .login-box {
+    background: var(--card); border-radius: 12px; padding: 40px;
+    box-shadow: 0 4px 24px rgba(0,0,0,.08); max-width: 380px; width: 100%; text-align: center;
+  }
+  .login-box h2 { font-size: 20px; font-weight: 700; margin-bottom: 4px; letter-spacing: -0.03em; }
+  .login-box .login-sub { font-size: 13px; color: var(--muted); margin-bottom: 24px; }
+  .login-box input[type="password"] {
+    width: 100%; padding: 10px 14px; border-radius: 6px; border: 1.5px solid var(--border);
+    font-size: 14px; font-family: inherit; margin-bottom: 12px;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .login-box input[type="password"]:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2.5px rgba(74,108,247,.12); }
+  .login-box .login-btn {
+    width: 100%; padding: 10px; border-radius: 6px; background: var(--accent); color: #fff;
+    font-size: 14px; font-weight: 600; border: none; cursor: pointer; font-family: inherit;
+    transition: background .15s;
+  }
+  .login-box .login-btn:hover { background: #3b5de7; }
+  .login-error { color: #b91c1c; font-size: 12px; margin-top: 8px; min-height: 18px; }
+
+  /* ── Schema tooltip ── */
+  .schema-tip-wrap { position: relative; display: inline-block; vertical-align: middle; margin-left: 6px; }
+  .schema-tip-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 18px; height: 18px; border-radius: 50%; background: var(--border);
+    color: var(--muted); font-size: 11px; font-weight: 700; cursor: help;
+    transition: background .15s, color .15s;
+  }
+  .schema-tip-wrap:hover .schema-tip-icon { background: var(--accent); color: #fff; }
+  .schema-tip-content {
+    display: none; position: absolute; bottom: calc(100% + 10px); left: 50%; transform: translateX(-50%);
+    background: #1a1a2e; color: #e2e8f0; padding: 14px 18px; border-radius: 8px;
+    font-size: 11px; font-family: 'JetBrains Mono', monospace; white-space: nowrap;
+    box-shadow: 0 8px 24px rgba(0,0,0,.2); z-index: 100; line-height: 1.9; text-align: left;
+  }
+  .schema-tip-content::after {
+    content: ''; position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+    border: 6px solid transparent; border-top-color: #1a1a2e;
+  }
+  .schema-tip-wrap:hover .schema-tip-content { display: block; }
+  .schema-tip-content .col-required { color: #fbbf24; }
+  .schema-tip-content .col-optional { color: #94a3b8; }
+
   @keyframes spin { to { transform: rotate(360deg); } }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 </style>
 </head>
 <body>
-<div class="shell">
-  <h1>Nashville Eviction Cases</h1>
+<div class="login-overlay" id="loginOverlay">
+  <div class="login-box">
+    <h2>Eviction Overwatch</h2>
+    <div class="login-sub">Enter password to continue</div>
+    <input type="password" id="loginPassword" placeholder="Password" onkeydown="if(event.key==='Enter')checkPassword()">
+    <button class="login-btn" onclick="checkPassword()">Enter</button>
+    <div class="login-error" id="loginError"></div>
+  </div>
+</div>
+<div class="shell" id="mainShell" style="display:none">
+  <h1>Eviction Overwatch (EO)</h1>
   <div class="top-nav">
     <button class="top-nav-btn active" id="navExplore" onclick="switchView('explore')">Explorer</button>
     <button class="top-nav-btn" id="navUpload" onclick="switchView('upload')">CSV Upload</button>
@@ -249,6 +307,37 @@
 </div>
 
 <script>
+// ══════════════════════════════════════════════════════════
+// PASSWORD GATE
+// ══════════════════════════════════════════════════════════
+const PASSWORD_HASH = "04406d560e538ea7e8b0c4e3061953003cf4039d116f9056503c13f39bee6a98";
+
+async function hashInput(str) {
+  const data = new TextEncoder().encode(str);
+  const buf = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function checkPassword() {
+  const input = document.getElementById("loginPassword").value;
+  const hashed = await hashInput(input);
+  if (hashed === PASSWORD_HASH) {
+    sessionStorage.setItem("eo_auth", "1");
+    document.getElementById("loginOverlay").style.display = "none";
+    document.getElementById("mainShell").style.display = "";
+  } else {
+    document.getElementById("loginError").textContent = "Incorrect password. Please try again.";
+    document.getElementById("loginPassword").value = "";
+    document.getElementById("loginPassword").focus();
+  }
+}
+
+// Restore session
+if (sessionStorage.getItem("eo_auth") === "1") {
+  document.getElementById("loginOverlay").style.display = "none";
+  document.getElementById("mainShell").style.display = "";
+}
+
 // ══════════════════════════════════════════════════════════
 // SHARED
 // ══════════════════════════════════════════════════════════
@@ -410,23 +499,35 @@ function renderUpload() {
 
   if (!uploadRows.length) {
     // Drop zone
-    h += `<div class="upload-zone" id="dropZone" onclick="document.getElementById('csvInput').click()">
+    h += `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:14px 16px;font-size:13px;color:#1e40af;margin-bottom:16px;line-height:1.6">
+      <strong>Missing records?</strong> You can upload a CSV export from <strong>CaseLink</strong> to supplement the data.
+      If it looks like the system is missing cases or has incomplete records, export the relevant data from CaseLink and upload it here — the records will be merged with existing data automatically.
+    </div>
+    <div class="upload-zone" id="dropZone" onclick="document.getElementById('csvInput').click()">
       <input type="file" id="csvInput" accept=".csv,.tsv,.txt">
       <div class="uz-icon">📄</div>
-      <div class="uz-label">Drop a CSV file here or click to browse</div>
-      <div class="uz-hint">Expected columns: Office, Docket #, Status, File Date, Description, Plaintiff, Pltf. Attorney, Defendant, Def. Attorney</div>
+      <div class="uz-label">Drop a CaseLink CSV file here or click to browse
+        <span class="schema-tip-wrap" onclick="event.stopPropagation()">
+          <span class="schema-tip-icon">?</span>
+          <div class="schema-tip-content">
+            <div style="margin-bottom:6px;font-weight:600;color:#fff;font-family:'IBM Plex Sans',sans-serif;font-size:12px">Expected CSV Columns</div>
+            <span class="col-required">Docket #</span>  &nbsp;← required (unique ID)<br>
+            <span class="col-optional">Office</span>     &nbsp;← court / office location<br>
+            <span class="col-optional">Status</span>     &nbsp;← PENDING or CLOSED<br>
+            <span class="col-optional">File Date</span>  &nbsp;← MM/DD/YYYY format<br>
+            <span class="col-optional">Description</span>&nbsp;← case type<br>
+            <span class="col-optional">Plaintiff</span>  &nbsp;← plaintiff / petitioner<br>
+            <span class="col-optional">Defendant</span>  &nbsp;← defendant / respondent<br>
+            <span class="col-optional">Pltf. Attorney</span> &nbsp;← plaintiff attorney<br>
+            <span class="col-optional">Def. Attorney</span>  &nbsp;← defendant attorney
+          </div>
+        </span>
+      </div>
+      <div class="uz-hint">Accepts .csv, .tsv, or .txt — hover the <strong>?</strong> above for the expected column schema</div>
     </div>
     <div style="background:#f8f9fb;border-radius:8px;padding:16px;font-size:12px;color:var(--muted)">
-      <strong style="color:var(--ink)">How it works:</strong> Each CSV row is posted to the Xano API as a new state_data entry appended to the case's stateData array.
+      <strong style="color:var(--ink)">How it works:</strong> Each CSV row is posted as a new state_data entry appended to the case's stateData array.
       If the docket number already exists, the new data is appended. If it's new, a record is created.
-      <br><br>
-      <strong style="color:var(--ink)">Field mapping:</strong><br>
-      <span style="font-family:'JetBrains Mono',monospace;font-size:11px">
-      Office → office &nbsp;|&nbsp; Status → status &nbsp;|&nbsp; Description → case_type<br>
-      Plaintiff → plaintiff &nbsp;|&nbsp; Pltf. Attorney → attorney<br>
-      Defendant → defendant &nbsp;|&nbsp; Def. Attorney → def_attorney<br>
-      File Date → file_date_raw + file_date (ISO) &nbsp;|&nbsp; step = "csv_upload"
-      </span>
     </div>`;
 
     el.innerHTML = h;
