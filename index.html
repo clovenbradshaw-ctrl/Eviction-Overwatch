@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Eviction Overwatch (EO)</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><ellipse cx='32' cy='32' rx='30' ry='18' fill='none' stroke='%231a1a2e' stroke-width='4'/><circle cx='32' cy='32' r='10' fill='none' stroke='%231a1a2e' stroke-width='4'/><circle cx='32' cy='32' r='4' fill='%231a1a2e'/></svg>">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <style>
@@ -303,6 +304,66 @@
 
   .data-age { font-size: 10px; color: var(--muted); font-style: italic; }
 
+  /* ── Refresh button ── */
+  .refresh-btn {
+    padding: 5px 12px; border-radius: 5px; font-size: 11px; font-weight: 600;
+    font-family: inherit; cursor: pointer; border: 1.5px solid var(--border);
+    background: var(--card); color: var(--ink); transition: background .15s, border-color .15s, transform .2s;
+    display: inline-flex; align-items: center; gap: 5px;
+  }
+  .refresh-btn:hover { background: #f3f5fa; border-color: var(--accent); color: var(--accent); }
+  .refresh-btn.refreshing { pointer-events: none; opacity: .6; }
+  .refresh-btn.refreshing .refresh-icon { animation: spin .8s linear infinite; }
+  .refresh-icon { display: inline-block; font-size: 13px; line-height: 1; }
+
+  /* ── Scraper activity panel ── */
+  .scraper-panel {
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 20px; margin-bottom: 20px;
+  }
+  .scraper-header {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap;
+  }
+  .scraper-header h3 { font-size: 15px; font-weight: 700; }
+  .scraper-status-dot {
+    width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0;
+  }
+  .scraper-status-dot.active { background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,.5); animation: pulse-dot 2s ease infinite; }
+  .scraper-status-dot.idle { background: #94a3b8; }
+  .scraper-status-dot.stale { background: #f59e0b; }
+  .scraper-status-label { font-size: 12px; font-weight: 600; }
+  .scraper-status-label.active { color: #16a34a; }
+  .scraper-status-label.idle { color: var(--muted); }
+  .scraper-status-label.stale { color: #d97706; }
+
+  .scraper-stats {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px; margin-bottom: 16px;
+  }
+  .scraper-stat-card {
+    background: var(--faint); border-radius: 6px; padding: 10px 14px; text-align: center;
+  }
+  .scraper-stat-val { font-size: 18px; font-weight: 700; color: var(--ink); font-family: 'JetBrains Mono', monospace; }
+  .scraper-stat-lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; margin-top: 2px; }
+
+  .activity-feed { max-height: 320px; overflow-y: auto; }
+  .activity-item {
+    display: flex; align-items: flex-start; gap: 10px; padding: 8px 0;
+    border-bottom: 1px solid var(--faint); font-size: 12px;
+  }
+  .activity-item:last-child { border-bottom: none; }
+  .activity-ts { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted); white-space: nowrap; min-width: 130px; flex-shrink: 0; }
+  .activity-body { flex: 1; }
+  .activity-docket { font-weight: 600; color: var(--accent); cursor: pointer; }
+  .activity-docket:hover { text-decoration: underline; }
+  .activity-op { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px; }
+  .activity-step { font-size: 10px; color: var(--muted); }
+
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .5; }
+  }
+
   /* ── Export bar ── */
   .export-bar {
     display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
@@ -344,9 +405,11 @@
   </div>
   <div class="top-nav">
     <button class="top-nav-btn active" id="navExplore" onclick="switchView('explore')">Explorer</button>
+    <button class="top-nav-btn" id="navActivity" onclick="switchView('activity')">Scraper Activity</button>
     <button class="top-nav-btn" id="navUpload" onclick="switchView('upload')">CSV Upload</button>
   </div>
   <div id="exploreView"><div class="spinner-wrap"><div class="spinner"></div><span style="color:#666;font-size:13px">Loading cases…</span></div></div>
+  <div id="activityView" style="display:none"></div>
   <div id="uploadView" style="display:none"></div>
 </div>
 
@@ -395,10 +458,13 @@ function esc(s) { const d = document.createElement("div"); d.textContent = s; re
 function switchView(view) {
   currentView = view;
   document.getElementById("navExplore").classList.toggle("active", view === "explore");
+  document.getElementById("navActivity").classList.toggle("active", view === "activity");
   document.getElementById("navUpload").classList.toggle("active", view === "upload");
   document.getElementById("exploreView").style.display = view === "explore" ? "" : "none";
+  document.getElementById("activityView").style.display = view === "activity" ? "" : "none";
   document.getElementById("uploadView").style.display = view === "upload" ? "" : "none";
   if (view === "upload") renderUpload();
+  if (view === "activity") renderActivity();
 }
 
 // ══════════════════════════════════════════════════════════
@@ -768,6 +834,7 @@ function renderDetail(c){
   return h+`</div>`;
 }
 
+let searchTimer = null;
 function render(){
   const app=document.getElementById("exploreView");
   if(selectedCase){app.innerHTML=renderDetail(selectedCase);return;}
@@ -778,7 +845,8 @@ function render(){
   const cols=[{key:"docket",label:"Docket"},{key:"status",label:"Status"},{key:"outcome",label:"Outcome"},{key:"plaintiff",label:"Plaintiff"},{key:"defendant",label:"Defendant"},{key:"fileDate",label:"Filed"},{key:"district",label:"District"}];
   const newestScrape = allCases.reduce((best, c) => { const t = c.scrapedAt ? new Date(c.scrapedAt).getTime() : 0; return t > best ? t : best; }, 0);
   const dataAgeStr = newestScrape ? formatTS(new Date(newestScrape).toISOString()) : "unknown";
-  let h=`<p class="subtitle">${totalFromAPI.toLocaleString()} cases on file (snapshot) · Showing ${allCases.length.toLocaleString()} · Most recent observation: ${esc(dataAgeStr)}</p>
+  const refreshLabel = isRefreshing ? '<span class="refresh-icon" style="display:inline-block;animation:spin .8s linear infinite">&#8635;</span> Refreshing…' : '<span class="refresh-icon">&#8635;</span> Refresh';
+  let h=`<p class="subtitle">${totalFromAPI.toLocaleString()} cases on file (snapshot) · Showing ${allCases.length.toLocaleString()} · Most recent observation: ${esc(dataAgeStr)} <button class="refresh-btn${isRefreshing?" refreshing":""}" onclick="refreshData()" ${isRefreshing?"disabled":""}>${refreshLabel}</button></p>
     <div class="chip-row">${sc.map(([s,n])=>`<div class="chip ${chipClass(s)} ${statusFilter===s?"active":""}" onclick="statusFilter=statusFilter==='${s}'?'ALL':'${s}';page=1;render()">${esc(s)} (observed): ${n}</div>`).join("")}</div>
     <div class="controls"><input type="text" id="searchBox" placeholder="Search docket, plaintiff, defendant, address, attorney, council member…" value="${esc(search)}"><select id="outcomeSelect"><option value="ALL">All outcomes</option>${oc.map(([o,n])=>`<option value="${esc(o)}" ${outcomeFilter===o?"selected":""}>${esc(o)} (${n})</option>`).join("")}</select><div class="export-bar"><button class="export-btn" onclick="exportData('csv')" title="Export filtered cases as CSV"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 13h8M8 3v8M5 8l3 3 3-3"/></svg>CSV</button><button class="export-btn" onclick="exportData('json')" title="Export filtered cases as JSON"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 13h8M8 3v8M5 8l3 3 3-3"/></svg>JSON</button><button class="export-btn" onclick="exportData('tsv')" title="Export filtered cases as TSV"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 13h8M8 3v8M5 8l3 3 3-3"/></svg>TSV</button></div></div>
     <div class="match-count">${filtered.length} case${filtered.length!==1?"s":""} matched · <span class="data-age">Statuses may not reflect current court records</span></div>
@@ -788,8 +856,39 @@ function render(){
   h+=`</tbody></table></div>`;
   if(pageCount>1)h+=`<div class="pager"><button ${page<=1?"disabled":""} onclick="page--;render()">← Prev</button><span>Page ${page} of ${pageCount}</span><button ${page>=pageCount?"disabled":""} onclick="page++;render()">Next →</button></div>`;
   app.innerHTML=h;
-  document.getElementById("searchBox").addEventListener("input",e=>{search=e.target.value;page=1;render();});
+  const searchBox = document.getElementById("searchBox");
+  searchBox.addEventListener("input",e=>{
+    const val = e.target.value;
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { search = val; page = 1; renderTableOnly(); }, 200);
+  });
   document.getElementById("outcomeSelect").addEventListener("change",e=>{outcomeFilter=e.target.value;page=1;render();});
+  // Restore cursor position
+  if (document.activeElement !== searchBox && search) { searchBox.focus(); searchBox.setSelectionRange(search.length, search.length); }
+}
+
+// Render just the table + pager + match count without touching controls
+function renderTableOnly() {
+  const filtered=getFiltered();const pageCount=Math.ceil(filtered.length/PER_PAGE);
+  if(page>pageCount&&pageCount>0)page=pageCount;
+  const slice=filtered.slice((page-1)*PER_PAGE,page*PER_PAGE);
+  const cols=[{key:"docket",label:"Docket"},{key:"status",label:"Status"},{key:"outcome",label:"Outcome"},{key:"plaintiff",label:"Plaintiff"},{key:"defendant",label:"Defendant"},{key:"fileDate",label:"Filed"},{key:"district",label:"District"}];
+  let h=`<table><thead><tr>${cols.map(c=>`<th class="${sortCol===c.key?"sorted":""}" onclick="toggleSort('${c.key}')">${c.label}${sortArrow(c.key)}</th>`).join("")}<th>Log</th></tr></thead><tbody>`;
+  slice.forEach(c=>{const logN=(c._rawStateData||[]).length;
+    h+=`<tr onclick="selectedCase=allCases.find(x=>x.id===${c.id});detailTab='overview';render()"><td class="mono docket">${esc(c.docket)}</td><td><span class="badge ${statusBadgeClass(c.status)}">${esc(c.status)}</span></td><td><span class="badge ${outcomeBadgeClass(c.outcome)}">${esc(c.outcome)}</span></td><td class="ellip">${c.plaintiff?esc(c.plaintiff):"—"}</td><td class="ellip">${c.defendant?esc(c.defendant):"—"}</td><td class="mono dim">${c.fileDate?esc(c.fileDate):"—"}</td><td class="dim" style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.districtNum?"Dist. "+c.districtNum:"—"}</td><td class="dim" style="text-align:center">${logN>1?`<span style="background:#eef2ff;color:#4a6cf7;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600">${logN}</span>`:logN}</td></tr>`;});
+  h+=`</tbody></table>`;
+  const tableWrap = document.querySelector("#exploreView .table-wrap");
+  if (tableWrap) tableWrap.innerHTML = h;
+  // Update match count
+  const mc = document.querySelector("#exploreView .match-count");
+  if (mc) mc.innerHTML = `${filtered.length} case${filtered.length!==1?"s":""} matched · <span class="data-age">Statuses may not reflect current court records</span>`;
+  // Update pager
+  let existingPager = document.querySelector("#exploreView .pager");
+  if (pageCount > 1) {
+    const ph = `<div class="pager"><button ${page<=1?"disabled":""} onclick="page--;renderTableOnly()">← Prev</button><span>Page ${page} of ${pageCount}</span><button ${page>=pageCount?"disabled":""} onclick="page++;renderTableOnly()">Next →</button></div>`;
+    if (existingPager) existingPager.outerHTML = ph;
+    else { const tw = document.querySelector("#exploreView .table-wrap"); if(tw) tw.insertAdjacentHTML("afterend", ph); }
+  } else if (existingPager) { existingPager.remove(); }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -882,11 +981,13 @@ function exportData(format) {
   URL.revokeObjectURL(url);
 }
 
-// ── Init ──
-fetch(API_READ).then(r=>r.json()).then(data=>{
-  allCases=(data.items||[]).map(extractCase);
-  totalFromAPI=data.itemsTotal||allCases.length;
-  // Update banner with data age
+// ══════════════════════════════════════════════════════════
+// REFRESH
+// ══════════════════════════════════════════════════════════
+let isRefreshing = false;
+let lastFetchedAt = null;
+
+function updateDataAgeBanner() {
   const newestScrape = allCases.reduce((best, c) => { const t = c.scrapedAt ? new Date(c.scrapedAt).getTime() : 0; return t > best ? t : best; }, 0);
   if (newestScrape) {
     const ageMs = Date.now() - newestScrape;
@@ -895,9 +996,160 @@ fetch(API_READ).then(r=>r.json()).then(data=>{
     const noteEl = document.getElementById("dataAgeNote");
     if (noteEl) noteEl.textContent = " · Most recent data is ~" + ageStr + " old.";
   }
+}
+
+function loadData() {
+  return fetch(API_READ).then(r => r.json()).then(data => {
+    allCases = (data.items || []).map(extractCase);
+    totalFromAPI = data.itemsTotal || allCases.length;
+    lastFetchedAt = new Date();
+    updateDataAgeBanner();
+  });
+}
+
+async function refreshData() {
+  if (isRefreshing) return;
+  isRefreshing = true;
   render();
-}).catch(err=>{
-  document.getElementById("exploreView").innerHTML=`<div class="error-box">Error: ${esc(err.message)}</div>`;
+  try {
+    await loadData();
+  } catch (err) {
+    alert("Refresh failed: " + err.message);
+  }
+  isRefreshing = false;
+  render();
+  // Also update activity view if visible
+  if (currentView === "activity") renderActivity();
+}
+
+// ══════════════════════════════════════════════════════════
+// SCRAPER ACTIVITY MODULE
+// ══════════════════════════════════════════════════════════
+function getScraperActivity() {
+  // Extract all state_data entries with timestamps, across all cases
+  const activity = [];
+  allCases.forEach(c => {
+    const entries = c._rawStateData || [];
+    entries.forEach(entry => {
+      const ts = entry.ts || entry.scraped_at;
+      if (!ts) return;
+      activity.push({
+        ts: ts,
+        tsDate: new Date(ts),
+        docket: c.docket,
+        caseId: c.id,
+        op: entry.op || "",
+        step: entry.step || entry.source || "",
+        status: entry.status || entry.Status || "",
+        fields: Object.keys(entry).filter(k => !["op","ts","scraped_at","source","step"].includes(k) && entry[k] !== undefined && entry[k] !== null && entry[k] !== ""),
+      });
+    });
+  });
+  activity.sort((a, b) => b.tsDate.getTime() - a.tsDate.getTime());
+  return activity;
+}
+
+function getScraperStats(activity) {
+  if (!activity.length) return { status: "idle", recentCount: 0, stepsActive: [], lastTs: null, last24h: 0, last1h: 0 };
+  const now = Date.now();
+  const last1h = activity.filter(a => now - a.tsDate.getTime() < 3600000).length;
+  const last24h = activity.filter(a => now - a.tsDate.getTime() < 86400000).length;
+  const lastTs = activity[0].tsDate;
+  const msSinceLast = now - lastTs.getTime();
+
+  // Determine scraper status
+  let status = "idle";
+  if (msSinceLast < 3600000) status = "active";        // activity within last hour
+  else if (msSinceLast < 86400000) status = "idle";     // within a day
+  else status = "stale";                                 // over a day old
+
+  // What steps are running (from recent entries)
+  const recentSteps = {};
+  activity.slice(0, 100).forEach(a => { if (a.step) recentSteps[a.step] = (recentSteps[a.step] || 0) + 1; });
+  const stepsActive = Object.entries(recentSteps).sort((a, b) => b[1] - a[1]).map(([s, n]) => ({ step: s, count: n }));
+
+  return { status, recentCount: activity.length, stepsActive, lastTs, last24h, last1h };
+}
+
+function renderActivity() {
+  const el = document.getElementById("activityView");
+  const activity = getScraperActivity();
+  const stats = getScraperStats(activity);
+
+  const statusLabels = { active: "Active", idle: "Idle", stale: "Stale — no recent updates" };
+  const refreshLabel = isRefreshing ? '<span class="refresh-icon" style="display:inline-block;animation:spin .8s linear infinite">&#8635;</span> Refreshing…' : '<span class="refresh-icon">&#8635;</span> Refresh';
+
+  let h = `<div class="scraper-panel">
+    <div class="scraper-header">
+      <h3>Scraper Status</h3>
+      <span class="scraper-status-dot ${esc(stats.status)}"></span>
+      <span class="scraper-status-label ${esc(stats.status)}">${esc(statusLabels[stats.status] || "Unknown")}</span>
+      <span style="margin-left:auto"><button class="refresh-btn${isRefreshing?" refreshing":""}" onclick="refreshData()" ${isRefreshing?"disabled":""}>${refreshLabel}</button></span>
+    </div>
+
+    <div class="scraper-stats">
+      <div class="scraper-stat-card">
+        <div class="scraper-stat-val">${stats.last1h}</div>
+        <div class="scraper-stat-lbl">Updates (last hour)</div>
+      </div>
+      <div class="scraper-stat-card">
+        <div class="scraper-stat-val">${stats.last24h}</div>
+        <div class="scraper-stat-lbl">Updates (last 24h)</div>
+      </div>
+      <div class="scraper-stat-card">
+        <div class="scraper-stat-val">${stats.lastTs ? formatTS(stats.lastTs.toISOString()) : "—"}</div>
+        <div class="scraper-stat-lbl">Last Update</div>
+      </div>
+      <div class="scraper-stat-card">
+        <div class="scraper-stat-val">${lastFetchedAt ? formatTS(lastFetchedAt.toISOString()) : "—"}</div>
+        <div class="scraper-stat-lbl">Data Fetched At</div>
+      </div>
+    </div>`;
+
+  // Active pipeline steps
+  if (stats.stepsActive.length) {
+    h += `<div class="section-title">Active Pipeline Steps</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px">`;
+    stats.stepsActive.forEach(s => {
+      h += `<span class="badge op-default" style="font-size:11px">${esc(s.step)} <span style="opacity:.6">(${s.count})</span></span>`;
+    });
+    h += `</div>`;
+  }
+
+  h += `</div>`; // close scraper-panel
+
+  // Activity feed
+  h += `<div class="section-title">Recent Activity Feed</div>
+  <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Showing the last ${Math.min(activity.length, 200)} of ${activity.length} total logged updates</div>`;
+
+  if (!activity.length) {
+    h += `<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px">No scraper activity found in the loaded data.</div>`;
+  } else {
+    h += `<div class="activity-feed">`;
+    activity.slice(0, 200).forEach(a => {
+      const opClass = (a.op || "").toUpperCase() === "INS" ? "op-ins" : (a.op || "").toUpperCase().startsWith("UPD") ? "op-upd" : (a.op || "").toUpperCase().startsWith("DEL") ? "op-del" : "op-default";
+      h += `<div class="activity-item">
+        <span class="activity-ts">${formatTS(a.ts)}</span>
+        <div class="activity-body">
+          <span class="activity-docket" onclick="const c=allCases.find(x=>x.id===${a.caseId});if(c){selectedCase=c;detailTab='overview';switchView('explore');render();}">${esc(a.docket)}</span>
+          ${a.op ? `<span class="activity-op ${opClass}">${esc(a.op)}</span>` : ""}
+          ${a.step ? `<span class="activity-step">${esc(a.step)}</span>` : ""}
+          ${a.status ? ` <span class="badge ${statusBadgeClass(a.status.toUpperCase())}" style="font-size:10px">${esc(a.status)}</span>` : ""}
+          <span style="color:var(--muted);font-size:10px;margin-left:4px">${a.fields.length} field${a.fields.length !== 1 ? "s" : ""}</span>
+        </div>
+      </div>`;
+    });
+    h += `</div>`;
+  }
+
+  el.innerHTML = h;
+}
+
+// ── Init ──
+loadData().then(() => {
+  render();
+}).catch(err => {
+  document.getElementById("exploreView").innerHTML = `<div class="error-box">Error: ${esc(err.message)}</div>`;
 });
 </script>
 </body>
