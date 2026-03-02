@@ -1045,8 +1045,8 @@ function render(){
   const slice=filtered.slice((page-1)*PER_PAGE,page*PER_PAGE);
   const sc=countBy(allCases,"status"),oc=countBy(allCases,"outcome");
   const cols=[{key:"docket",label:"Docket"},{key:"status",label:"Status"},{key:"outcome",label:"Outcome"},{key:"plaintiff",label:"Plaintiff"},{key:"defendant",label:"Defendant"},{key:"fileDate",label:"Filed"},{key:"updated",label:"Updated"},{key:"district",label:"District"}];
-  const newestScrape = allCases.reduce((best, c) => { const t = c.scrapedAt ? new Date(c.scrapedAt).getTime() : 0; return t > best ? t : best; }, 0);
-  const dataAgeStr = newestScrape ? formatTS(new Date(newestScrape).toISOString()) : "unknown";
+  const newestUpdate = allCases.reduce((best, c) => { const t = c.updatedParsed ? c.updatedParsed.getTime() : 0; return t > best ? t : best; }, 0);
+  const dataAgeStr = newestUpdate ? formatTS(new Date(newestUpdate).toISOString()) : "unknown";
   const refreshLabel = isRefreshing ? '<span class="refresh-icon" style="display:inline-block;animation:spin .8s linear infinite">&#8635;</span> Refreshing…' : '<span class="refresh-icon">&#8635;</span> Refresh';
   let h=`<p class="subtitle">${totalFromAPI.toLocaleString()} cases on file (snapshot) · Showing ${allCases.length.toLocaleString()} · Most recent observation: ${esc(dataAgeStr)} <button class="refresh-btn${isRefreshing?" refreshing":""}" onclick="refreshData()" ${isRefreshing?"disabled":""}>${refreshLabel}</button></p>
     <div class="chip-row">${sc.map(([s,n])=>`<div class="chip ${chipClass(s)} ${statusFilter===s?"active":""}" onclick="statusFilter=statusFilter==='${s}'?'ALL':'${s}';page=1;render()">${esc(s)} (observed): ${n}</div>`).join("")}</div>
@@ -1214,9 +1214,9 @@ let isRefreshing = false;
 let lastFetchedAt = null;
 
 function updateDataAgeBanner() {
-  const newestScrape = allCases.reduce((best, c) => { const t = c.scrapedAt ? new Date(c.scrapedAt).getTime() : 0; return t > best ? t : best; }, 0);
-  if (newestScrape) {
-    const ageMs = Date.now() - newestScrape;
+  const newestUpdate = allCases.reduce((best, c) => { const t = c.updatedParsed ? c.updatedParsed.getTime() : 0; return t > best ? t : best; }, 0);
+  if (newestUpdate) {
+    const ageMs = Date.now() - newestUpdate;
     const ageHrs = Math.round(ageMs / 3600000);
     const ageStr = ageHrs < 1 ? "less than an hour" : ageHrs < 24 ? ageHrs + " hour" + (ageHrs > 1 ? "s" : "") : Math.round(ageHrs / 24) + " day" + (Math.round(ageHrs / 24) > 1 ? "s" : "");
     const noteEl = document.getElementById("dataAgeNote");
