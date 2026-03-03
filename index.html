@@ -364,6 +364,9 @@
   }
   .export-btn:hover { background: #f3f5fa; border-color: var(--accent); color: var(--accent); }
   .export-btn svg { width: 13px; height: 13px; }
+  .export-btn.db-saving { background: #fef3c7; border-color: #f59e0b; color: #92400e; cursor: wait; }
+  .export-btn.db-done { background: #d1fae5; border-color: #10b981; color: #065f46; }
+  .db-status { font-size: 10px; color: var(--muted); margin-left: 4px; white-space: nowrap; }
 
   /* ── Pivot table ── */
   .pivot-select {
@@ -545,6 +548,75 @@ if (sessionStorage.getItem("eo_auth") === "1") {
 const API_READ = "https://xvkq-pq7i-idtl.n7d.xano.io/api:3CsVHkZK/eviction_current_state";
 const API_WRITE = "https://xvkq-pq7i-idtl.n7d.xano.io/api:3CsVHkZK/update_eviction_state";
 const PER_PAGE = 50;
+
+// ══════════════════════════════════════════════════════════
+// IndexedDB – persistent local cache of all cases
+// ══════════════════════════════════════════════════════════
+const IDB_NAME = "EvictionOverwatch";
+const IDB_VERSION = 1;
+const IDB_STORE = "cases";
+const IDB_META = "meta";
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(IDB_STORE)) {
+        db.createObjectStore(IDB_STORE, { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains(IDB_META)) {
+        db.createObjectStore(IDB_META, { keyPath: "key" });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbSaveAllCases(items) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([IDB_STORE, IDB_META], "readwrite");
+    const store = tx.objectStore(IDB_STORE);
+    const meta = tx.objectStore(IDB_META);
+    // Clear old data and write fresh
+    store.clear();
+    items.forEach(item => store.put(item));
+    meta.put({ key: "lastSaved", value: new Date().toISOString(), count: items.length });
+    tx.oncomplete = () => { db.close(); resolve(items.length); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+  });
+}
+
+async function idbLoadAllCases() {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([IDB_STORE, IDB_META], "readonly");
+    const store = tx.objectStore(IDB_STORE);
+    const meta = tx.objectStore(IDB_META);
+    const itemsReq = store.getAll();
+    const metaReq = meta.get("lastSaved");
+    tx.oncomplete = () => {
+      db.close();
+      resolve({ items: itemsReq.result || [], meta: metaReq.result || null });
+    };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+  });
+}
+
+async function idbGetMeta() {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_META, "readonly");
+    const meta = tx.objectStore(IDB_META);
+    const req = meta.get("lastSaved");
+    tx.oncomplete = () => { db.close(); resolve(req.result || null); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+  });
+}
+
+let _lastIdbSave = null; // tracks last save metadata
 let currentView = "explore";
 
 function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
@@ -1091,7 +1163,7 @@ function render(){
   const refreshLabel = isRefreshing ? '<span class="refresh-icon" style="display:inline-block;animation:spin .8s linear infinite">&#8635;</span> Refreshing…' : '<span class="refresh-icon">&#8635;</span> Refresh';
   let h=`<p class="subtitle">${totalFromAPI.toLocaleString()} cases on file (snapshot) · Showing ${allCases.length.toLocaleString()} · Most recent observation: ${esc(dataAgeStr)} <button class="refresh-btn${isRefreshing?" refreshing":""}" onclick="refreshData()" ${isRefreshing?"disabled":""}>${refreshLabel}</button></p>
     <div class="chip-row">${sc.map(([s,n])=>`<div class="chip ${chipClass(s)} ${statusFilter===s?"active":""}" onclick="statusFilter=statusFilter==='${s}'?'ALL':'${s}';page=1;render()">${esc(s)} (observed): ${n}</div>`).join("")}</div>
-    <div class="controls"><input type="text" id="searchBox" placeholder="Search docket, plaintiff, defendant, address, attorney, council member…" value="${esc(search)}"><select id="outcomeSelect"><option value="ALL">All outcomes</option>${oc.map(([o,n])=>`<option value="${esc(o)}" ${outcomeFilter===o?"selected":""}>${esc(o)} (${n})</option>`).join("")}</select><select id="pivotSelect" class="pivot-select${pivotField?" pivot-active":""}"><option value="">Pivot by…</option>${PIVOT_FIELDS.map(f=>`<option value="${f.key}" ${pivotField===f.key?"selected":""}>${f.label}</option>`).join("")}</select><div class="export-bar"><button class="export-btn" onclick="exportData('csv')" title="Export filtered cases as CSV"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 13h8M8 3v8M5 8l3 3 3-3"/></svg>CSV</button><button class="export-btn" onclick="exportData('json')" title="Export filtered cases as JSON"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 13h8M8 3v8M5 8l3 3 3-3"/></svg>JSON</button><button class="export-btn" onclick="exportData('tsv')" title="Export filtered cases as TSV"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 13h8M8 3v8M5 8l3 3 3-3"/></svg>TSV</button></div></div>
+    <div class="controls"><input type="text" id="searchBox" placeholder="Search docket, plaintiff, defendant, address, attorney, council member…" value="${esc(search)}"><select id="outcomeSelect"><option value="ALL">All outcomes</option>${oc.map(([o,n])=>`<option value="${esc(o)}" ${outcomeFilter===o?"selected":""}>${esc(o)} (${n})</option>`).join("")}</select><select id="pivotSelect" class="pivot-select${pivotField?" pivot-active":""}"><option value="">Pivot by…</option>${PIVOT_FIELDS.map(f=>`<option value="${f.key}" ${pivotField===f.key?"selected":""}>${f.label}</option>`).join("")}</select><div class="export-bar"><button class="export-btn" onclick="exportData('csv')" title="Export filtered cases as CSV"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 13h8M8 3v8M5 8l3 3 3-3"/></svg>CSV</button><button class="export-btn" onclick="exportData('json')" title="Export filtered cases as JSON"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 13h8M8 3v8M5 8l3 3 3-3"/></svg>JSON</button><button class="export-btn" onclick="exportData('tsv')" title="Export filtered cases as TSV"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 13h8M8 3v8M5 8l3 3 3-3"/></svg>TSV</button><button class="export-btn" id="idbSaveBtn" onclick="saveToIdbManual()" title="Download all cases and save to local IndexedDB"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13h12M4 3v7h8V3M6 3V1h4v2"/></svg>Save DB</button><span class="db-status" id="idbStatus"></span></div></div>
     <div class="match-count">${filtered.length} case${filtered.length!==1?"s":""} matched${pivotField?" · Pivot by <strong>"+esc(PIVOT_FIELDS.find(f=>f.key===pivotField).label)+"</strong>":""} · <span class="data-age">Statuses may not reflect current court records</span></div>`;
 
   if (pivotField && pivotDrillValue) {
@@ -1265,13 +1337,61 @@ function updateDataAgeBanner() {
   }
 }
 
+let _rawAPIItems = []; // raw items from API (for IndexedDB persistence)
+
 function loadData() {
   return fetch(API_READ).then(r => r.json()).then(data => {
-    allCases = (data.items || []).map(extractCase);
+    _rawAPIItems = data.items || [];
+    allCases = _rawAPIItems.map(extractCase);
     totalFromAPI = data.itemsTotal || allCases.length;
     lastFetchedAt = new Date();
     updateDataAgeBanner();
+    // Auto-save to IndexedDB in background
+    idbSaveAllCases(_rawAPIItems).then(n => {
+      _lastIdbSave = { time: new Date().toISOString(), count: n };
+      console.log("[IndexedDB] Auto-saved " + n + " cases");
+    }).catch(err => console.warn("[IndexedDB] Auto-save failed:", err));
   });
+}
+
+async function loadFromIdb() {
+  try {
+    const cached = await idbLoadAllCases();
+    if (cached.items.length > 0) {
+      _rawAPIItems = cached.items;
+      allCases = _rawAPIItems.map(extractCase);
+      totalFromAPI = allCases.length;
+      _lastIdbSave = cached.meta ? { time: cached.meta.value, count: cached.meta.count } : null;
+      return true;
+    }
+  } catch (e) { console.warn("[IndexedDB] Load failed:", e); }
+  return false;
+}
+
+async function saveToIdbManual() {
+  const btn = document.getElementById("idbSaveBtn");
+  if (!_rawAPIItems.length) { alert("No data loaded to save."); return; }
+  if (btn) { btn.classList.add("db-saving"); btn.textContent = "Saving…"; }
+  try {
+    const n = await idbSaveAllCases(_rawAPIItems);
+    _lastIdbSave = { time: new Date().toISOString(), count: n };
+    if (btn) { btn.classList.remove("db-saving"); btn.classList.add("db-done"); btn.innerHTML = '\u2713 Saved ' + n; }
+    updateIdbStatus();
+    setTimeout(() => { if (btn) { btn.classList.remove("db-done"); btn.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13h12M4 3v7h8V3M6 3V1h4v2"/></svg>Save DB'; } }, 3000);
+  } catch (err) {
+    if (btn) { btn.classList.remove("db-saving"); btn.textContent = "Error"; }
+    alert("Failed to save to IndexedDB: " + err.message);
+  }
+}
+
+function updateIdbStatus() {
+  const el = document.getElementById("idbStatus");
+  if (!el) return;
+  if (_lastIdbSave) {
+    el.textContent = _lastIdbSave.count + " cases in DB · " + formatTS(_lastIdbSave.time);
+  } else {
+    el.textContent = "";
+  }
 }
 
 async function refreshData() {
@@ -1883,13 +2003,33 @@ function renderEnrich() {
 }
 
 // ── Init ──
-loadData().then(() => {
-  render();
-  // Auto-start enrichment immediately after data loads
-  enrichLoop();
-}).catch(err => {
-  document.getElementById("exploreView").innerHTML = `<div class="error-box">Error: ${esc(err.message)}</div>`;
-});
+(async function init() {
+  // Try loading cached data from IndexedDB first for instant startup
+  let hadCache = false;
+  try {
+    hadCache = await loadFromIdb();
+    if (hadCache) {
+      console.log("[Init] Loaded " + allCases.length + " cases from IndexedDB cache");
+      render();
+      updateIdbStatus();
+    }
+  } catch (e) { console.warn("[Init] IndexedDB cache load failed:", e); }
+
+  // Always fetch fresh data from API
+  try {
+    await loadData();
+    render();
+    updateIdbStatus();
+    // Auto-start enrichment immediately after data loads
+    enrichLoop();
+  } catch (err) {
+    if (!hadCache) {
+      document.getElementById("exploreView").innerHTML = `<div class="error-box">Error: ${esc(err.message)}</div>`;
+    } else {
+      console.warn("[Init] API fetch failed, using cached data:", err.message);
+    }
+  }
+})();
 </script>
 </body>
 </html>
