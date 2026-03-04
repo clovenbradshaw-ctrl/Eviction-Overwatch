@@ -1445,16 +1445,21 @@ async function loadData() {
   allItems = allItems.concat(firstItems);
   updateLoadingProgress(allItems.length, total);
 
-  // If we got everything in one request, we're done
-  // Otherwise, paginate through the rest
-  while (allItems.length < total && firstItems.length > 0) {
+  // Paginate through all pages. Don't rely solely on itemsTotal because
+  // Xano caps it at 2500 by default. Instead, keep fetching as long as
+  // the previous page returned a full batch (API_PAGE_SIZE items).
+  let lastBatchSize = firstItems.length;
+  while (lastBatchSize >= API_PAGE_SIZE) {
     currentPage++;
     const url = API_READ + "?page=" + currentPage + "&per_page=" + API_PAGE_SIZE;
     const resp = await fetch(url);
     const data = await resp.json();
     const items = data.items || [];
+    lastBatchSize = items.length;
     if (items.length === 0) break; // no more data
     allItems = allItems.concat(items);
+    // Update total to reflect true count if we've exceeded Xano's reported cap
+    if (allItems.length > total) total = allItems.length;
     updateLoadingProgress(allItems.length, total);
   }
 
