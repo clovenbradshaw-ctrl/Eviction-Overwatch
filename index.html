@@ -431,81 +431,6 @@
   .enrich-log .e-skip { color: #92400e; }
   .enrich-log .e-info { color: #1e40af; }
 
-  /* ── Wiki board ── */
-  .wiki-controls {
-    display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; align-items: center;
-  }
-  .wiki-controls select {
-    padding: 8px 12px; border-radius: 6px; border: 1.5px solid var(--border);
-    font-size: 13px; font-family: inherit; background: var(--card); color: var(--ink);
-    cursor: pointer; transition: border-color .15s, box-shadow .15s;
-  }
-  .wiki-controls select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2.5px rgba(74,108,247,.12); }
-  .wiki-controls input {
-    padding: 8px 12px; border-radius: 6px; border: 1.5px solid var(--border);
-    font-size: 13px; font-family: inherit; background: var(--card); color: var(--ink);
-    flex: 1; min-width: 200px; transition: border-color .15s, box-shadow .15s;
-  }
-  .wiki-controls input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2.5px rgba(74,108,247,.12); }
-  .wiki-controls-label { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
-
-  .wiki-board {
-    display: flex; gap: 14px; overflow-x: auto; padding-bottom: 12px;
-    align-items: flex-start; min-height: 300px;
-  }
-  .wiki-column {
-    flex: 0 0 280px; min-width: 280px; max-height: 75vh; display: flex; flex-direction: column;
-    background: var(--faint); border-radius: 10px; border: 1px solid var(--border);
-  }
-  .wiki-col-header {
-    padding: 12px 14px; border-bottom: 1px solid var(--border);
-    display: flex; align-items: center; gap: 8px; position: sticky; top: 0;
-    background: var(--faint); border-radius: 10px 10px 0 0; z-index: 1;
-  }
-  .wiki-col-title {
-    font-size: 13px; font-weight: 700; color: var(--ink); white-space: nowrap;
-    overflow: hidden; text-overflow: ellipsis; flex: 1;
-  }
-  .wiki-col-count {
-    font-size: 11px; font-weight: 700; color: var(--muted); background: var(--card);
-    padding: 2px 8px; border-radius: 10px; border: 1px solid var(--border); flex-shrink: 0;
-  }
-  .wiki-col-body {
-    padding: 8px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 8px;
-  }
-  .wiki-card {
-    background: var(--card); border-radius: 8px; padding: 10px 12px;
-    border: 1px solid var(--border); cursor: pointer; transition: box-shadow .15s, transform .1s;
-    font-size: 12px;
-  }
-  .wiki-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.08); transform: translateY(-1px); }
-  .wiki-card-docket { font-family: 'JetBrains Mono', monospace; font-weight: 600; color: var(--accent); font-size: 12px; margin-bottom: 4px; }
-  .wiki-card-row { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-top: 3px; }
-  .wiki-card-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
-  .wiki-card-value { font-size: 11px; color: var(--ink); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; text-align: right; }
-  .wiki-card-tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
-  .wiki-card-tag {
-    font-size: 9px; font-weight: 600; padding: 2px 6px; border-radius: 3px;
-    letter-spacing: .03em; white-space: nowrap;
-  }
-  .wiki-more-btn {
-    text-align: center; padding: 6px; font-size: 11px; font-weight: 600;
-    color: var(--accent); cursor: pointer; border-radius: 6px; transition: background .15s;
-  }
-  .wiki-more-btn:hover { background: #eef2ff; }
-  .wiki-summary {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    gap: 8px; margin-bottom: 16px;
-  }
-  .wiki-summary-stat {
-    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
-    padding: 10px 12px; text-align: center;
-  }
-  .wiki-summary-val { font-size: 20px; font-weight: 700; color: var(--ink); font-family: 'JetBrains Mono', monospace; }
-  .wiki-summary-lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; margin-top: 2px; }
-  .wiki-empty-col {
-    padding: 20px; text-align: center; color: var(--muted); font-size: 12px; font-style: italic;
-  }
 
   @keyframes spin { to { transform: rotate(360deg); } }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
@@ -538,14 +463,12 @@
     <button class="top-nav-btn" id="navActivity" onclick="switchView('activity')">Scraper Activity</button>
     <button class="top-nav-btn" id="navUpload" onclick="switchView('upload')">CSV Upload</button>
     <button class="top-nav-btn" id="navEnrich" onclick="switchView('enrich')">Enrich Data</button>
-    <button class="top-nav-btn" id="navWiki" onclick="switchView('wiki')">Wiki</button>
   </div>
   <div id="exploreView"><div class="spinner-wrap"><div class="spinner"></div><span id="loadProgress" style="color:#666;font-size:13px">Loading cases…</span></div></div>
   <div id="activityView" style="display:none"></div>
   <div id="uploadView" style="display:none"></div>
   <div id="enrichView" style="display:none"></div>
-  <div id="wikiView" style="display:none"></div>
-</div>
+  </div>
 
 <script>
 // ══════════════════════════════════════════════════════════
@@ -706,16 +629,13 @@ function switchView(view) {
   document.getElementById("navActivity").classList.toggle("active", view === "activity");
   document.getElementById("navUpload").classList.toggle("active", view === "upload");
   document.getElementById("navEnrich").classList.toggle("active", view === "enrich");
-  document.getElementById("navWiki").classList.toggle("active", view === "wiki");
   document.getElementById("exploreView").style.display = view === "explore" ? "" : "none";
   document.getElementById("activityView").style.display = view === "activity" ? "" : "none";
   document.getElementById("uploadView").style.display = view === "upload" ? "" : "none";
   document.getElementById("enrichView").style.display = view === "enrich" ? "" : "none";
-  document.getElementById("wikiView").style.display = view === "wiki" ? "" : "none";
   if (view === "upload") renderUpload();
   if (view === "activity") renderActivity();
   if (view === "enrich") renderEnrich();
-  if (view === "wiki") renderWiki();
 }
 
 // ══════════════════════════════════════════════════════════
@@ -2133,148 +2053,6 @@ function renderEnrich() {
   }
 
   el.innerHTML = h;
-}
-
-// ══════════════════════════════════════════════════════════
-// WIKI MODULE — Kanban-style board grouped by tag categories
-// ══════════════════════════════════════════════════════════
-let wikiGroupBy = "outcome";  // default grouping field
-let wikiSearch = "";
-let wikiCardsPerCol = 20;     // initial cards shown per column
-const wikiExpandedCols = {};  // track which columns are expanded
-
-const WIKI_TAG_FIELDS = [
-  { key: "outcome",        label: "Outcome",             accessor: c => c.outcome || "Unknown",   colorFn: outcomeBadgeClass },
-  { key: "status",         label: "Status",              accessor: c => c.status || "UNKNOWN",    colorFn: statusBadgeClass },
-  { key: "attorney",       label: "Plaintiff Attorney",  accessor: c => c.attorney || "(none)",   colorFn: () => "b-minimal" },
-  { key: "plaintiff",      label: "Plaintiff / Landlord",accessor: c => c.plaintiff || "(none)",  colorFn: () => "b-minimal" },
-  { key: "district",       label: "Council District",    accessor: c => c.districtNum ? "District " + c.districtNum : "(none)", colorFn: () => "b-minimal" },
-  { key: "councilMember",  label: "Council Member",      accessor: c => c.councilMember || "(none)", colorFn: () => "b-minimal" },
-  { key: "office",         label: "Court Office",        accessor: c => c.office || "(none)",     colorFn: () => "b-minimal" },
-  { key: "description",    label: "Case Type",           accessor: c => c.description || "(none)",colorFn: () => "b-minimal" },
-  { key: "individualLL",   label: "Individual Landlord", accessor: c => c.individualLL === true ? "Yes" : c.individualLL === false ? "No" : "Unknown", colorFn: () => "b-minimal" },
-];
-
-function getWikiFiltered() {
-  let cases = allCases;
-  if (wikiSearch.trim()) {
-    const q = wikiSearch.toLowerCase();
-    cases = cases.filter(c =>
-      c.docket.toLowerCase().includes(q) ||
-      c.plaintiff.toLowerCase().includes(q) ||
-      c.defendant.toLowerCase().includes(q) ||
-      c.attorney.toLowerCase().includes(q) ||
-      c.address.toLowerCase().includes(q) ||
-      c.district.toLowerCase().includes(q) ||
-      c.description.toLowerCase().includes(q) ||
-      c.councilMember.toLowerCase().includes(q) ||
-      c.defendantName.toLowerCase().includes(q)
-    );
-  }
-  return cases;
-}
-
-function buildWikiGroups(cases) {
-  const field = WIKI_TAG_FIELDS.find(f => f.key === wikiGroupBy);
-  if (!field) return [];
-  const groups = {};
-  cases.forEach(c => {
-    const tag = field.accessor(c);
-    if (!groups[tag]) groups[tag] = { tag, cases: [], badgeClass: field.colorFn(tag) };
-    groups[tag].cases.push(c);
-  });
-  // Sort groups: largest first, "(none)" and "Unknown" last
-  return Object.values(groups).sort((a, b) => {
-    const aLow = a.tag === "(none)" || a.tag === "Unknown" ? 1 : 0;
-    const bLow = b.tag === "(none)" || b.tag === "Unknown" ? 1 : 0;
-    if (aLow !== bLow) return aLow - bLow;
-    return b.cases.length - a.cases.length;
-  });
-}
-
-function wikiShowMore(tag) {
-  wikiExpandedCols[tag] = (wikiExpandedCols[tag] || wikiCardsPerCol) + 20;
-  renderWiki();
-}
-
-function renderWiki() {
-  const el = document.getElementById("wikiView");
-  const filtered = getWikiFiltered();
-  const groups = buildWikiGroups(filtered);
-  const field = WIKI_TAG_FIELDS.find(f => f.key === wikiGroupBy);
-
-  let h = "";
-
-  // Summary stats
-  h += `<div class="wiki-summary">
-    <div class="wiki-summary-stat"><div class="wiki-summary-val">${filtered.length.toLocaleString()}</div><div class="wiki-summary-lbl">Total Cases</div></div>
-    <div class="wiki-summary-stat"><div class="wiki-summary-val">${groups.length}</div><div class="wiki-summary-lbl">Columns</div></div>
-    <div class="wiki-summary-stat"><div class="wiki-summary-val">${groups.length ? Math.max(...groups.map(g => g.cases.length)).toLocaleString() : 0}</div><div class="wiki-summary-lbl">Largest Group</div></div>
-  </div>`;
-
-  // Controls
-  h += `<div class="wiki-controls">
-    <span class="wiki-controls-label">Group by</span>
-    <select id="wikiGroupSelect">
-      ${WIKI_TAG_FIELDS.map(f => `<option value="${f.key}" ${wikiGroupBy === f.key ? "selected" : ""}>${esc(f.label)}</option>`).join("")}
-    </select>
-    <input type="text" id="wikiSearchBox" placeholder="Filter cases…" value="${esc(wikiSearch)}">
-  </div>`;
-
-  // Board
-  h += `<div class="wiki-board">`;
-  groups.forEach(group => {
-    const limit = wikiExpandedCols[group.tag] || wikiCardsPerCol;
-    const visible = group.cases.slice(0, limit);
-    const hasMore = group.cases.length > limit;
-
-    h += `<div class="wiki-column">
-      <div class="wiki-col-header">
-        <span class="wiki-col-title" title="${esc(group.tag)}">${esc(group.tag)}</span>
-        <span class="wiki-col-count">${group.cases.length}</span>
-      </div>
-      <div class="wiki-col-body">`;
-
-    if (!visible.length) {
-      h += `<div class="wiki-empty-col">No cases</div>`;
-    } else {
-      visible.forEach(c => {
-        h += `<div class="wiki-card" onclick="selectedCase=allCases.find(x=>x.id===${c.id});detailTab='overview';switchView('explore');render();">
-          <div class="wiki-card-docket">${esc(c.docket)}</div>
-          <div class="wiki-card-row"><span class="wiki-card-label">Plaintiff</span><span class="wiki-card-value">${c.plaintiff ? esc(c.plaintiff) : "—"}</span></div>
-          <div class="wiki-card-row"><span class="wiki-card-label">Defendant</span><span class="wiki-card-value">${c.defendant ? esc(c.defendant) : "—"}</span></div>
-          <div class="wiki-card-row"><span class="wiki-card-label">Filed</span><span class="wiki-card-value">${c.fileDate ? esc(c.fileDate) : "—"}</span></div>
-          <div class="wiki-card-tags">
-            <span class="wiki-card-tag ${statusBadgeClass(c.status)}">${esc(c.status)}</span>
-            <span class="wiki-card-tag ${outcomeBadgeClass(c.outcome)}">${esc(c.outcome)}</span>
-            ${c.districtNum ? `<span class="wiki-card-tag b-minimal">Dist. ${c.districtNum}</span>` : ""}
-          </div>
-        </div>`;
-      });
-    }
-
-    if (hasMore) {
-      h += `<div class="wiki-more-btn" onclick="wikiShowMore('${esc(group.tag).replace(/'/g, "\\'")}')">Show more (${group.cases.length - limit} remaining)</div>`;
-    }
-
-    h += `</div></div>`; // close col-body, wiki-column
-  });
-  h += `</div>`; // close wiki-board
-
-  el.innerHTML = h;
-
-  // Wire up controls
-  document.getElementById("wikiGroupSelect").addEventListener("change", e => {
-    wikiGroupBy = e.target.value;
-    Object.keys(wikiExpandedCols).forEach(k => delete wikiExpandedCols[k]);
-    renderWiki();
-  });
-
-  let wikiSearchTimer = null;
-  document.getElementById("wikiSearchBox").addEventListener("input", e => {
-    clearTimeout(wikiSearchTimer);
-    wikiSearchTimer = setTimeout(() => { wikiSearch = e.target.value; renderWiki(); }, 200);
-  });
 }
 
 // ── Init ──
