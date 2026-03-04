@@ -1547,6 +1547,8 @@ let enrichLog = [];
 let enrichPaused = false;
 // Track failed geocodes so we don't retry the same address endlessly
 const geocodeFailedAddresses = new Set();
+// Track cases where district lookup returned no result (e.g. outside Nashville)
+const districtFailedCases = new Set();
 // Rate limit backoff state
 let geocodeBackoff = GEOCODE_DELAY;
 const GEOCODE_BACKOFF_MAX = 60000;  // max 60s backoff
@@ -1565,7 +1567,9 @@ function getCasesNeedingGeocode() {
 
 function getCasesNeedingDistrict() {
   return allCases.filter(c => {
-    return c.lat && c.lng && !c.districtNum && !c.district;
+    if (!(c.lat && c.lng && !c.districtNum && !c.district)) return false;
+    // Skip cases where district lookup already returned no result
+    return !districtFailedCases.has(c.docket);
   });
 }
 
@@ -1786,7 +1790,8 @@ async function enrichOneCase(c) {
         enrichStats.districts++;
         enrichLog.push({ type: "ok", msg: `${c.docket}: district → ${dist.district}${dist.councilMember ? " (" + dist.councilMember + ")" : ""}` });
       } else {
-        enrichLog.push({ type: "skip", msg: `${c.docket}: no district found (may be outside Nashville)` });
+        districtFailedCases.add(c.docket);
+        enrichLog.push({ type: "skip", msg: `${c.docket}: no district found (may be outside Nashville — won't retry)` });
       }
     } catch (e) {
       enrichLog.push({ type: "err", msg: `${c.docket}: district lookup error — ${e.message}` });
@@ -1851,7 +1856,8 @@ async function enrichDistrictLoop() {
           enrichStats.errors++;
         }
       } else {
-        enrichLog.push({ type: "skip", msg: `${c.docket}: no district found` });
+        districtFailedCases.add(c.docket);
+        enrichLog.push({ type: "skip", msg: `${c.docket}: no district found (won't retry)` });
       }
     } catch (e) {
       enrichLog.push({ type: "err", msg: `${c.docket}: district error — ${e.message}` });
@@ -1882,7 +1888,8 @@ async function enrichLoop() {
 
     if (!unique.length) {
       const failedCount = geocodeFailedAddresses.size;
-      enrichLog.push({ type: "info", msg: `All available cases enriched${failedCount ? ` (${failedCount} addresses had no geocode match)` : ""}. Pausing.` });
+      const distFailedCount = districtFailedCases.size;
+      enrichLog.push({ type: "info", msg: `All available cases enriched${failedCount ? ` (${failedCount} addresses had no geocode match)` : ""}${distFailedCount ? ` (${distFailedCount} cases had no district match)` : ""}. Pausing.` });
       break;
     }
 
@@ -1974,7 +1981,11 @@ function renderEnrich() {
       </div>
       <div class="enrich-stat-card">
         <div class="enrich-stat-val">${failedGeo.length}</div>
-        <div class="enrich-stat-lbl">No Match (skipped)</div>
+        <div class="enrich-stat-lbl">No Geocode Match</div>
+      </div>
+      <div class="enrich-stat-card">
+        <div class="enrich-stat-val">${districtFailedCases.size}</div>
+        <div class="enrich-stat-lbl">No District Match</div>
       </div>
       <div class="enrich-stat-card">
         <div class="enrich-stat-val">${enrichStats.rateLimited}</div>
