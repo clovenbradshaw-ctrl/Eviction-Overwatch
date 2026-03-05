@@ -549,7 +549,7 @@ if (sessionStorage.getItem("eo_auth") === "1") {
 const API_READ = "https://xvkq-pq7i-idtl.n7d.xano.io/api:3CsVHkZK/eviction_current_state";
 const API_WRITE = "https://xvkq-pq7i-idtl.n7d.xano.io/api:3CsVHkZK/update_eviction_state";
 const PER_PAGE = 50;
-const API_PAGE_SIZE = 100; // records per API request when paginating
+const API_PAGE_SIZE = 2500; // records per API request – matches Xano's configured per_page
 
 // ══════════════════════════════════════════════════════════
 // IndexedDB – persistent local cache of all cases
@@ -1341,17 +1341,44 @@ function updateDataAgeBanner() {
 
 let _rawAPIItems = []; // raw items from API (for IndexedDB persistence)
 
-function updateLoadingProgress(loaded, total) {
+function updateLoadingProgress(loaded, total, opts) {
   const el = document.getElementById("loadProgress");
   if (!el) return;
+  const prefix = (opts && opts.background) ? "Syncing" : "Loading cases";
   if (total > 0) {
-    el.textContent = "Loading cases\u2026 " + loaded.toLocaleString() + " / " + total.toLocaleString();
+    el.textContent = prefix + "\u2026 " + loaded.toLocaleString() + " / " + total.toLocaleString();
   } else {
-    el.textContent = "Loading cases\u2026 " + loaded.toLocaleString() + " fetched";
+    el.textContent = prefix + "\u2026 " + loaded.toLocaleString() + " fetched";
   }
 }
 
-async function loadData() {
+// Background-sync banner shown after initial render while pages still downloading
+function updateBgSyncBanner(loaded, total, done) {
+  let el = document.getElementById("bgSyncBanner");
+  if (done) {
+    if (el) el.remove();
+    return;
+  }
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "bgSyncBanner";
+    el.style.cssText = "position:fixed;bottom:16px;right:16px;background:#1e3a5f;color:#fff;padding:8px 16px;border-radius:8px;font-size:13px;z-index:9999;box-shadow:0 2px 8px rgba(0,0,0,.25);display:flex;align-items:center;gap:8px;";
+    el.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px"></div><span id="bgSyncText"></span>';
+    document.body.appendChild(el);
+  }
+  const txt = el.querySelector("#bgSyncText");
+  if (txt) {
+    if (total > 0) {
+      const pct = Math.round((loaded / total) * 100);
+      txt.textContent = "Downloading to local DB\u2026 " + loaded.toLocaleString() + " / " + total.toLocaleString() + " (" + pct + "%)";
+    } else {
+      txt.textContent = "Downloading to local DB\u2026 " + loaded.toLocaleString() + " fetched";
+    }
+  }
+}
+
+async function loadData(opts) {
+  const background = opts && opts.background; // true when cache was shown first
   let allItems = [];
   let currentPage = 1;
   let total = 0;
@@ -1363,10 +1390,23 @@ async function loadData() {
   const firstItems = firstData.items || [];
   total = firstData.itemsTotal || 0;
   allItems = allItems.concat(firstItems);
-  updateLoadingProgress(allItems.length, total);
 
-  // Paginate through all pages. Don't rely solely on itemsTotal because
-  // Xano caps it at 2500 by default. Instead, keep fetching as long as
+  if (background) {
+    updateBgSyncBanner(allItems.length, total);
+  } else {
+    updateLoadingProgress(allItems.length, total);
+  }
+
+  // If not in background mode, show first page immediately
+  if (!background && firstItems.length > 0) {
+    _rawAPIItems = allItems.slice();
+    allCases = _rawAPIItems.map(extractCase);
+    totalFromAPI = total || allCases.length;
+    render();
+  }
+
+  // Paginate through remaining pages. Don't rely solely on itemsTotal
+  // because Xano caps it at 2500 by default. Keep fetching as long as
   // the previous page returned a full batch (API_PAGE_SIZE items).
   let lastBatchSize = firstItems.length;
   while (lastBatchSize >= API_PAGE_SIZE) {
@@ -1376,23 +1416,38 @@ async function loadData() {
     const data = await resp.json();
     const items = data.items || [];
     lastBatchSize = items.length;
-    if (items.length === 0) break; // no more data
+    if (items.length === 0) break;
     allItems = allItems.concat(items);
     // Update total to reflect true count if we've exceeded Xano's reported cap
     if (allItems.length > total) total = allItems.length;
-    updateLoadingProgress(allItems.length, total);
+
+    if (background) {
+      updateBgSyncBanner(allItems.length, total);
+    } else {
+      updateLoadingProgress(allItems.length, total);
+    }
+
+    // Update UI incrementally every page so user sees new data arrive
+    _rawAPIItems = allItems.slice();
+    allCases = _rawAPIItems.map(extractCase);
+    totalFromAPI = total || allCases.length;
+    render();
   }
 
+  // Final state
   _rawAPIItems = allItems;
   allCases = _rawAPIItems.map(extractCase);
   totalFromAPI = total || allCases.length;
   lastFetchedAt = new Date();
   updateDataAgeBanner();
+  if (background) updateBgSyncBanner(0, 0, true);
   console.log("[API] Fetched " + allItems.length + " cases across " + currentPage + " page(s)");
+
   // Auto-save to IndexedDB in background
   idbSaveAllCases(_rawAPIItems).then(n => {
     _lastIdbSave = { time: new Date().toISOString(), count: n };
     console.log("[IndexedDB] Auto-saved " + n + " cases");
+    updateIdbStatus();
   }).catch(err => console.warn("[IndexedDB] Auto-save failed:", err));
 }
 
@@ -2068,9 +2123,9 @@ function renderEnrich() {
     }
   } catch (e) { console.warn("[Init] IndexedDB cache load failed:", e); }
 
-  // Always fetch fresh data from API
+  // Fetch fresh data from API – runs in background if we already have cached data
   try {
-    await loadData();
+    await loadData({ background: hadCache });
     render();
     updateIdbStatus();
     // Auto-start enrichment immediately after data loads
@@ -2080,6 +2135,7 @@ function renderEnrich() {
       document.getElementById("exploreView").innerHTML = `<div class="error-box">Error: ${esc(err.message)}</div>`;
     } else {
       console.warn("[Init] API fetch failed, using cached data:", err.message);
+      updateBgSyncBanner(0, 0, true); // dismiss banner on failure
     }
   }
 })();
