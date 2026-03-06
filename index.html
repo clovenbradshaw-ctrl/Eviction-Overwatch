@@ -222,6 +222,29 @@
   .spinner { width: 22px; height: 22px; border: 2.5px solid #ddd; border-top: 2.5px solid var(--ink); border-radius: 50%; animation: spin .8s linear infinite; }
   .error-box { padding: 20px; background: #fef2f2; border-radius: 8px; color: #b91c1c; font-size: 13px; }
 
+  /* ── Background ingestion banner ── */
+  .ingest-banner {
+    display: flex; align-items: center; gap: 10px; padding: 8px 14px;
+    background: linear-gradient(135deg, #eff6ff, #f0f4ff); border: 1px solid #bfdbfe;
+    border-radius: 8px; margin-bottom: 12px; font-size: 12px; color: #1e40af;
+  }
+  .ingest-banner .ingest-spinner {
+    width: 14px; height: 14px; border: 2px solid #93c5fd; border-top: 2px solid #2563eb;
+    border-radius: 50%; animation: spin .8s linear infinite; flex-shrink: 0;
+  }
+  .ingest-banner .ingest-bar-wrap {
+    flex: 1; height: 6px; background: #dbeafe; border-radius: 3px; overflow: hidden;
+    min-width: 80px; max-width: 200px;
+  }
+  .ingest-banner .ingest-bar {
+    height: 100%; background: #3b82f6; border-radius: 3px;
+    transition: width .3s ease;
+  }
+  .ingest-banner .ingest-count {
+    font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: 12px;
+    white-space: nowrap;
+  }
+
   /* ── Password gate ── */
   .login-overlay {
     position: fixed; inset: 0; background: var(--bg);
@@ -465,7 +488,7 @@
     <button class="top-nav-btn" id="navUpload" onclick="switchView('upload')">CSV Upload</button>
     <button class="top-nav-btn" id="navEnrich" onclick="switchView('enrich')">Enrich Data</button>
   </div>
-  <div id="exploreView"><div class="spinner-wrap"><div class="spinner"></div><span id="loadProgress" style="color:#666;font-size:13px">Loading cases…</span></div></div>
+  <div id="exploreView"><div class="ingest-banner"><div class="ingest-spinner"></div><span>Connecting to server…</span><div class="ingest-bar-wrap"><div class="ingest-bar" style="width:0%"></div></div><span class="ingest-count">0</span></div></div>
   <div id="activityView" style="display:none"></div>
   <div id="uploadView" style="display:none"></div>
   <div id="enrichView" style="display:none"></div>
@@ -1164,8 +1187,9 @@ function render(){
   const newestUpdate = allCases.reduce((best, c) => { const t = c.updatedParsed ? c.updatedParsed.getTime() : 0; return t > best ? t : best; }, 0);
   const dataAgeStr = newestUpdate ? formatTS(new Date(newestUpdate).toISOString()) : "unknown";
   const refreshLabel = isRefreshing ? '<span class="refresh-icon" style="display:inline-block;animation:spin .8s linear infinite">&#8635;</span> Refreshing…' : '<span class="refresh-icon">&#8635;</span> Refresh';
-  const streamingLabel = isStreaming ? ` <span style="display:inline-block;background:#fff3cd;color:#856404;padding:1px 8px;border-radius:8px;font-size:11px;font-weight:600;animation:pulse 1.5s ease-in-out infinite">Streaming ${allCases.length.toLocaleString()} of ~${totalFromAPI.toLocaleString()}…</span>` : '';
-  let h=`<p class="subtitle">${totalFromAPI.toLocaleString()} cases on file (snapshot) · Showing ${allCases.length.toLocaleString()} · Most recent observation: ${esc(dataAgeStr)}${streamingLabel} <button class="refresh-btn${isRefreshing?" refreshing":""}" onclick="refreshData()" ${isRefreshing?"disabled":""}>${refreshLabel}</button></p>
+  const ingestPct = isStreaming && totalFromAPI > 0 ? Math.min(100, Math.round(allCases.length / totalFromAPI * 100)) : 0;
+  const ingestBanner = isStreaming ? `<div class="ingest-banner"><div class="ingest-spinner"></div><span>Ingesting in background</span><div class="ingest-bar-wrap"><div class="ingest-bar" style="width:${ingestPct}%"></div></div><span class="ingest-count">${allCases.length.toLocaleString()} / ${totalFromAPI > 0 ? '~' + totalFromAPI.toLocaleString() : '?'}</span></div>` : '';
+  let h= ingestBanner + `<p class="subtitle">${totalFromAPI.toLocaleString()} cases on file (snapshot) · Showing ${allCases.length.toLocaleString()} · Most recent observation: ${esc(dataAgeStr)} <button class="refresh-btn${isRefreshing?" refreshing":""}" onclick="refreshData()" ${isRefreshing?"disabled":""}>${refreshLabel}</button></p>
     <div class="chip-row">${sc.map(([s,n])=>`<div class="chip ${chipClass(s)} ${statusFilter===s?"active":""}" onclick="statusFilter=statusFilter==='${s}'?'ALL':'${s}';page=1;render()">${esc(s)} (observed): ${n}</div>`).join("")}</div>
     <div class="controls"><input type="text" id="searchBox" placeholder="Search docket, plaintiff, defendant, address, attorney, council member…" value="${esc(search)}"><select id="outcomeSelect"><option value="ALL">All outcomes</option>${oc.map(([o,n])=>`<option value="${esc(o)}" ${outcomeFilter===o?"selected":""}>${esc(o)} (${n})</option>`).join("")}</select><select id="pivotSelect" class="pivot-select${pivotField?" pivot-active":""}"><option value="">Pivot by…</option>${PIVOT_FIELDS.map(f=>`<option value="${f.key}" ${pivotField===f.key?"selected":""}>${f.label}</option>`).join("")}</select><div class="export-bar"><button class="export-btn" onclick="exportData('csv')" title="Export filtered cases as CSV"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 13h8M8 3v8M5 8l3 3 3-3"/></svg>CSV</button><button class="export-btn" onclick="exportData('json')" title="Export filtered cases as JSON"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 13h8M8 3v8M5 8l3 3 3-3"/></svg>JSON</button><button class="export-btn" onclick="exportData('tsv')" title="Export filtered cases as TSV"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 13h8M8 3v8M5 8l3 3 3-3"/></svg>TSV</button><button class="export-btn" id="idbSaveBtn" onclick="saveToIdbManual()" title="Download all cases and save to local IndexedDB"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13h12M4 3v7h8V3M6 3V1h4v2"/></svg>Save DB</button><span class="db-status" id="idbStatus"></span></div></div>
     <div class="match-count">${filtered.length} case${filtered.length!==1?"s":""} matched${pivotField?" · Pivot by <strong>"+esc(PIVOT_FIELDS.find(f=>f.key===pivotField).label)+"</strong>":""} · <span class="data-age">Statuses may not reflect current court records</span></div>`;
@@ -1345,12 +1369,14 @@ function updateDataAgeBanner() {
 let _rawAPIItems = []; // raw items from API (for IndexedDB persistence)
 
 function updateLoadingProgress(loaded, total) {
+  // Legacy element support (no longer used in main view)
   const el = document.getElementById("loadProgress");
-  if (!el) return;
-  if (total > 0) {
-    el.textContent = "Loading cases\u2026 " + loaded.toLocaleString() + " / " + total.toLocaleString();
-  } else {
-    el.textContent = "Loading cases\u2026 " + loaded.toLocaleString() + " fetched";
+  if (el) {
+    if (total > 0) {
+      el.textContent = "Loading cases\u2026 " + loaded.toLocaleString() + " / " + total.toLocaleString();
+    } else {
+      el.textContent = "Loading cases\u2026 " + loaded.toLocaleString() + " fetched";
+    }
   }
 }
 
@@ -1359,6 +1385,10 @@ async function loadData() {
   let currentPage = 1;
   let total = 0;
   isStreaming = true;
+
+  // Render immediately so the ingestion banner is visible from the start
+  totalFromAPI = totalFromAPI || 0;
+  render();
 
   // Fetch first page to learn total count
   const firstUrl = API_READ + "?page=" + currentPage + "&per_page=" + API_PAGE_SIZE;
@@ -1373,7 +1403,7 @@ async function loadData() {
   _rawAPIItems = allItems;
   allCases = _rawAPIItems.map(extractCase);
   totalFromAPI = total || allCases.length;
-  if (allItems.length > 0) render();
+  render();
 
   // Paginate through remaining pages. Don't rely solely on itemsTotal because
   // Xano caps it at 2500 by default. Instead, keep fetching as long as
