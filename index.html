@@ -433,6 +433,7 @@
 
 
   @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 </style>
 </head>
@@ -549,7 +550,7 @@ if (sessionStorage.getItem("eo_auth") === "1") {
 const API_READ = "https://xvkq-pq7i-idtl.n7d.xano.io/api:3CsVHkZK/eviction_current_state";
 const API_WRITE = "https://xvkq-pq7i-idtl.n7d.xano.io/api:3CsVHkZK/update_eviction_state";
 const PER_PAGE = 50;
-const API_PAGE_SIZE = 100; // records per API request when paginating
+const API_PAGE_SIZE = 2500; // Xano returns 2500 records per page (server-configured)
 
 // ══════════════════════════════════════════════════════════
 // IndexedDB – persistent local cache of all cases
@@ -1163,7 +1164,8 @@ function render(){
   const newestUpdate = allCases.reduce((best, c) => { const t = c.updatedParsed ? c.updatedParsed.getTime() : 0; return t > best ? t : best; }, 0);
   const dataAgeStr = newestUpdate ? formatTS(new Date(newestUpdate).toISOString()) : "unknown";
   const refreshLabel = isRefreshing ? '<span class="refresh-icon" style="display:inline-block;animation:spin .8s linear infinite">&#8635;</span> Refreshing…' : '<span class="refresh-icon">&#8635;</span> Refresh';
-  let h=`<p class="subtitle">${totalFromAPI.toLocaleString()} cases on file (snapshot) · Showing ${allCases.length.toLocaleString()} · Most recent observation: ${esc(dataAgeStr)} <button class="refresh-btn${isRefreshing?" refreshing":""}" onclick="refreshData()" ${isRefreshing?"disabled":""}>${refreshLabel}</button></p>
+  const streamingLabel = isStreaming ? ` <span style="display:inline-block;background:#fff3cd;color:#856404;padding:1px 8px;border-radius:8px;font-size:11px;font-weight:600;animation:pulse 1.5s ease-in-out infinite">Streaming ${allCases.length.toLocaleString()} of ~${totalFromAPI.toLocaleString()}…</span>` : '';
+  let h=`<p class="subtitle">${totalFromAPI.toLocaleString()} cases on file (snapshot) · Showing ${allCases.length.toLocaleString()} · Most recent observation: ${esc(dataAgeStr)}${streamingLabel} <button class="refresh-btn${isRefreshing?" refreshing":""}" onclick="refreshData()" ${isRefreshing?"disabled":""}>${refreshLabel}</button></p>
     <div class="chip-row">${sc.map(([s,n])=>`<div class="chip ${chipClass(s)} ${statusFilter===s?"active":""}" onclick="statusFilter=statusFilter==='${s}'?'ALL':'${s}';page=1;render()">${esc(s)} (observed): ${n}</div>`).join("")}</div>
     <div class="controls"><input type="text" id="searchBox" placeholder="Search docket, plaintiff, defendant, address, attorney, council member…" value="${esc(search)}"><select id="outcomeSelect"><option value="ALL">All outcomes</option>${oc.map(([o,n])=>`<option value="${esc(o)}" ${outcomeFilter===o?"selected":""}>${esc(o)} (${n})</option>`).join("")}</select><select id="pivotSelect" class="pivot-select${pivotField?" pivot-active":""}"><option value="">Pivot by…</option>${PIVOT_FIELDS.map(f=>`<option value="${f.key}" ${pivotField===f.key?"selected":""}>${f.label}</option>`).join("")}</select><div class="export-bar"><button class="export-btn" onclick="exportData('csv')" title="Export filtered cases as CSV"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 13h8M8 3v8M5 8l3 3 3-3"/></svg>CSV</button><button class="export-btn" onclick="exportData('json')" title="Export filtered cases as JSON"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 13h8M8 3v8M5 8l3 3 3-3"/></svg>JSON</button><button class="export-btn" onclick="exportData('tsv')" title="Export filtered cases as TSV"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 13h8M8 3v8M5 8l3 3 3-3"/></svg>TSV</button><button class="export-btn" id="idbSaveBtn" onclick="saveToIdbManual()" title="Download all cases and save to local IndexedDB"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13h12M4 3v7h8V3M6 3V1h4v2"/></svg>Save DB</button><span class="db-status" id="idbStatus"></span></div></div>
     <div class="match-count">${filtered.length} case${filtered.length!==1?"s":""} matched${pivotField?" · Pivot by <strong>"+esc(PIVOT_FIELDS.find(f=>f.key===pivotField).label)+"</strong>":""} · <span class="data-age">Statuses may not reflect current court records</span></div>`;
@@ -1326,6 +1328,7 @@ function exportData(format) {
 // REFRESH
 // ══════════════════════════════════════════════════════════
 let isRefreshing = false;
+let isStreaming = false; // true while loadData() is fetching pages
 let lastFetchedAt = null;
 
 function updateDataAgeBanner() {
@@ -1355,6 +1358,7 @@ async function loadData() {
   let allItems = [];
   let currentPage = 1;
   let total = 0;
+  isStreaming = true;
 
   // Fetch first page to learn total count
   const firstUrl = API_READ + "?page=" + currentPage + "&per_page=" + API_PAGE_SIZE;
@@ -1365,7 +1369,13 @@ async function loadData() {
   allItems = allItems.concat(firstItems);
   updateLoadingProgress(allItems.length, total);
 
-  // Paginate through all pages. Don't rely solely on itemsTotal because
+  // Stream first batch to UI immediately so the user sees data right away
+  _rawAPIItems = allItems;
+  allCases = _rawAPIItems.map(extractCase);
+  totalFromAPI = total || allCases.length;
+  if (allItems.length > 0) render();
+
+  // Paginate through remaining pages. Don't rely solely on itemsTotal because
   // Xano caps it at 2500 by default. Instead, keep fetching as long as
   // the previous page returned a full batch (API_PAGE_SIZE items).
   let lastBatchSize = firstItems.length;
@@ -1381,8 +1391,16 @@ async function loadData() {
     // Update total to reflect true count if we've exceeded Xano's reported cap
     if (allItems.length > total) total = allItems.length;
     updateLoadingProgress(allItems.length, total);
+
+    // Stream each page to UI — update data and re-render so the user
+    // sees new records appear as they arrive from the API
+    _rawAPIItems = allItems;
+    allCases = _rawAPIItems.map(extractCase);
+    totalFromAPI = total || allCases.length;
+    render();
   }
 
+  isStreaming = false;
   _rawAPIItems = allItems;
   allCases = _rawAPIItems.map(extractCase);
   totalFromAPI = total || allCases.length;
