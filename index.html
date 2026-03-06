@@ -550,7 +550,7 @@ if (sessionStorage.getItem("eo_auth") === "1") {
 const API_READ = "https://xvkq-pq7i-idtl.n7d.xano.io/api:3CsVHkZK/eviction_current_state";
 const API_WRITE = "https://xvkq-pq7i-idtl.n7d.xano.io/api:3CsVHkZK/update_eviction_state";
 const PER_PAGE = 50;
-const API_PAGE_SIZE = 2500; // Xano returns 2500 records per page (server-configured)
+const API_PAGE_SIZE = 100; // Xano page size (server-configured)
 
 // ══════════════════════════════════════════════════════════
 // IndexedDB – persistent local cache of all cases
@@ -1375,21 +1375,18 @@ async function loadData() {
   totalFromAPI = total || allCases.length;
   if (allItems.length > 0) render();
 
-  // Paginate through remaining pages. Don't rely solely on itemsTotal because
-  // Xano caps it at 2500 by default. Instead, keep fetching as long as
-  // the previous page returned a full batch (API_PAGE_SIZE items).
-  let lastBatchSize = firstItems.length;
-  while (lastBatchSize >= API_PAGE_SIZE) {
+  // Paginate through remaining pages using itemsTotal from the API response
+  // and keep fetching as long as we haven't received all records yet.
+  while (allItems.length < total) {
     currentPage++;
     const url = API_READ + "?page=" + currentPage + "&per_page=" + API_PAGE_SIZE;
     const resp = await fetch(url);
     const data = await resp.json();
     const items = data.items || [];
-    lastBatchSize = items.length;
     if (items.length === 0) break; // no more data
     allItems = allItems.concat(items);
-    // Update total to reflect true count if we've exceeded Xano's reported cap
-    if (allItems.length > total) total = allItems.length;
+    // Update total if the API reports a higher number on subsequent pages
+    if (data.itemsTotal && data.itemsTotal > total) total = data.itemsTotal;
     updateLoadingProgress(allItems.length, total);
 
     // Stream each page to UI — update data and re-render so the user
