@@ -1399,6 +1399,15 @@ function updateDataAgeBanner() {
 
 let _rawAPIItems = []; // raw items from API (for IndexedDB persistence)
 
+function deduplicateById(items) {
+  const seen = new Set();
+  return items.filter(item => {
+    if (seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  });
+}
+
 function updateLoadingProgress(loaded, total) {
   // Legacy element support (no longer used in main view)
   const el = document.getElementById("loadProgress");
@@ -1432,7 +1441,7 @@ async function loadData() {
 
   // Stream first batch to UI immediately so the user sees data right away
   _rawAPIItems = allItems;
-  allCases = _rawAPIItems.map(extractCase);
+  allCases = deduplicateById(_rawAPIItems).map(extractCase);
   totalFromAPI = total || allCases.length;
   render();
 
@@ -1456,14 +1465,14 @@ async function loadData() {
     // Stream each page to UI — update data and re-render so the user
     // sees new records appear as they arrive from the API
     _rawAPIItems = allItems;
-    allCases = _rawAPIItems.map(extractCase);
+    allCases = deduplicateById(_rawAPIItems).map(extractCase);
     totalFromAPI = total || allCases.length;
     render();
   }
 
   isStreaming = false;
   _rawAPIItems = allItems;
-  allCases = _rawAPIItems.map(extractCase);
+  allCases = deduplicateById(_rawAPIItems).map(extractCase);
   totalFromAPI = total || allCases.length;
   lastFetchedAt = new Date();
   updateDataAgeBanner();
@@ -1480,7 +1489,7 @@ async function loadFromIdb() {
     const cached = await idbLoadAllCases();
     if (cached.items.length > 0) {
       _rawAPIItems = cached.items;
-      allCases = _rawAPIItems.map(extractCase);
+      allCases = deduplicateById(_rawAPIItems).map(extractCase);
       totalFromAPI = allCases.length;
       _lastIdbSave = cached.meta ? { time: cached.meta.value, count: cached.meta.count } : null;
       return true;
