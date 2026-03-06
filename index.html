@@ -1161,7 +1161,7 @@ function render(){
   const slice=filtered.slice((page-1)*PER_PAGE,page*PER_PAGE);
   const sc=countBy(allCases,"status"),oc=countBy(allCases,"outcome");
   const cols=[{key:"docket",label:"Docket"},{key:"status",label:"Status"},{key:"outcome",label:"Outcome"},{key:"plaintiff",label:"Plaintiff"},{key:"defendant",label:"Defendant"},{key:"fileDate",label:"Filed"},{key:"updated",label:"Updated"},{key:"district",label:"District"}];
-  const newestUpdate = allCases.reduce((best, c) => { const t = c.updatedParsed ? c.updatedParsed.getTime() : 0; return t > best ? t : best; }, 0);
+  const newestUpdate = getNewestObservationTime();
   const dataAgeStr = newestUpdate ? formatTS(new Date(newestUpdate).toISOString()) : "unknown";
   const refreshLabel = isRefreshing ? '<span class="refresh-icon" style="display:inline-block;animation:spin .8s linear infinite">&#8635;</span> Refreshing…' : '<span class="refresh-icon">&#8635;</span> Refresh';
   const streamingLabel = isStreaming ? ` <span style="display:inline-block;background:#fff3cd;color:#856404;padding:1px 8px;border-radius:8px;font-size:11px;font-weight:600;animation:pulse 1.5s ease-in-out infinite">Streaming ${allCases.length.toLocaleString()} of ~${totalFromAPI.toLocaleString()}…</span>` : '';
@@ -1331,8 +1331,19 @@ let isRefreshing = false;
 let isStreaming = false; // true while loadData() is fetching pages
 let lastFetchedAt = null;
 
+function getNewestObservationTime() {
+  return allCases.reduce((best, c) => {
+    let t = c.updatedParsed ? c.updatedParsed.getTime() : 0;
+    (c._rawStateData || []).forEach(e => {
+      const ets = e.scraped_at || e.ts;
+      if (ets) { const et = new Date(ets).getTime(); if (!isNaN(et) && et > t) t = et; }
+    });
+    return t > best ? t : best;
+  }, 0);
+}
+
 function updateDataAgeBanner() {
-  const newestUpdate = allCases.reduce((best, c) => { const t = c.updatedParsed ? c.updatedParsed.getTime() : 0; return t > best ? t : best; }, 0);
+  const newestUpdate = getNewestObservationTime();
   if (newestUpdate) {
     const ageMs = Date.now() - newestUpdate;
     const ageHrs = Math.round(ageMs / 3600000);
