@@ -1420,6 +1420,23 @@ function updateLoadingProgress(loaded, total) {
   }
 }
 
+async function fetchWithRetry(url, maxRetries = 3) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      if (attempt > 0) {
+        const delay = 1000 * Math.pow(2, attempt - 1); // 1s, 2s, 4s
+        console.log("[API] Retry " + attempt + "/" + maxRetries + " after " + delay + "ms");
+        await new Promise(r => setTimeout(r, delay));
+      }
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      return await resp.json();
+    } catch (err) {
+      if (attempt === maxRetries) throw err;
+    }
+  }
+}
+
 async function loadData() {
   let allItems = [];
   let currentPage = 1;
@@ -1432,8 +1449,7 @@ async function loadData() {
 
   // Fetch first page to learn total count
   const firstUrl = API_READ + "?page=" + currentPage + "&per_page=" + API_PAGE_SIZE;
-  const firstResp = await fetch(firstUrl);
-  const firstData = await firstResp.json();
+  const firstData = await fetchWithRetry(firstUrl);
   const firstItems = firstData.items || [];
   total = firstData.itemsTotal || 0;
   allItems = allItems.concat(firstItems);
@@ -1445,29 +1461,51 @@ async function loadData() {
   totalFromAPI = total || allCases.length;
   render();
 
-  // Paginate through remaining pages. Don't rely solely on itemsTotal because
-  // Xano caps it at 2500 by default. Instead, keep fetching as long as
+  // Paginate through remaining pages. Keep fetching as long as
   // the previous page returned a full batch (API_PAGE_SIZE items).
   let lastBatchSize = firstItems.length;
+  let paginationError = null;
   while (lastBatchSize >= API_PAGE_SIZE) {
     currentPage++;
+    // Small delay between pages to avoid triggering rate limits
+    await new Promise(r => setTimeout(r, 300));
     const url = API_READ + "?page=" + currentPage + "&per_page=" + API_PAGE_SIZE;
-    const resp = await fetch(url);
-    const data = await resp.json();
-    const items = data.items || [];
-    lastBatchSize = items.length;
-    if (items.length === 0) break; // no more data
-    allItems = allItems.concat(items);
-    // Update total to reflect true count if we've exceeded Xano's reported cap
-    if (allItems.length > total) total = allItems.length;
-    updateLoadingProgress(allItems.length, total);
+    try {
+      const data = await fetchWithRetry(url);
+      const items = data.items || [];
+      lastBatchSize = items.length;
+      if (items.length === 0) break; // no more data
+      allItems = allItems.concat(items);
+      // Update total to reflect true count if we've exceeded Xano's reported cap
+      if (allItems.length > total) total = allItems.length;
+      updateLoadingProgress(allItems.length, total);
 
-    // Stream each page to UI — update data and re-render so the user
-    // sees new records appear as they arrive from the API
-    _rawAPIItems = allItems;
-    allCases = deduplicateById(_rawAPIItems).map(extractCase);
-    totalFromAPI = total || allCases.length;
-    render();
+      // Stream each page to UI — update data and re-render so the user
+      // sees new records appear as they arrive from the API
+      _rawAPIItems = allItems;
+      allCases = deduplicateById(_rawAPIItems).map(extractCase);
+      totalFromAPI = total || allCases.length;
+      render();
+    } catch (err) {
+      console.warn("[API] Pagination stopped at page " + currentPage + ":", err.message);
+      paginationError = err;
+      break;
+    }
+  }
+
+  // Show warning if pagination was cut short due to errors
+  if (paginationError && total > allItems.length) {
+    const warnMsg = "Loaded " + allItems.length.toLocaleString() + " of ~" +
+      total.toLocaleString() + " cases. Some pages could not be fetched " +
+      "(network/CORS error). The data shown may be incomplete.";
+    const banner = document.createElement("div");
+    banner.className = "snapshot-banner";
+    banner.style.background = "#fef2f2";
+    banner.style.borderColor = "#fca5a5";
+    banner.innerHTML = '<span class="sb-icon">\u26A0</span><span>' + warnMsg +
+      '</span><button class="sb-dismiss" onclick="this.parentElement.remove()" title="Dismiss">&times;</button>';
+    const target = document.getElementById("exploreView");
+    if (target) target.insertBefore(banner, target.firstChild);
   }
 
   isStreaming = false;
