@@ -2363,42 +2363,73 @@ ${note}
 }
 
 /* ───────────────────────── Login / decryption ─────────────────────
-   ENC: values are assumed to be base64( salt[16] || iv[12] || ciphertext )
-   with the key derived via PBKDF2-SHA256 (100k iterations, 256-bit AES-GCM).
-   If the producer uses different params, only the four constants and the
-   slice offsets below need to change.
+   ENC: values are Fernet tokens (cryptography.io) produced by the
+   Python scraper. Layout, after stripping the "ENC:" prefix and
+   base64url-decoding:
 
-   The plaintext is held only in memory and never persisted. Closing the
-   tab or pressing the Logout button purges the password and the cache. */
+     version(1=0x80) || timestamp(8) || iv(16) || ciphertext || hmac(32)
 
-const PBKDF2_ITERATIONS = 100000;
+   The 32-byte PBKDF2-SHA256 output (salt=b'caselink-eviction-scraper',
+   480k iterations) is split: first 16 bytes = HMAC-SHA256 signing key,
+   last 16 bytes = AES-128-CBC encryption key. PKCS7 padding on the
+   plaintext is handled automatically by SubtleCrypto's AES-CBC mode.
+
+   The plaintext is held only in memory and never persisted. Closing
+   the tab or pressing the Logout button purges the password and the
+   cache. */
+
+const PBKDF2_ITERATIONS = 480000;
 const PBKDF2_HASH       = 'SHA-256';
-const AES_KEY_LENGTH    = 256;
-const SALT_BYTES        = 16;
-const IV_BYTES          = 12;
+const PBKDF2_SALT       = new TextEncoder().encode('caselink-eviction-scraper');
+const FERNET_VERSION    = 0x80;
+const FERNET_IV_BYTES   = 16;
+const FERNET_HMAC_BYTES = 32;
+const FERNET_HEADER_BYTES = 1 + 8 + FERNET_IV_BYTES; // version + ts + iv
 
 let unlockKeyPassword = null;             // raw password held in memory only
 const decryptCache    = new Map();        // ENC:... → plaintext | '__FAIL__'
+const keyCache        = new Map();        // password → {sign, enc} CryptoKeys
 const SENTINEL_FAIL   = '__FAIL__';
 
-function base64ToBytes(b64) {
-  const bin = atob(b64);
+function base64UrlToBytes(b64) {
+  // Fernet uses urlsafe base64 with '=' padding. atob() needs '+'/'/'.
+  let s = b64.replace(/-/g, '+').replace(/_/g, '/');
+  const pad = s.length % 4;
+  if (pad) s += '='.repeat(4 - pad);
+  const bin = atob(s);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 }
 
-async function deriveAesKey(password, salt) {
-  const baseKey = await crypto.subtle.importKey(
-    'raw', new TextEncoder().encode(password),
-    'PBKDF2', false, ['deriveKey']
-  );
-  return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS, hash: PBKDF2_HASH },
-    baseKey,
-    { name: 'AES-GCM', length: AES_KEY_LENGTH },
-    false, ['decrypt']
-  );
+function deriveFernetKeys(password) {
+  // Cache the promise so parallel callers share one PBKDF2 derivation.
+  let p = keyCache.get(password);
+  if (p) return p;
+  p = (async () => {
+    const baseKey = await crypto.subtle.importKey(
+      'raw', new TextEncoder().encode(password),
+      'PBKDF2', false, ['deriveBits']
+    );
+    const bits = await crypto.subtle.deriveBits(
+      { name: 'PBKDF2', salt: PBKDF2_SALT,
+        iterations: PBKDF2_ITERATIONS, hash: PBKDF2_HASH },
+      baseKey, 256
+    );
+    const raw = new Uint8Array(bits);
+    const signKey = await crypto.subtle.importKey(
+      'raw', raw.slice(0, 16),
+      { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']
+    );
+    const encKey = await crypto.subtle.importKey(
+      'raw', raw.slice(16, 32),
+      { name: 'AES-CBC', length: 128 }, false, ['decrypt']
+    );
+    return { sign: signKey, enc: encKey };
+  })();
+  keyCache.set(password, p);
+  p.catch(() => keyCache.delete(password));
+  return p;
 }
 
 function isEncrypted(v) {
@@ -2412,14 +2443,25 @@ async function decryptValue(encStr, password) {
     return v === SENTINEL_FAIL ? null : v;
   }
   try {
-    const bytes = base64ToBytes(encStr.slice(4));
-    if (bytes.length < SALT_BYTES + IV_BYTES + 1) throw new Error('blob too short');
-    const salt = bytes.slice(0, SALT_BYTES);
-    const iv   = bytes.slice(SALT_BYTES, SALT_BYTES + IV_BYTES);
-    const ct   = bytes.slice(SALT_BYTES + IV_BYTES);
-    const key  = await deriveAesKey(password, salt);
-    const pt   = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
-    const out  = new TextDecoder().decode(pt);
+    const bytes = base64UrlToBytes(encStr.slice(4));
+    if (bytes.length < FERNET_HEADER_BYTES + FERNET_HMAC_BYTES + 16) {
+      throw new Error('token too short');
+    }
+    if (bytes[0] !== FERNET_VERSION) {
+      throw new Error('bad version byte');
+    }
+    const signedLen = bytes.length - FERNET_HMAC_BYTES;
+    const signed = bytes.subarray(0, signedLen);
+    const mac    = bytes.subarray(signedLen);
+    const iv     = bytes.subarray(9, 9 + FERNET_IV_BYTES);
+    const ct     = bytes.subarray(FERNET_HEADER_BYTES, signedLen);
+
+    const { sign, enc } = await deriveFernetKeys(password);
+    const ok = await crypto.subtle.verify({ name: 'HMAC' }, sign, mac, signed);
+    if (!ok) throw new Error('hmac mismatch');
+
+    const pt = await crypto.subtle.decrypt({ name: 'AES-CBC', iv }, enc, ct);
+    const out = new TextDecoder().decode(pt);
     decryptCache.set(encStr, out);
     return out;
   } catch (e) {
@@ -2506,6 +2548,7 @@ async function submitLogin() {
 function logout() {
   unlockKeyPassword = null;
   decryptCache.clear();
+  keyCache.clear();
   updateLoginButton();
   if (selectedRecordDocket) renderRecordPanel(selectedRecordDocket);
 }
