@@ -3,2212 +3,463 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Eviction Overwatch (EO)</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><ellipse cx='32' cy='32' rx='30' ry='18' fill='none' stroke='%231a1a2e' stroke-width='4'/><circle cx='32' cy='32' r='10' fill='none' stroke='%231a1a2e' stroke-width='4'/><circle cx='32' cy='32' r='4' fill='%231a1a2e'/></svg>">
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<title>Nashville Eviction Tracker</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  :root {
-    --ink: #1a1a2e; --muted: #8a919e; --faint: #f0f0f5; --border: #e2e8f0;
-    --accent: #4a6cf7; --bg: #fafbfd; --card: #ffffff;
-  }
-  body { font-family: 'IBM Plex Sans', -apple-system, sans-serif; background: var(--bg); color: var(--ink); line-height: 1.5; -webkit-font-smoothing: antialiased; }
-  .shell { max-width: 1060px; margin: 0 auto; padding: 28px 20px 60px; }
-  h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.03em; }
-  .subtitle { font-size: 13px; color: var(--muted); margin-top: 4px; }
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:wght@400;600&display=swap');
 
-  /* ── Top nav ── */
-  .top-nav { display: flex; gap: 0; margin-bottom: 24px; border-bottom: 2px solid var(--border); }
-  .top-nav-btn {
-    padding: 10px 20px; font-size: 14px; font-weight: 600; cursor: pointer;
-    color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -2px;
-    transition: color .15s, border-color .15s; background: none; border-top: none;
-    border-left: none; border-right: none; font-family: inherit;
-  }
-  .top-nav-btn:hover { color: var(--ink); }
-  .top-nav-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+* { margin: 0; padding: 0; box-sizing: border-box; }
 
-  .chip-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 18px 0 14px; }
-  .chip {
-    padding: 5px 12px; border-radius: 6px; font-size: 12px; font-weight: 600;
-    cursor: pointer; border: 2px solid transparent; transition: border-color .15s, transform .1s; user-select: none;
-  }
-  .chip:hover { transform: translateY(-1px); }
-  .chip.active { border-color: currentColor; }
-  .chip-pending { background: #fef3c7; color: #92400e; }
-  .chip-closed  { background: #e0e7ff; color: #3730a3; }
-  .chip-unknown { background: #f3f4f6; color: #6b7280; }
+:root {
+  --bg: #141310;
+  --surface: #1a1914;
+  --border: #2a2820;
+  --text: #e2e0d8;
+  --muted: #7a7668;
+  --dim: #5a5648;
+  --gold: #c4a44a;
+  --gold-dim: #8a7a3a;
+  --pending: #e8a735;
+  --dismissed: #6b7280;
+  --mono: 'JetBrains Mono', 'SF Mono', monospace;
+  --serif: 'Source Serif 4', Georgia, serif;
+}
 
-  .controls { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
-  .controls input, .controls select {
-    padding: 8px 12px; border-radius: 6px; border: 1.5px solid var(--border);
-    font-size: 13px; font-family: inherit; background: var(--card); color: var(--ink);
-    transition: border-color .15s, box-shadow .15s;
-  }
-  .controls input:focus, .controls select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2.5px rgba(74,108,247,.12); }
-  .controls input { flex: 1; min-width: 220px; }
-  .controls select { cursor: pointer; }
-  .match-count { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+body {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
 
-  .table-wrap { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-  thead th {
-    text-align: left; padding: 8px; color: var(--muted); font-weight: 600;
-    font-size: 10px; text-transform: uppercase; letter-spacing: .06em; white-space: nowrap;
-    border-bottom: 2px solid var(--border); position: sticky; top: 0; background: var(--bg);
-    cursor: pointer; user-select: none; transition: color .15s;
-  }
-  thead th:hover { color: var(--ink); }
-  thead th .sort-arrow { font-size: 10px; margin-left: 3px; opacity: 0.4; }
-  thead th.sorted .sort-arrow { opacity: 1; color: var(--accent); }
-  thead th.no-sort { cursor: default; }
-  tbody tr { border-bottom: 1px solid var(--faint); cursor: pointer; transition: background .1s; }
-  tbody tr:hover { background: #f3f5fa; }
-  td { padding: 8px; }
-  td.mono { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
-  td.docket { color: var(--accent); font-weight: 500; }
-  td.ellip { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  td.dim { color: #6b7280; font-size: 11px; }
+#loading {
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  min-height: 100vh; gap: 16px;
+}
 
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; letter-spacing: .03em; white-space: nowrap; }
-  .b-pending  { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
-  .b-closed   { background: #e0e7ff; color: #3730a3; border: 1px solid #a5b4fc; }
-  .b-unknown  { background: #f3f4f6; color: #6b7280; border: 1px solid #d1d5db; }
-  .b-writ       { background: #fce4ec; color: #b71c1c; }
-  .b-possession { background: #fff3e0; color: #e65100; }
-  .b-nonsuit    { background: #e8f5e9; color: #2e7d32; }
-  .b-closedout  { background: #e0e7ff; color: #3730a3; }
-  .b-minimal    { background: #f3f4f6; color: #6b7280; }
-  .b-pendingout { background: #fef3c7; color: #92400e; }
-  .b-dismissed  { background: #f3e8ff; color: #7c3aed; }
-  .b-executed   { background: #fce4ec; color: #9f1239; }
-  .op-ins { background: #dbeafe; color: #1e40af; }
-  .op-upd { background: #fef3c7; color: #92400e; }
-  .op-del { background: #fce4ec; color: #b71c1c; }
-  .op-default { background: #f3f4f6; color: #6b7280; }
+.spinner {
+  width: 20px; height: 20px;
+  border: 2px solid var(--border);
+  border-top-color: var(--gold);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
 
-  .pager { display: flex; justify-content: center; align-items: center; gap: 8px; margin-top: 18px; }
-  .pager button {
-    padding: 5px 12px; border-radius: 4px; border: 1px solid var(--border); background: var(--card);
-    font-size: 12px; font-family: inherit; cursor: pointer; transition: background .1s;
-  }
-  .pager button:hover:not(:disabled) { background: #f3f5fa; }
-  .pager button:disabled { opacity: .4; cursor: default; }
-  .pager span { font-size: 12px; color: var(--muted); }
+@keyframes spin { to { transform: rotate(360deg); } }
 
-  .detail { animation: fadeIn .2s ease; }
-  .back-btn {
-    background: none; border: none; cursor: pointer; color: #4a5568;
-    font-size: 13px; font-family: inherit; padding: 4px 0; margin-bottom: 16px;
-    display: flex; align-items: center; gap: 4px;
-  }
-  .back-btn:hover { color: var(--accent); }
-  .detail-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
-  .detail-header h2 { font-family: 'JetBrains Mono', monospace; font-size: 20px; }
+header {
+  display: flex; justify-content: space-between; align-items: flex-end;
+  padding: 24px 24px 16px;
+  border-bottom: 1px solid var(--border);
+}
 
-  .field-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-bottom: 16px; }
-  .field-card { background: #f8f9fb; border-radius: 6px; padding: 10px 14px; }
-  .field-label { font-size: 10px; text-transform: uppercase; color: var(--muted); letter-spacing: .06em; margin-bottom: 3px; font-weight: 600; }
-  .field-value { font-size: 13px; color: var(--ink); font-weight: 500; word-break: break-word; }
-  .section-title { font-size: 14px; font-weight: 600; margin: 20px 0 10px; color: var(--ink); }
+h1 {
+  font-family: var(--serif);
+  font-size: 22px; font-weight: 400;
+  color: #f5f0e0; letter-spacing: -0.02em;
+}
 
-  .tabs { display: flex; gap: 0; margin-bottom: 16px; border-bottom: 2px solid var(--border); }
-  .tab {
-    padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
-    color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -2px;
-    transition: color .15s, border-color .15s; background: none; border-top: none;
-    border-left: none; border-right: none; font-family: inherit;
-  }
-  .tab:hover { color: var(--ink); }
-  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
-  .tab-count { display: inline-block; background: var(--faint); color: var(--muted); font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-left: 5px; font-weight: 600; }
+.subtitle { margin-top: 4px; font-size: 11px; color: var(--muted); letter-spacing: 0.04em; }
+.updated { font-size: 11px; color: var(--dim); text-align: right; }
 
-  .timeline { border-left: 2px solid var(--border); padding-left: 18px; margin-bottom: 24px; }
-  .tl-item { position: relative; margin-bottom: 12px; }
-  .tl-dot { position: absolute; left: -23px; top: 4px; width: 8px; height: 8px; border-radius: 50%; border: 2px solid #fff; }
-  .tl-dot.has-img { background: var(--accent); }
-  .tl-dot.no-img  { background: #cbd5e0; }
-  .tl-date { font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
-  .tl-desc { font-size: 13px; font-weight: 500; color: var(--ink); }
-  .tl-detail { font-size: 11px; color: #6b7280; }
+.stats-row {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 16px; padding: 16px 24px;
+  border-bottom: 1px solid var(--border);
+}
 
-  .j-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  .j-table th { text-align: left; padding: 6px 8px; color: var(--muted); font-weight: 600; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; border-bottom: 2px solid var(--border); }
-  .j-table td { padding: 6px 8px; border-bottom: 1px solid var(--faint); }
-  .j-table .jmono { font-family: 'JetBrains Mono', monospace; font-size: 11px; }
-  .j-table .jdim { color: #6b7280; }
+.stat-card {
+  padding: 12px 16px; background: var(--surface);
+  border-radius: 4px; border: 1px solid var(--border);
+}
 
-  .log-entry { padding: 10px 14px; border-radius: 6px; background: #f8f9fb; margin-bottom: 8px; border-left: 3px solid var(--border); transition: background .1s; }
-  .log-entry:hover { background: #f0f2f7; }
-  .log-entry.op-ins-border { border-left-color: #3b82f6; }
-  .log-entry.op-upd-border { border-left-color: #f59e0b; }
-  .log-entry.op-del-border { border-left-color: #ef4444; }
-  .log-header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
-  .log-ts { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted); }
-  .log-fields { font-size: 12px; color: #4a5568; line-height: 1.7; }
-  .log-field-label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
-  .log-field-value { font-weight: 500; }
-  .log-kv { display: inline-flex; gap: 4px; margin-right: 12px; margin-top: 2px; }
+.stat-label {
+  font-size: 10px; text-transform: uppercase;
+  letter-spacing: 0.1em; color: var(--dim); margin-bottom: 8px;
+}
 
-  .raw-block {
-    padding: 10px; background: #1a1a2e; color: #a5b4fc; border-radius: 6px;
-    font-family: 'JetBrains Mono', monospace; font-size: 11px;
-    overflow-x: auto; white-space: pre-wrap; word-break: break-all; max-height: 400px; overflow-y: auto;
-  }
+.stat-item {
+  display: flex; justify-content: space-between; padding: 3px 0;
+}
 
+.stat-link {
+  cursor: pointer; color: var(--gold); text-decoration: none;
+}
+.stat-link:hover { text-decoration: underline; }
 
-  /* ── Upload panel ── */
-  .upload-zone {
-    border: 2px dashed var(--border); border-radius: 10px; padding: 40px 20px;
-    text-align: center; cursor: pointer; transition: border-color .2s, background .2s;
-    margin-bottom: 20px; background: var(--card);
-  }
-  .upload-zone:hover, .upload-zone.dragover { border-color: var(--accent); background: #eef2ff; }
-  .upload-zone input[type="file"] { display: none; }
-  .upload-zone .uz-icon { font-size: 36px; margin-bottom: 8px; }
-  .upload-zone .uz-label { font-size: 14px; font-weight: 600; color: var(--ink); }
-  .upload-zone .uz-hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.stat-count { color: var(--dim); font-variant-numeric: tabular-nums; }
 
-  .upload-preview { margin-bottom: 20px; }
-  .upload-preview table { font-size: 12px; }
-  .upload-preview tbody tr { cursor: default; }
-  .upload-preview tbody tr:hover { background: #f8f9fb; }
+.toolbar {
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border);
+}
 
-  .upload-actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 20px; }
-  .btn {
-    padding: 8px 20px; border-radius: 6px; font-size: 13px; font-weight: 600;
-    font-family: inherit; cursor: pointer; transition: background .15s, transform .1s; border: none;
-  }
-  .btn:hover { transform: translateY(-1px); }
-  .btn:disabled { opacity: .5; cursor: default; transform: none; }
-  .btn-primary { background: var(--accent); color: #fff; }
-  .btn-primary:hover:not(:disabled) { background: #3b5de7; }
-  .btn-secondary { background: var(--faint); color: var(--ink); border: 1px solid var(--border); }
-  .btn-secondary:hover:not(:disabled) { background: #e2e8f0; }
-  .btn-danger { background: #fce4ec; color: #b71c1c; }
+#search {
+  width: 100%; padding: 8px 12px; font-size: 12px;
+  font-family: var(--mono); color: var(--text);
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 4px; outline: none; margin-bottom: 10px;
+}
+#search:focus { border-color: var(--gold-dim); }
 
-  .progress-bar-wrap {
-    width: 100%; height: 8px; background: var(--faint); border-radius: 4px;
-    overflow: hidden; margin: 12px 0;
-  }
-  .progress-bar {
-    height: 100%; background: var(--accent); border-radius: 4px;
-    transition: width .2s ease;
-  }
+.filter-row {
+  display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+}
 
-  .upload-log {
-    max-height: 200px; overflow-y: auto; font-family: 'JetBrains Mono', monospace;
-    font-size: 11px; padding: 10px; background: #f8f9fb; border-radius: 6px;
-    border: 1px solid var(--border); margin-top: 12px;
-  }
-  .upload-log .log-ok { color: #065f46; }
-  .upload-log .log-err { color: #b91c1c; }
-  .upload-log .log-skip { color: #92400e; }
+.filter-btn {
+  padding: 4px 10px; font-size: 11px;
+  font-family: var(--mono); color: var(--muted);
+  background: transparent; border: 1px solid var(--border);
+  border-radius: 3px; cursor: pointer; position: relative;
+}
+.filter-btn:hover { border-color: var(--muted); }
+.filter-btn.active { color: var(--gold); border-color: var(--gold); }
 
-  .upload-stats {
-    display: flex; gap: 16px; flex-wrap: wrap; margin: 12px 0;
-  }
-  .upload-stat {
-    padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 600;
-  }
+.clear-x {
+  margin-left: 6px; cursor: pointer; font-weight: bold;
+}
 
-  .row-status-ok { color: #065f46; }
-  .row-status-err { color: #b91c1c; }
-  .row-status-skip { color: #92400e; }
-  .row-status-pending { color: var(--muted); }
+.dropdown {
+  position: absolute; top: 100%; left: 0; z-index: 50;
+  min-width: 300px; max-height: 320px; overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 4px; margin-top: 4px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+}
 
-  .spinner-wrap { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 50px 0; }
-  .spinner { width: 22px; height: 22px; border: 2.5px solid #ddd; border-top: 2.5px solid var(--ink); border-radius: 50%; animation: spin .8s linear infinite; }
-  .error-box { padding: 20px; background: #fef2f2; border-radius: 8px; color: #b91c1c; font-size: 13px; }
+.dropdown-item {
+  display: flex; justify-content: space-between;
+  padding: 6px 12px; cursor: pointer;
+  border-bottom: 1px solid #1f1d17;
+}
+.dropdown-item:hover { background: rgba(196,164,74,0.08); }
 
-  /* ── Background ingestion banner ── */
-  .ingest-banner {
-    display: flex; align-items: center; gap: 10px; padding: 8px 14px;
-    background: linear-gradient(135deg, #eff6ff, #f0f4ff); border: 1px solid #bfdbfe;
-    border-radius: 8px; margin-bottom: 12px; font-size: 12px; color: #1e40af;
-  }
-  .ingest-banner .ingest-spinner {
-    width: 14px; height: 14px; border: 2px solid #93c5fd; border-top: 2px solid #2563eb;
-    border-radius: 50%; animation: spin .8s linear infinite; flex-shrink: 0;
-  }
-  .ingest-banner .ingest-bar-wrap {
-    flex: 1; height: 6px; background: #dbeafe; border-radius: 3px; overflow: hidden;
-    min-width: 80px; max-width: 200px;
-  }
-  .ingest-banner .ingest-bar {
-    height: 100%; background: #3b82f6; border-radius: 3px;
-    transition: width .3s ease;
-  }
-  .ingest-banner .ingest-count {
-    font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: 12px;
-    white-space: nowrap;
-  }
+.dropdown-count { color: var(--dim); font-size: 11px; }
 
-  /* ── Password gate ── */
-  .login-overlay {
-    position: fixed; inset: 0; background: var(--bg);
-    display: flex; align-items: center; justify-content: center;
-    z-index: 1000;
-  }
-  .login-box {
-    background: var(--card); border-radius: 12px; padding: 40px;
-    box-shadow: 0 4px 24px rgba(0,0,0,.08); max-width: 380px; width: 100%; text-align: center;
-  }
-  .login-box h2 { font-size: 20px; font-weight: 700; margin-bottom: 4px; letter-spacing: -0.03em; }
-  .login-box .login-sub { font-size: 13px; color: var(--muted); margin-bottom: 24px; }
-  .login-box input[type="password"] {
-    width: 100%; padding: 10px 14px; border-radius: 6px; border: 1.5px solid var(--border);
-    font-size: 14px; font-family: inherit; margin-bottom: 12px;
-    transition: border-color .15s, box-shadow .15s;
-  }
-  .login-box input[type="password"]:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2.5px rgba(74,108,247,.12); }
-  .login-box .login-btn {
-    width: 100%; padding: 10px; border-radius: 6px; background: var(--accent); color: #fff;
-    font-size: 14px; font-weight: 600; border: none; cursor: pointer; font-family: inherit;
-    transition: background .15s;
-  }
-  .login-box .login-btn:hover { background: #3b5de7; }
-  .login-error { color: #b91c1c; font-size: 12px; margin-top: 8px; min-height: 18px; }
+.result-count { margin-top: 8px; font-size: 11px; color: var(--dim); }
 
-  /* ── Schema tooltip ── */
-  .schema-tip-wrap { position: relative; display: inline-block; vertical-align: middle; margin-left: 6px; }
-  .schema-tip-icon {
-    display: inline-flex; align-items: center; justify-content: center;
-    width: 18px; height: 18px; border-radius: 50%; background: var(--border);
-    color: var(--muted); font-size: 11px; font-weight: 700; cursor: help;
-    transition: background .15s, color .15s;
-  }
-  .schema-tip-wrap:hover .schema-tip-icon { background: var(--accent); color: #fff; }
-  .schema-tip-content {
-    display: none; position: absolute; bottom: calc(100% + 10px); left: 50%; transform: translateX(-50%);
-    background: #1a1a2e; color: #e2e8f0; padding: 14px 18px; border-radius: 8px;
-    font-size: 11px; font-family: 'JetBrains Mono', monospace; white-space: nowrap;
-    box-shadow: 0 8px 24px rgba(0,0,0,.2); z-index: 100; line-height: 1.9; text-align: left;
-  }
-  .schema-tip-content::after {
-    content: ''; position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
-    border: 6px solid transparent; border-top-color: #1a1a2e;
-  }
-  .schema-tip-wrap:hover .schema-tip-content { display: block; }
-  .schema-tip-content .col-required { color: #fbbf24; }
-  .schema-tip-content .col-optional { color: #94a3b8; }
+.table-wrap { overflow-x: auto; }
 
-  /* ── Snapshot disclaimer ── */
-  .snapshot-banner {
-    display: flex; align-items: flex-start; gap: 10px;
-    background: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px;
-    padding: 12px 16px; margin-bottom: 18px; font-size: 12px; color: #92400e; line-height: 1.6;
-  }
-  .snapshot-banner .sb-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
-  .snapshot-banner strong { color: #78350f; }
-  .snapshot-banner .sb-dismiss {
-    margin-left: auto; background: none; border: none; cursor: pointer;
-    color: #b45309; font-size: 16px; padding: 0 0 0 12px; flex-shrink: 0; font-family: inherit;
-  }
-  .snapshot-banner .sb-dismiss:hover { color: #78350f; }
+table {
+  width: 100%; min-width: 1100px;
+  border-collapse: collapse;
+}
 
-  .snapshot-note {
-    font-size: 11px; color: #92400e; background: #fffbeb; border-radius: 4px;
-    padding: 4px 8px; display: inline-block; margin-top: 4px; line-height: 1.5;
-  }
+th {
+  padding: 10px 12px; font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--dim); cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  text-align: left; position: sticky; top: 0;
+  background: var(--bg); user-select: none;
+  white-space: nowrap;
+}
+th:hover { color: var(--muted); }
+th .arrow { margin-left: 4px; opacity: 0.6; }
 
-  .data-age { font-size: 10px; color: var(--muted); font-style: italic; }
+td {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--surface);
+  white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; max-width: 280px;
+  line-height: 1.4;
+}
 
-  /* ── Refresh button ── */
-  .refresh-btn {
-    padding: 5px 12px; border-radius: 5px; font-size: 11px; font-weight: 600;
-    font-family: inherit; cursor: pointer; border: 1.5px solid var(--border);
-    background: var(--card); color: var(--ink); transition: background .15s, border-color .15s, transform .2s;
-    display: inline-flex; align-items: center; gap: 5px;
-  }
-  .refresh-btn:hover { background: #f3f5fa; border-color: var(--accent); color: var(--accent); }
-  .refresh-btn.refreshing { pointer-events: none; opacity: .6; }
-  .refresh-btn.refreshing .refresh-icon { animation: spin .8s linear infinite; }
-  .refresh-icon { display: inline-block; font-size: 13px; line-height: 1; }
+tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 
-  /* ── Scraper activity panel ── */
-  .scraper-panel {
-    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
-    padding: 20px; margin-bottom: 20px;
-  }
-  .scraper-header {
-    display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap;
-  }
-  .scraper-header h3 { font-size: 15px; font-weight: 700; }
-  .scraper-status-dot {
-    width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0;
-  }
-  .scraper-status-dot.active { background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,.5); animation: pulse-dot 2s ease infinite; }
-  .scraper-status-dot.idle { background: #94a3b8; }
-  .scraper-status-dot.stale { background: #f59e0b; }
-  .scraper-status-label { font-size: 12px; font-weight: 600; }
-  .scraper-status-label.active { color: #16a34a; }
-  .scraper-status-label.idle { color: var(--muted); }
-  .scraper-status-label.stale { color: #d97706; }
+.docket { color: var(--gold); font-weight: 500; }
 
-  .scraper-stats {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 10px; margin-bottom: 16px;
-  }
-  .scraper-stat-card {
-    background: var(--faint); border-radius: 6px; padding: 10px 14px; text-align: center;
-  }
-  .scraper-stat-val { font-size: 18px; font-weight: 700; color: var(--ink); font-family: 'JetBrains Mono', monospace; }
-  .scraper-stat-lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; margin-top: 2px; }
+.dot {
+  display: inline-block; width: 7px; height: 7px;
+  border-radius: 50%; margin-right: 6px; vertical-align: middle;
+}
+.dot-pending { background: var(--pending); }
+.dot-dismissed { background: var(--dismissed); }
+.dot-other { background: #3b82f6; }
 
-  .activity-feed { max-height: 320px; overflow-y: auto; }
-  .activity-item {
-    display: flex; align-items: flex-start; gap: 10px; padding: 8px 0;
-    border-bottom: 1px solid var(--faint); font-size: 12px;
-  }
-  .activity-item:last-child { border-bottom: none; }
-  .activity-ts { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted); white-space: nowrap; min-width: 130px; flex-shrink: 0; }
-  .activity-body { flex: 1; }
-  .activity-docket { font-weight: 600; color: var(--accent); cursor: pointer; }
-  .activity-docket:hover { text-decoration: underline; }
-  .activity-op { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px; }
-  .activity-step { font-size: 10px; color: var(--muted); }
-
-  @keyframes pulse-dot {
-    0%, 100% { opacity: 1; }
-    50% { opacity: .5; }
-  }
-
-  /* ── Export bar ── */
-  .export-bar {
-    display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
-  }
-  .export-btn {
-    padding: 5px 12px; border-radius: 5px; font-size: 11px; font-weight: 600;
-    font-family: inherit; cursor: pointer; border: 1.5px solid var(--border);
-    background: var(--card); color: var(--ink); transition: background .15s, border-color .15s;
-    display: inline-flex; align-items: center; gap: 4px;
-  }
-  .export-btn:hover { background: #f3f5fa; border-color: var(--accent); color: var(--accent); }
-  .export-btn svg { width: 13px; height: 13px; }
-  .export-btn.db-saving { background: #fef3c7; border-color: #f59e0b; color: #92400e; cursor: wait; }
-  .export-btn.db-done { background: #d1fae5; border-color: #10b981; color: #065f46; }
-  .db-status { font-size: 10px; color: var(--muted); margin-left: 4px; white-space: nowrap; }
-
-  /* ── Pivot table ── */
-  .pivot-select {
-    padding: 8px 12px; border-radius: 6px; border: 1.5px solid var(--border);
-    font-size: 13px; font-family: inherit; background: var(--card); color: var(--ink);
-    cursor: pointer; transition: border-color .15s, box-shadow .15s;
-  }
-  .pivot-select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2.5px rgba(74,108,247,.12); }
-  .pivot-active { border-color: var(--accent); background: #eef2ff; }
-
-  .pivot-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-  .pivot-table thead th {
-    text-align: left; padding: 8px 10px; color: var(--muted); font-weight: 600;
-    font-size: 10px; text-transform: uppercase; letter-spacing: .06em; white-space: nowrap;
-    border-bottom: 2px solid var(--border); position: sticky; top: 0; background: var(--bg);
-    cursor: pointer; user-select: none; transition: color .15s;
-  }
-  .pivot-table thead th:hover { color: var(--ink); }
-  .pivot-table thead th.p-sorted { color: var(--accent); }
-  .pivot-table thead th.no-sort { cursor: default; }
-  .pivot-table thead th .sort-arrow { font-size: 10px; margin-left: 3px; opacity: 0.4; }
-  .pivot-table thead th.p-sorted .sort-arrow { opacity: 1; color: var(--accent); }
-  .pivot-table tbody tr { border-bottom: 1px solid var(--faint); cursor: pointer; transition: background .1s; }
-  .pivot-table tbody tr:hover { background: #f3f5fa; }
-  .pivot-table td { padding: 8px 10px; }
-  .pivot-table td.pv-name { font-weight: 500; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .pivot-table td.pv-total { font-weight: 700; font-family: 'JetBrains Mono', monospace; font-size: 13px; }
-  .pivot-table td.pv-num { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #4a5568; text-align: center; }
-  .pivot-table td.pv-num.has-val { background: #f0f4ff; font-weight: 600; color: var(--ink); }
-  .pivot-table td.pv-zero { color: #d1d5db; text-align: center; font-size: 12px; }
-  .pivot-table tfoot td { padding: 8px 10px; font-weight: 700; border-top: 2px solid var(--border); font-family: 'JetBrains Mono', monospace; font-size: 12px; }
-  .pivot-table tfoot td.pv-num { text-align: center; }
-
-  .pivot-summary {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    gap: 8px; margin-bottom: 16px;
-  }
-  .pivot-stat {
-    background: var(--faint); border-radius: 6px; padding: 10px 12px; text-align: center;
-  }
-  .pivot-stat-val { font-size: 20px; font-weight: 700; color: var(--ink); font-family: 'JetBrains Mono', monospace; }
-  .pivot-stat-lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; margin-top: 2px; }
-
-  .pivot-back {
-    background: none; border: none; cursor: pointer; color: var(--accent);
-    font-size: 12px; font-weight: 600; font-family: inherit; padding: 4px 0; margin-bottom: 8px;
-    display: inline-flex; align-items: center; gap: 4px;
-  }
-  .pivot-back:hover { text-decoration: underline; }
-
-  /* ── Enrich panel ── */
-  .enrich-panel { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 20px; }
-  .enrich-header { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
-  .enrich-header h3 { font-size: 15px; font-weight: 700; }
-  .enrich-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 16px; }
-  .enrich-stat-card { background: var(--faint); border-radius: 6px; padding: 10px 14px; text-align: center; }
-  .enrich-stat-val { font-size: 18px; font-weight: 700; color: var(--ink); font-family: 'JetBrains Mono', monospace; }
-  .enrich-stat-lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; margin-top: 2px; }
-  .enrich-log { max-height: 300px; overflow-y: auto; font-family: 'JetBrains Mono', monospace; font-size: 11px; padding: 10px; background: #f8f9fb; border-radius: 6px; border: 1px solid var(--border); margin-top: 12px; }
-  .enrich-log .e-ok { color: #065f46; }
-  .enrich-log .e-err { color: #b91c1c; }
-  .enrich-log .e-skip { color: #92400e; }
-  .enrich-log .e-info { color: #1e40af; }
-
-
-  @keyframes spin { to { transform: rotate(360deg); } }
-  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
-  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+#error { color: #ef4444; text-align: center; padding: 40px; }
 </style>
 </head>
 <body>
-<div class="login-overlay" id="loginOverlay">
-  <div class="login-box">
-    <img src="https://storage.googleapis.com/intelechia-content/im/misc%20images/Eviction%20OVERWATCH%20(2000%20x%201000%20px).png" alt="Eviction Overwatch" style="height:48px;margin-bottom:12px">
-    <div class="login-sub">Enter password to continue</div>
-    <input type="password" id="loginPassword" placeholder="Password" onkeydown="if(event.key==='Enter')checkPassword()">
-    <button class="login-btn" onclick="checkPassword()">Enter</button>
-    <div class="login-error" id="loginError"></div>
+
+<div id="loading">
+  <div class="spinner"></div>
+  <div>Loading cases.json...</div>
+</div>
+
+<div id="app" style="display:none">
+  <header>
+    <div>
+      <h1>Nashville Eviction Tracker</h1>
+      <div class="subtitle" id="subtitle"></div>
+    </div>
+    <div class="updated" id="updated"></div>
+  </header>
+
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="stat-label">Top Districts</div>
+      <div id="top-districts"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Top Attorneys</div>
+      <div id="top-attorneys"></div>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <input id="search" placeholder="Search docket, plaintiff, attorney, address...">
+    <div class="filter-row" id="filters"></div>
+    <div class="result-count" id="result-count"></div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr id="thead"></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
   </div>
 </div>
-<div class="shell" id="mainShell" style="display:none">
-  <img src="https://storage.googleapis.com/intelechia-content/im/misc%20images/Eviction%20OVERWATCH%20(2000%20x%201000%20px).png" alt="Eviction Overwatch" style="height:52px;margin-bottom:6px">
-  <div class="snapshot-banner" id="snapshotBanner">
-    <span class="sb-icon">&#9432;</span>
-    <div>
-      <strong>Snapshot data — not a live feed.</strong>
-      All statuses, dates, and case outcomes shown here reflect a point-in-time observation from court records. A case marked "Pending" may have since been resolved, and dates may no longer be current.
-      This tool is for research and reference only — always verify with official court records before taking action.
-      <span id="dataAgeNote" class="data-age"></span>
-    </div>
-    <button class="sb-dismiss" onclick="document.getElementById('snapshotBanner').style.display='none'" title="Dismiss">&times;</button>
-  </div>
-  <div class="top-nav">
-    <button class="top-nav-btn active" id="navExplore" onclick="switchView('explore')">Explorer</button>
-    <button class="top-nav-btn" id="navActivity" onclick="switchView('activity')">Scraper Activity</button>
-    <button class="top-nav-btn" id="navUpload" onclick="switchView('upload')">CSV Upload</button>
-    <button class="top-nav-btn" id="navEnrich" onclick="switchView('enrich')">Enrich Data</button>
-  </div>
-  <div id="exploreView"><div class="ingest-banner"><div class="ingest-spinner"></div><span>Connecting to server…</span><div class="ingest-bar-wrap"><div class="ingest-bar" style="width:0%"></div></div><span class="ingest-count">0</span></div></div>
-  <div id="activityView" style="display:none"></div>
-  <div id="uploadView" style="display:none"></div>
-  <div id="enrichView" style="display:none"></div>
-  </div>
+
+<div id="error" style="display:none"></div>
 
 <script>
-// ══════════════════════════════════════════════════════════
-// PASSWORD GATE
-// ══════════════════════════════════════════════════════════
-const PASSWORD_HASH = "04406d560e538ea7e8b0c4e3061953003cf4039d116f9056503c13f39bee6a98";
-// Google Maps API key, encrypted with AES-256-GCM keyed from the password hash
-const GMAPS_ENC = "391cbcbb4bb4e9ebf5014ab2179105c57f3fae18b58808f59547d553f6aadd7176da772bb4db3591f60173ac8aec5eb01b542220a405b425f9f338ad6df97fa25a8875229fcb8843efc89e217d84bd687821c0";
-let _gmapsKey = null; // decrypted at login
+const GITHUB_RAW = "https://raw.githubusercontent.com/clovenbradshaw-ctrl/plain-text/main/cases.json";
 
-function hexToBytes(hex) {
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < hex.length; i += 2) bytes[i / 2] = parseInt(hex.substr(i, 2), 16);
-  return bytes;
+const COLUMNS = [
+  { key: "docket", label: "Docket" },
+  { key: "file_date", label: "Filed" },
+  { key: "status", label: "Status" },
+  { key: "Plaintiff_1", label: "Plaintiff" },
+  { key: "Attorney", label: "Attorney" },
+  { key: "address_formatted", label: "Address" },
+  { key: "council_district", label: "Council" },
+  { key: "council_rep", label: "Council Rep" },
+  { key: "state_house_district", label: "State House" },
+  { key: "us_congressional_district", label: "US Cong." },
+];
+
+const FILTER_FIELDS = [
+  { key: "status", label: "Status" },
+  { key: "council_district", label: "Council District" },
+  { key: "Attorney", label: "Attorney" },
+  { key: "Plaintiff_1", label: "Plaintiff" },
+];
+
+let allRows = [];
+let sortCol = "file_date";
+let sortDir = -1;
+let filters = {};
+let activeDropdown = null;
+
+function shorten(val, prefix) {
+  return (val || "").replace(prefix, "D");
 }
 
-async function decryptGmapsKey(passwordHash) {
+async function loadData() {
   try {
-    const blob = hexToBytes(GMAPS_ENC);
-    const salt = blob.slice(0, 16);
-    const iv = blob.slice(16, 28);
-    const authTag = blob.slice(28, 44);
-    const ciphertext = blob.slice(44);
-    // Combine ciphertext + authTag for WebCrypto (it expects them concatenated)
-    const combined = new Uint8Array(ciphertext.length + authTag.length);
-    combined.set(ciphertext);
-    combined.set(authTag, ciphertext.length);
-    // Derive AES key from password hash using PBKDF2
-    const keyMaterial = await crypto.subtle.importKey("raw", new TextEncoder().encode(passwordHash), "PBKDF2", false, ["deriveKey"]);
-    const aesKey = await crypto.subtle.deriveKey(
-      { name: "PBKDF2", salt: salt, iterations: 100000, hash: "SHA-256" },
-      keyMaterial,
-      { name: "AES-GCM", length: 256 },
-      false,
-      ["decrypt"]
-    );
-    const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv: iv }, aesKey, combined);
-    return new TextDecoder().decode(decrypted);
+    const resp = await fetch(GITHUB_RAW);
+    let data = await resp.json();
+
+    // Auto-decompress gzip+base64
+    if (data.format === "gzip+base64" && data.data) {
+      const bin = Uint8Array.from(atob(data.data), c => c.charCodeAt(0));
+      const raw = pako.inflate(bin, { to: "string" });
+      data = JSON.parse(raw);
+    }
+
+    const cases = data.cases || {};
+    allRows = Object.entries(cases).map(([docket, c]) => ({
+      docket,
+      ...c,
+      Defendant_1: (c.Defendant_1 || "").startsWith("ENC:") ? "—" : c.Defendant_1 || "",
+    }));
+
+    document.getElementById("loading").style.display = "none";
+    document.getElementById("app").style.display = "block";
+    document.getElementById("updated").textContent = "Updated " + (data.updated_at || "—").split("T")[0];
+
+    const enriched = allRows.filter(r => r.enriched).length;
+    const withDistrict = allRows.filter(r => r.council_district).length;
+    document.getElementById("subtitle").textContent =
+      `${allRows.length} cases · ${enriched} enriched · ${withDistrict} with districts`;
+
+    buildStats();
+    buildFilters();
+    buildHeader();
+    render();
   } catch (e) {
-    console.warn("Failed to decrypt Google Maps key:", e);
-    return null;
+    document.getElementById("loading").style.display = "none";
+    document.getElementById("error").style.display = "block";
+    document.getElementById("error").textContent = "Error: " + e.message;
   }
 }
 
-async function hashInput(str) {
-  const data = new TextEncoder().encode(str);
-  const buf = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
-}
-
-async function checkPassword() {
-  const input = document.getElementById("loginPassword").value;
-  const hashed = await hashInput(input);
-  if (hashed === PASSWORD_HASH) {
-    sessionStorage.setItem("eo_auth", "1");
-    document.getElementById("loginOverlay").style.display = "none";
-    document.getElementById("mainShell").style.display = "";
-    // Decrypt the Google Maps API key in the background
-    _gmapsKey = await decryptGmapsKey(hashed);
-  } else {
-    document.getElementById("loginError").textContent = "Incorrect password. Please try again.";
-    document.getElementById("loginPassword").value = "";
-    document.getElementById("loginPassword").focus();
-  }
-}
-
-// Restore session
-if (sessionStorage.getItem("eo_auth") === "1") {
-  document.getElementById("loginOverlay").style.display = "none";
-  document.getElementById("mainShell").style.display = "";
-  // Decrypt Google Maps key using the stored password hash
-  decryptGmapsKey(PASSWORD_HASH).then(k => { _gmapsKey = k; });
-}
-
-// ══════════════════════════════════════════════════════════
-// SHARED
-// ══════════════════════════════════════════════════════════
-const API_READ = "https://xvkq-pq7i-idtl.n7d.xano.io/api:3CsVHkZK/eviction_current_state";
-const API_WRITE = "https://xvkq-pq7i-idtl.n7d.xano.io/api:3CsVHkZK/update_eviction_state";
-const PER_PAGE = 50;
-const API_PAGE_SIZE = 2500; // Xano returns 2500 records per page (server-configured)
-
-// ══════════════════════════════════════════════════════════
-// IndexedDB – persistent local cache of all cases
-// ══════════════════════════════════════════════════════════
-const IDB_NAME = "EvictionOverwatch";
-const IDB_VERSION = 1;
-const IDB_STORE = "cases";
-const IDB_META = "meta";
-
-function openDB() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(IDB_NAME, IDB_VERSION);
-    req.onupgradeneeded = (e) => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains(IDB_STORE)) {
-        db.createObjectStore(IDB_STORE, { keyPath: "id" });
-      }
-      if (!db.objectStoreNames.contains(IDB_META)) {
-        db.createObjectStore(IDB_META, { keyPath: "key" });
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+function buildStats() {
+  const districts = {}, attorneys = {};
+  allRows.forEach(r => {
+    if (r.council_district) districts[r.council_district] = (districts[r.council_district] || 0) + 1;
+    const a = r.Attorney;
+    if (a && a !== ", PRS") attorneys[a] = (attorneys[a] || 0) + 1;
   });
+
+  const topD = Object.entries(districts).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const topA = Object.entries(attorneys).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+  document.getElementById("top-districts").innerHTML = topD.map(([d, c]) =>
+    `<div class="stat-item"><span class="stat-link" onclick="setFilter('council_district','${d}')">${shorten(d, "Council District ")}</span><span class="stat-count">${c}</span></div>`
+  ).join("");
+
+  document.getElementById("top-attorneys").innerHTML = topA.map(([a, c]) =>
+    `<div class="stat-item"><span class="stat-link" onclick="setFilter('Attorney','${a.replace(/'/g, "\\'")}')">${a.split(",")[0]}</span><span class="stat-count">${c}</span></div>`
+  ).join("");
 }
 
-async function idbSaveAllCases(items) {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction([IDB_STORE, IDB_META], "readwrite");
-    const store = tx.objectStore(IDB_STORE);
-    const meta = tx.objectStore(IDB_META);
-    // Clear old data and write fresh
-    store.clear();
-    items.forEach(item => store.put(item));
-    meta.put({ key: "lastSaved", value: new Date().toISOString(), count: items.length });
-    tx.oncomplete = () => { db.close(); resolve(items.length); };
-    tx.onerror = () => { db.close(); reject(tx.error); };
-  });
+function buildFilters() {
+  const el = document.getElementById("filters");
+  el.innerHTML = FILTER_FIELDS.map(f =>
+    `<div style="position:relative"><button class="filter-btn" id="fbtn-${f.key}" onclick="toggleDropdown('${f.key}')">${f.label}</button><div class="dropdown" id="dd-${f.key}" style="display:none"></div></div>`
+  ).join("");
 }
 
-async function idbLoadAllCases() {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction([IDB_STORE, IDB_META], "readonly");
-    const store = tx.objectStore(IDB_STORE);
-    const meta = tx.objectStore(IDB_META);
-    const itemsReq = store.getAll();
-    const metaReq = meta.get("lastSaved");
-    tx.oncomplete = () => {
-      db.close();
-      resolve({ items: itemsReq.result || [], meta: metaReq.result || null });
-    };
-    tx.onerror = () => { db.close(); reject(tx.error); };
-  });
-}
-
-async function idbGetMeta() {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(IDB_META, "readonly");
-    const meta = tx.objectStore(IDB_META);
-    const req = meta.get("lastSaved");
-    tx.oncomplete = () => { db.close(); resolve(req.result || null); };
-    tx.onerror = () => { db.close(); reject(tx.error); };
-  });
-}
-
-let _lastIdbSave = null; // tracks last save metadata
-let currentView = "explore";
-
-function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
-
-function switchView(view) {
-  currentView = view;
-  document.getElementById("navExplore").classList.toggle("active", view === "explore");
-  document.getElementById("navActivity").classList.toggle("active", view === "activity");
-  document.getElementById("navUpload").classList.toggle("active", view === "upload");
-  document.getElementById("navEnrich").classList.toggle("active", view === "enrich");
-  document.getElementById("exploreView").style.display = view === "explore" ? "" : "none";
-  document.getElementById("activityView").style.display = view === "activity" ? "" : "none";
-  document.getElementById("uploadView").style.display = view === "upload" ? "" : "none";
-  document.getElementById("enrichView").style.display = view === "enrich" ? "" : "none";
-  if (view === "upload") renderUpload();
-  if (view === "activity") renderActivity();
-  if (view === "enrich") renderEnrich();
-}
-
-// ══════════════════════════════════════════════════════════
-// UPLOAD MODULE
-// ══════════════════════════════════════════════════════════
-let uploadRows = [];       // parsed CSV rows
-let uploadResults = [];    // per-row status: null | 'ok' | 'error' | 'skip'
-let uploadRunning = false;
-let uploadDone = 0;
-let uploadErrors = 0;
-let uploadSkipped = 0;
-let uploadLogLines = [];
-
-// CSV column → state_data field mapping
-// CSV: Office, Docket #, Status, File Date, Description, Plaintiff, Pltf. Attorney, Defendant, Def. Attorney
-function csvRowToPayload(row) {
-  const docket = (row["Docket #"] || row["Docket_#"] || row["docket_number"] || row["Docket"] || "").trim();
-  if (!docket) return null;
-
-  const fileDateRaw = (row["File Date"] || row["File_Date"] || row["file_date"] || "").trim();
-  // Convert MM/DD/YYYY → YYYY-MM-DD for the file_date param
-  let fileDateISO = null;
-  const dm = fileDateRaw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (dm) fileDateISO = `${dm[3]}-${dm[1].padStart(2,"0")}-${dm[2].padStart(2,"0")}`;
-
-  const now = new Date().toISOString();
-
-  const stateData = {
-    step: "csv_upload",
-    office:        (row["Office"] || "").trim(),
-    status:        (row["Status"] || "").trim().toUpperCase(),
-    case_type:     (row["Description"] || "").trim(),
-    plaintiff:     (row["Plaintiff"] || row["Plaintiff_Petitioner"] || "").trim(),
-    defendant:     (row["Defendant"] || row["Defendant_Respondent"] || "").trim(),
-    attorney:      (row["Pltf. Attorney"] || row["Pltf_Attorney"] || row["Attorney"] || "").trim(),
-    def_attorney:  (row["Def. Attorney"] || row["Def_Attorney"] || "").trim(),
-    file_date_raw: fileDateRaw,
-    scraped_at:    now,
-    individual_ll: false,
-  };
-
-  // Strip empty strings
-  Object.keys(stateData).forEach(k => { if (stateData[k] === "") delete stateData[k]; });
-
-  return {
-    docket_number: docket,
-    state_data: stateData,
-    updated_at: now,
-    file_date: fileDateISO,
-  };
-}
-
-async function postOneRow(payload) {
-  const resp = await fetch(API_WRITE, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(`${resp.status}: ${text.substring(0, 200)}`);
-  }
-  return await resp.json();
-}
-
-async function runUpload() {
-  if (uploadRunning || !uploadRows.length) return;
-  uploadRunning = true;
-  uploadDone = 0; uploadErrors = 0; uploadSkipped = 0;
-  uploadResults = new Array(uploadRows.length).fill(null);
-  uploadLogLines = [];
-  renderUpload();
-
-  const THROTTLE = 200; // ms between requests
-
-  for (let i = 0; i < uploadRows.length; i++) {
-    const row = uploadRows[i];
-    const payload = csvRowToPayload(row);
-
-    if (!payload) {
-      uploadResults[i] = "skip";
-      uploadSkipped++;
-      uploadLogLines.push({ type: "skip", msg: `Row ${i+1}: skipped (no docket number)` });
-      uploadDone++;
-      renderUpload();
-      continue;
-    }
-
-    try {
-      await postOneRow(payload);
-      uploadResults[i] = "ok";
-      uploadLogLines.push({ type: "ok", msg: `Row ${i+1}: ✓ ${payload.docket_number}` });
-    } catch (e) {
-      uploadResults[i] = "error";
-      uploadErrors++;
-      uploadLogLines.push({ type: "err", msg: `Row ${i+1}: ✗ ${payload.docket_number} — ${e.message}` });
-    }
-
-    uploadDone++;
-    // Render every 5 rows or on last
-    if (i % 5 === 0 || i === uploadRows.length - 1) renderUpload();
-    if (i < uploadRows.length - 1) await new Promise(r => setTimeout(r, THROTTLE));
-  }
-
-  uploadRunning = false;
-  renderUpload();
-}
-
-function clearUpload() {
-  uploadRows = [];
-  uploadResults = [];
-  uploadDone = 0; uploadErrors = 0; uploadSkipped = 0;
-  uploadLogLines = [];
-  uploadRunning = false;
-  renderUpload();
-}
-
-function handleCSVFile(file) {
-  if (!file) return;
-  Papa.parse(file, {
-    header: true,
-    skipEmptyLines: true,
-    complete: function(results) {
-      uploadRows = results.data.filter(r => {
-        // At least one non-empty field
-        return Object.values(r).some(v => v && v.trim());
-      });
-      uploadResults = new Array(uploadRows.length).fill(null);
-      uploadDone = 0; uploadErrors = 0; uploadSkipped = 0;
-      uploadLogLines = [];
-      renderUpload();
-    },
-    error: function(err) {
-      alert("CSV parse error: " + err.message);
-    }
-  });
-}
-
-function renderUpload() {
-  const el = document.getElementById("uploadView");
-  let h = "";
-
-  if (!uploadRows.length) {
-    // Drop zone
-    h += `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:14px 16px;font-size:13px;color:#1e40af;margin-bottom:16px;line-height:1.6">
-      <strong>Missing records?</strong> You can upload a CSV export from <strong>CaseLink</strong> to supplement the data.
-      If it looks like the system is missing cases or has incomplete records, export the relevant data from CaseLink and upload it here — the records will be merged with existing data automatically.
-    </div>
-    <div class="upload-zone" id="dropZone" onclick="document.getElementById('csvInput').click()">
-      <input type="file" id="csvInput" accept=".csv,.tsv,.txt">
-      <div class="uz-icon">📄</div>
-      <div class="uz-label">Drop a CaseLink CSV file here or click to browse
-        <span class="schema-tip-wrap" onclick="event.stopPropagation()">
-          <span class="schema-tip-icon">?</span>
-          <div class="schema-tip-content">
-            <div style="margin-bottom:6px;font-weight:600;color:#fff;font-family:'IBM Plex Sans',sans-serif;font-size:12px">Expected CSV Columns</div>
-            <span class="col-required">Docket #</span>  &nbsp;← required (unique ID)<br>
-            <span class="col-optional">Office</span>     &nbsp;← court / office location<br>
-            <span class="col-optional">Status</span>     &nbsp;← PENDING or CLOSED<br>
-            <span class="col-optional">File Date</span>  &nbsp;← MM/DD/YYYY format<br>
-            <span class="col-optional">Description</span>&nbsp;← case type<br>
-            <span class="col-optional">Plaintiff</span>  &nbsp;← plaintiff / petitioner<br>
-            <span class="col-optional">Defendant</span>  &nbsp;← defendant / respondent<br>
-            <span class="col-optional">Pltf. Attorney</span> &nbsp;← plaintiff attorney<br>
-            <span class="col-optional">Def. Attorney</span>  &nbsp;← defendant attorney
-          </div>
-        </span>
-      </div>
-      <div class="uz-hint">Accepts .csv, .tsv, or .txt — hover the <strong>?</strong> above for the expected column schema</div>
-    </div>
-    <div style="background:#f8f9fb;border-radius:8px;padding:16px;font-size:12px;color:var(--muted)">
-      <strong style="color:var(--ink)">How it works:</strong> Each CSV row is posted as a new state_data entry appended to the case's stateData array.
-      If the docket number already exists, the new data is appended. If it's new, a record is created.
-    </div>`;
-
-    el.innerHTML = h;
-
-    // Wire up events
-    const zone = document.getElementById("dropZone");
-    const input = document.getElementById("csvInput");
-    input.addEventListener("change", e => { if (e.target.files[0]) handleCSVFile(e.target.files[0]); });
-    zone.addEventListener("dragover", e => { e.preventDefault(); zone.classList.add("dragover"); });
-    zone.addEventListener("dragleave", () => { zone.classList.remove("dragover"); });
-    zone.addEventListener("drop", e => { e.preventDefault(); zone.classList.remove("dragover"); if (e.dataTransfer.files[0]) handleCSVFile(e.dataTransfer.files[0]); });
+function toggleDropdown(field) {
+  if (activeDropdown === field) {
+    document.getElementById("dd-" + field).style.display = "none";
+    activeDropdown = null;
     return;
   }
+  if (activeDropdown) document.getElementById("dd-" + activeDropdown).style.display = "none";
+  activeDropdown = field;
 
-  // Preview + controls
-  const allDone = uploadDone === uploadRows.length && !uploadRunning && uploadDone > 0;
-  const pct = uploadRows.length ? Math.round((uploadDone / uploadRows.length) * 100) : 0;
-
-  h += `<div class="upload-actions">
-    <button class="btn btn-primary" onclick="runUpload()" ${uploadRunning || allDone ? "disabled" : ""}>
-      ${uploadRunning ? "Uploading…" : allDone ? "Done" : `Upload ${uploadRows.length} rows`}
-    </button>
-    <button class="btn btn-secondary" onclick="clearUpload()" ${uploadRunning ? "disabled" : ""}>Clear</button>
-    <span style="font-size:13px;color:var(--muted)">${uploadRows.length} rows parsed from CSV</span>
-  </div>`;
-
-  if (uploadRunning || allDone) {
-    h += `<div class="progress-bar-wrap"><div class="progress-bar" style="width:${pct}%"></div></div>`;
-    h += `<div class="upload-stats">
-      <div class="upload-stat" style="background:#d1fae5;color:#065f46">${uploadDone - uploadErrors - uploadSkipped} OK</div>
-      ${uploadErrors ? `<div class="upload-stat" style="background:#fce4ec;color:#b71c1c">${uploadErrors} Errors</div>` : ""}
-      ${uploadSkipped ? `<div class="upload-stat" style="background:#fef3c7;color:#92400e">${uploadSkipped} Skipped</div>` : ""}
-      <div class="upload-stat" style="background:var(--faint);color:var(--muted)">${uploadDone}/${uploadRows.length}</div>
-    </div>`;
-  }
-
-  // Preview table (show first 100)
-  const previewRows = uploadRows.slice(0, 100);
-  h += `<div class="upload-preview"><div class="table-wrap"><table>
-    <thead><tr>
-      <th class="no-sort">#</th><th class="no-sort">Status</th>
-      <th class="no-sort">Docket</th><th class="no-sort">Case Status</th>
-      <th class="no-sort">File Date</th><th class="no-sort">Description</th>
-      <th class="no-sort">Plaintiff</th><th class="no-sort">Defendant</th>
-      <th class="no-sort">Attorney</th>
-    </tr></thead><tbody>`;
-
-  previewRows.forEach((row, i) => {
-    const rs = uploadResults[i];
-    const rsClass = rs === "ok" ? "row-status-ok" : rs === "error" ? "row-status-err" : rs === "skip" ? "row-status-skip" : "row-status-pending";
-    const rsLabel = rs === "ok" ? "✓" : rs === "error" ? "✗" : rs === "skip" ? "skip" : "—";
-    const docket = (row["Docket #"] || row["Docket_#"] || row["docket_number"] || row["Docket"] || "").trim();
-
-    h += `<tr>
-      <td class="dim">${i+1}</td>
-      <td class="${rsClass}" style="font-weight:600;font-size:12px">${rsLabel}</td>
-      <td class="mono docket">${esc(docket)}</td>
-      <td><span class="badge ${(row["Status"]||"").trim().toUpperCase()==="PENDING"?"b-pending":"b-closed"}">${esc((row["Status"]||"").trim())}</span></td>
-      <td class="mono dim">${esc((row["File Date"]||row["File_Date"]||"").trim())}</td>
-      <td class="ellip dim">${esc((row["Description"]||"").trim())}</td>
-      <td class="ellip">${esc((row["Plaintiff"]||row["Plaintiff_Petitioner"]||"").trim()||"—")}</td>
-      <td class="ellip">${esc((row["Defendant"]||row["Defendant_Respondent"]||"").trim()||"—")}</td>
-      <td class="ellip dim">${esc((row["Pltf. Attorney"]||row["Attorney"]||"").trim()||"—")}</td>
-    </tr>`;
+  const counts = {};
+  allRows.forEach(r => {
+    const v = r[field] || "(empty)";
+    counts[v] = (counts[v] || 0) + 1;
   });
+  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
 
-  h += `</tbody></table></div>`;
-  if (uploadRows.length > 100) h += `<div style="font-size:12px;color:var(--muted);margin-top:6px">Showing first 100 of ${uploadRows.length} rows</div>`;
-  h += `</div>`;
+  const dd = document.getElementById("dd-" + field);
+  dd.innerHTML = sorted.map(([v, c]) =>
+    `<div class="dropdown-item" onclick="setFilter('${field}','${v.replace(/'/g, "\\'")}')">`
+    + `<span>${v}</span><span class="dropdown-count">${c}</span></div>`
+  ).join("");
+  dd.style.display = "block";
+}
 
-  // Upload log
-  if (uploadLogLines.length) {
-    h += `<div class="upload-log">`;
-    // Show newest first
-    [...uploadLogLines].reverse().forEach(l => {
-      h += `<div class="log-${l.type}">${esc(l.msg)}</div>`;
-    });
-    h += `</div>`;
+function setFilter(field, val) {
+  if (activeDropdown) {
+    document.getElementById("dd-" + activeDropdown).style.display = "none";
+    activeDropdown = null;
   }
-
-  el.innerHTML = h;
+  filters[field] = val;
+  updateFilterBtns();
+  render();
 }
 
-
-// ══════════════════════════════════════════════════════════
-// EXPLORE MODULE (same as before)
-// ══════════════════════════════════════════════════════════
-let allCases = [], totalFromAPI = 0;
-let search = "", statusFilter = "ALL", outcomeFilter = "ALL";
-let page = 1, selectedCase = null, detailTab = "overview";
-let sortCol = "updated", sortDir = "desc";
-
-// ── Pivot state ──
-let pivotField = null;          // null = normal table, otherwise field key
-let pivotSortCol = "total";     // which pivot column to sort by
-let pivotSortDir = "desc";
-let pivotDrillValue = null;     // when set, filters main table to this group value
-
-const PIVOT_FIELDS = [
-  { key: "attorney",       label: "Plaintiff Attorney", accessor: c => c.attorney || "(none)" },
-  { key: "plaintiff",      label: "Plaintiff / Landlord", accessor: c => c.plaintiff || "(none)" },
-  { key: "defendant",      label: "Defendant",          accessor: c => c.defendant || "(none)" },
-  { key: "district",       label: "Council District",   accessor: c => c.districtNum ? "District " + c.districtNum : "(none)" },
-  { key: "councilMember",  label: "Council Member",     accessor: c => c.councilMember || "(none)" },
-  { key: "office",         label: "Court Office",       accessor: c => c.office || "(none)" },
-  { key: "description",    label: "Case Type",          accessor: c => c.description || "(none)" },
-  { key: "status",         label: "Status",             accessor: c => c.status || "UNKNOWN" },
-  { key: "individualLL",   label: "Individual Landlord", accessor: c => c.individualLL === true ? "Yes" : c.individualLL === false ? "No" : "Unknown" },
-];
-const OUTCOME_COLS = ["Pending","Executed","Writ Issued","Dismissed","Possession","Non-Suit","Closed","Closed (minimal)"];
-
-function normalizeResolved(raw) {
-  function pick(...keys) { for (const k of keys) { const v = raw[k]; if (v !== undefined && v !== null && v !== "") return v; } return ""; }
-  function pickBool(...keys) { for (const k of keys) { if (raw[k] === true || raw[k] === false) return raw[k]; } return null; }
-  return {
-    status: pick("Status","status").toUpperCase(), office: pick("Office","office"),
-    description: pick("Description","case_type"), step: pick("step","source"), scrapedAt: pick("scraped_at"),
-    plaintiff: pick("Plaintiff_Petitioner","plaintiff"), defendant: pick("Defendant_Respondent","defendant"),
-    attorney: pick("Attorney","attorney"), defAttorney: pick("def_attorney"), defendantName: pick("defendant_name"),
-    fileDate: pick("File_Date","file_date_raw"), filingDate: pick("filing_date"), serviceDate: pick("service_date"),
-    address1: pick("Address_1","address1"), address2: pick("Address_2","address2"), cityStateZip: pick("city_state_zip"),
-    addressFormatted: pick("address_formatted","geocoded_address","formatted_address"),
-    latitude: pick("latitude"), longitude: pick("longitude"), geocodeStatus: pick("geocode_status"),
-    councilDistrict: pick("council_district"), councilDistrictNumber: raw.council_district_number||null,
-    councilMember: pick("council_member","council_representative"),
-    individualLL: pickBool("individual_ll"),
-    judgmentDate: pick("judgment_date"), judgmentType: pick("judgment_type"), judgmentFor: pick("judgment_for"),
-    writIssuedDate: pick("writ_issued_date"), writServedDate: pick("writ_served_date"),
-    evictionExecuted: pickBool("eviction_executed"), evictionDate: pick("eviction_date"), evictionMethod: pick("eviction_method"),
-    caseDismissed: pickBool("case_dismissed"), dismissalDate: pick("dismissal_date"),
-    pleadings: raw.pleadings||[], judgments: raw.judgments||[], docketNumber: pick("Docket_Number","docket_number"),
-  };
+function clearFilter(field, e) {
+  if (e) e.stopPropagation();
+  delete filters[field];
+  updateFilterBtns();
+  render();
 }
-function resolveState(stateData) {
-  if (!stateData||!stateData.length) return {_log:[],_rawResolved:{},_resolved:normalizeResolved({})};
-  const log=[]; let rr={};
-  for (const e of stateData) {
-    if (e.op||e.step) { log.push(e); const f=Object.assign({},e); delete f.op; delete f.ts; delete f.source; delete f.step; Object.keys(f).forEach(k=>{if(f[k]!==undefined&&f[k]!==null&&f[k]!=="")rr[k]=f[k];}); }
-    else { Object.keys(e).forEach(k=>{if(e[k]!==undefined&&e[k]!==null)rr[k]=e[k];}); }
-  }
-  for (const e of stateData) { if(e.step&&!rr.step)rr.step=e.step; if(e.source&&!rr.source)rr.source=e.source; if(e.scraped_at&&!rr.scraped_at)rr.scraped_at=e.scraped_at; }
-  return {_log:log,_rawResolved:rr,_resolved:normalizeResolved(rr)};
-}
-function parseDate(str) { if(!str)return null; let m=str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); if(m)return new Date(+m[3],+m[1]-1,+m[2]); m=str.match(/^(\d{4})-(\d{2})-(\d{2})$/); if(m)return new Date(+m[1],+m[2]-1,+m[3]); return null; }
-function extractCase(item) {
-  const {_log,_rawResolved,_resolved:n}=resolveState(item.stateData);
-  const jT=(n.judgments||[]).map(j=>j.judgment_type).filter(Boolean);
-  const pD=(n.pleadings||[]).map(p=>p.description||"").filter(Boolean);
-  const allD=[...jT,...pD];
-  const amts=allD.map(t=>{const m=t.match(/[\d,]+\.\d{2}/);return m?parseFloat(m[0].replace(/,/g,"")):null}).filter(Boolean);
-  const hasWrit=allD.some(t=>t.includes("WRIT OF RESTITUTION")||t.includes("WRIT OF POSSESSION"));
-  const hasPoss=allD.some(t=>t.includes("POSSESSION")&&!t.includes("NON-SUIT"));
-  const hasNS=allD.some(t=>t.includes("NON-SUIT"));
-  const hasDis=n.caseDismissed===true||allD.some(t=>t.includes("DISMISSED")||t.includes("DISMISS"));
-  const hasExe=n.evictionExecuted===true||allD.some(t=>t.includes("SHERIFF PAPER RETURN")||t.includes("DC SHERIFF PAPER RETURN"));
-  let outcome="Pending";
-  if(hasExe)outcome="Executed";else if(hasWrit)outcome="Writ Issued";else if(hasDis)outcome="Dismissed";
-  else if(hasPoss)outcome="Possession";else if(hasNS)outcome="Non-Suit";
-  else if(n.status==="CLOSED"&&!n.pleadings.length&&!n.judgments.length)outcome="Closed (minimal)";
-  else if(n.status==="CLOSED")outcome="Closed";
-  const addr=[n.address1,n.address2,n.cityStateZip].filter(Boolean).join(", ");
-  const rawUpdated=item.updated_at||item.updated||null;
-  const updatedParsed=rawUpdated?new Date(rawUpdated):null;
-  return {id:item.id,docket:item.docket_number,status:n.status||"UNKNOWN",plaintiff:n.plaintiff,defendant:n.defendant,
-    attorney:n.attorney,defAttorney:n.defAttorney,defendantName:n.defendantName||"",
-    address1:n.address1,address2:n.address2,cityStateZip:n.cityStateZip,addressFormatted:n.addressFormatted,
-    address:addr,lat:n.latitude?parseFloat(n.latitude):null,lng:n.longitude?parseFloat(n.longitude):null,
-    geocodeStatus:n.geocodeStatus,district:n.councilDistrict,districtNum:n.councilDistrictNumber,
-    councilMember:n.councilMember,fileDate:n.fileDate||item.fileDate||"",
-    fileDateParsed:parseDate(n.fileDate||item.fileDate||""),
-    updated:rawUpdated,updatedParsed:updatedParsed,
-    filingDate:n.filingDate,serviceDate:n.serviceDate,office:n.office,description:n.description,
-    step:n.step,scrapedAt:n.scrapedAt,individualLL:n.individualLL,
-    judgmentDate:n.judgmentDate,judgmentType:n.judgmentType,judgmentFor:n.judgmentFor,
-    judgmentAmount:amts.length?Math.max(...amts):null,
-    writIssuedDate:n.writIssuedDate,writServedDate:n.writServedDate,
-    evictionExecuted:n.evictionExecuted||false,evictionDate:n.evictionDate,evictionMethod:n.evictionMethod,
-    caseDismissed:n.caseDismissed||false,dismissalDate:n.dismissalDate,
-    pleadings:n.pleadings,judgments:n.judgments,outcome,
-    _log,_resolved:n,_rawResolved,_rawStateData:item.stateData};
-}
-const SORT_FN={docket:c=>c.docket,status:c=>c.status,outcome:c=>c.outcome,plaintiff:c=>c.plaintiff.toLowerCase(),defendant:c=>c.defendant.toLowerCase(),fileDate:c=>c.fileDateParsed?c.fileDateParsed.getTime():0,district:c=>c.districtNum||999,updated:c=>c.updatedParsed?c.updatedParsed.getTime():0};
-function sortCases(a){const fn=SORT_FN[sortCol]||SORT_FN.fileDate,m=sortDir==="asc"?1:-1;return[...a].sort((a,b)=>{const va=fn(a),vb=fn(b);return va<vb?-1*m:va>vb?1*m:0;});}
-function toggleSort(c){if(sortCol===c)sortDir=sortDir==="asc"?"desc":"asc";else{sortCol=c;sortDir=(c==="fileDate"||c==="updated")?"desc":"asc";}page=1;render();}
-function sortArrow(c){if(sortCol!==c)return'<span class="sort-arrow">⇅</span>';return'<span class="sort-arrow">'+(sortDir==="asc"?"↑":"↓")+'</span>';}
-function getFiltered(){let o=allCases;if(statusFilter!=="ALL")o=o.filter(c=>c.status===statusFilter);if(outcomeFilter!=="ALL")o=o.filter(c=>c.outcome===outcomeFilter);if(search.trim()){const q=search.toLowerCase();o=o.filter(c=>c.docket.toLowerCase().includes(q)||c.plaintiff.toLowerCase().includes(q)||c.defendant.toLowerCase().includes(q)||c.attorney.toLowerCase().includes(q)||c.address.toLowerCase().includes(q)||c.district.toLowerCase().includes(q)||c.description.toLowerCase().includes(q)||c.councilMember.toLowerCase().includes(q)||c.defendantName.toLowerCase().includes(q));}return sortCases(o);}
-function countBy(a,k){const m={};a.forEach(c=>{const v=c[k];m[v]=(m[v]||0)+1});return Object.entries(m).sort((a,b)=>b[1]-a[1]);}
 
-// ── Pivot logic ──
-function buildPivotData(cases) {
-  const pf = PIVOT_FIELDS.find(f => f.key === pivotField);
-  if (!pf) return [];
-  const groups = {};
-  cases.forEach(c => {
-    const gv = pf.accessor(c);
-    if (!groups[gv]) { groups[gv] = { name: gv, total: 0, outcomes: {} }; OUTCOME_COLS.forEach(o => groups[gv].outcomes[o] = 0); }
-    groups[gv].total++;
-    if (groups[gv].outcomes[c.outcome] !== undefined) groups[gv].outcomes[c.outcome]++;
+function updateFilterBtns() {
+  FILTER_FIELDS.forEach(f => {
+    const btn = document.getElementById("fbtn-" + f.key);
+    const val = filters[f.key];
+    if (val) {
+      let display = val.replace(/Council District |State House District |US Congressional District /g, "D");
+      if (display.length > 20) display = display.substring(0, 18) + "…";
+      btn.className = "filter-btn active";
+      btn.innerHTML = f.label + ": " + display
+        + ` <span class="clear-x" onclick="clearFilter('${f.key}', event)">×</span>`;
+    } else {
+      btn.className = "filter-btn";
+      btn.textContent = f.label;
+    }
   });
-  let rows = Object.values(groups);
-  // Sort
-  const dir = pivotSortDir === "asc" ? 1 : -1;
-  if (pivotSortCol === "name") {
-    rows.sort((a, b) => a.name.localeCompare(b.name) * dir);
-  } else if (pivotSortCol === "total") {
-    rows.sort((a, b) => (a.total - b.total) * dir);
-  } else {
-    // Sort by a specific outcome column
-    rows.sort((a, b) => ((a.outcomes[pivotSortCol] || 0) - (b.outcomes[pivotSortCol] || 0)) * dir);
+}
+
+function buildHeader() {
+  document.getElementById("thead").innerHTML = COLUMNS.map(c =>
+    `<th onclick="doSort('${c.key}')" id="th-${c.key}">${c.label}</th>`
+  ).join("");
+}
+
+function doSort(col) {
+  if (sortCol === col) sortDir = -sortDir;
+  else { sortCol = col; sortDir = -1; }
+  render();
+}
+
+function getFiltered() {
+  let rows = allRows;
+  Object.entries(filters).forEach(([field, val]) => {
+    if (val === "(empty)") rows = rows.filter(r => !r[field]);
+    else rows = rows.filter(r => r[field] === val);
+  });
+  const q = document.getElementById("search").value.toLowerCase();
+  if (q) {
+    rows = rows.filter(r =>
+      (r.docket || "").toLowerCase().includes(q) ||
+      (r.Plaintiff_1 || "").toLowerCase().includes(q) ||
+      (r.Attorney || "").toLowerCase().includes(q) ||
+      (r.address_formatted || "").toLowerCase().includes(q) ||
+      (r.council_district || "").toLowerCase().includes(q)
+    );
   }
   return rows;
 }
 
-function togglePivotSort(col) {
-  if (pivotSortCol === col) pivotSortDir = pivotSortDir === "asc" ? "desc" : "asc";
-  else { pivotSortCol = col; pivotSortDir = col === "name" ? "asc" : "desc"; }
-  render();
-}
-
-function pivotSortArrow(col) {
-  if (pivotSortCol !== col) return '<span class="sort-arrow">⇅</span>';
-  return '<span class="sort-arrow">' + (pivotSortDir === "asc" ? "↑" : "↓") + '</span>';
-}
-
-function handlePivotDrill(groupValue) {
-  pivotDrillValue = groupValue;
-  render();
-}
-
-function clearPivotDrill() {
-  pivotDrillValue = null;
-  render();
-}
-
-function renderPivotView(filtered) {
-  const pf = PIVOT_FIELDS.find(f => f.key === pivotField);
-  if (!pf) return "";
-  const rows = buildPivotData(filtered);
-  const totals = { total: 0 };
-  OUTCOME_COLS.forEach(o => totals[o] = 0);
-  rows.forEach(r => { totals.total += r.total; OUTCOME_COLS.forEach(o => totals[o] += r.outcomes[o]); });
-
-  let h = `<div class="pivot-summary">
-    <div class="pivot-stat"><div class="pivot-stat-val">${rows.length}</div><div class="pivot-stat-lbl">Groups</div></div>
-    <div class="pivot-stat"><div class="pivot-stat-val">${totals.total.toLocaleString()}</div><div class="pivot-stat-lbl">Total Cases</div></div>`;
-  // Top 3 outcomes
-  const topOutcomes = OUTCOME_COLS.map(o => [o, totals[o]]).filter(x => x[1] > 0).sort((a,b) => b[1] - a[1]).slice(0, 3);
-  topOutcomes.forEach(([o, n]) => {
-    h += `<div class="pivot-stat"><div class="pivot-stat-val">${n.toLocaleString()}</div><div class="pivot-stat-lbl">${esc(o)}</div></div>`;
+function render() {
+  const rows = getFiltered();
+  rows.sort((a, b) => {
+    const av = a[sortCol] || "";
+    const bv = b[sortCol] || "";
+    return av < bv ? sortDir : av > bv ? -sortDir : 0;
   });
-  h += `</div>`;
 
-  h += `<div class="table-wrap"><table class="pivot-table"><thead><tr>
-    <th class="${pivotSortCol==="name"?"p-sorted":""}" onclick="togglePivotSort('name')">${esc(pf.label)}${pivotSortArrow("name")}</th>
-    <th class="${pivotSortCol==="total"?"p-sorted":""}" onclick="togglePivotSort('total')" style="text-align:center">Total${pivotSortArrow("total")}</th>`;
-  OUTCOME_COLS.forEach(o => {
-    h += `<th class="${pivotSortCol===o?"p-sorted":""}" onclick="togglePivotSort('${esc(o)}')" style="text-align:center">${esc(o)}${pivotSortArrow(o)}</th>`;
+  // Update sort arrows
+  COLUMNS.forEach(c => {
+    const th = document.getElementById("th-" + c.key);
+    th.innerHTML = c.label + (sortCol === c.key
+      ? `<span class="arrow">${sortDir === 1 ? "↑" : "↓"}</span>` : "");
   });
-  h += `</tr></thead><tbody>`;
 
-  rows.forEach((r, ri) => {
-    const nameEsc = esc(r.name);
-    h += `<tr data-pivot-idx="${ri}" class="pivot-row">
-      <td class="pv-name" title="${nameEsc}">${nameEsc}</td>
-      <td class="pv-total" style="text-align:center">${r.total}</td>`;
-    OUTCOME_COLS.forEach(o => {
-      const v = r.outcomes[o];
-      h += v > 0
-        ? `<td class="pv-num has-val">${v}</td>`
-        : `<td class="pv-zero">·</td>`;
-    });
-    h += `</tr>`;
-  });
-  // Store row names for click handler
-  window._pivotRowNames = rows.map(r => r.name);
+  document.getElementById("result-count").textContent =
+    rows.length === allRows.length
+      ? `${allRows.length} cases`
+      : `${rows.length} of ${allRows.length}`;
 
-  h += `</tbody><tfoot><tr>
-    <td style="font-weight:700">Total</td>
-    <td class="pv-num" style="font-weight:700">${totals.total}</td>`;
-  OUTCOME_COLS.forEach(o => {
-    h += totals[o] > 0
-      ? `<td class="pv-num" style="font-weight:700">${totals[o]}</td>`
-      : `<td class="pv-zero">·</td>`;
-  });
-  h += `</tr></tfoot></table></div>`;
-
-  return h;
+  const tbody = document.getElementById("tbody");
+  tbody.innerHTML = rows.map(r => {
+    const dotClass = r.status === "PENDING" ? "dot-pending"
+      : (r.status === "DISMISSED" || r.status === "NONSUIT") ? "dot-dismissed"
+      : "dot-other";
+    return "<tr>" + COLUMNS.map(c => {
+      let v = r[c.key] || "";
+      if (c.key === "docket") return `<td><span class="docket">${v}</span></td>`;
+      if (c.key === "status") return `<td><span class="dot ${dotClass}"></span>${v}</td>`;
+      if (c.key === "council_district") v = shorten(v, "Council District ");
+      if (c.key === "state_house_district") v = shorten(v, "State House District ");
+      if (c.key === "us_congressional_district") v = shorten(v, "US Congressional District ");
+      return `<td>${v}</td>`;
+    }).join("") + "</tr>";
+  }).join("");
 }
 
-function renderDrillView(filtered) {
-  const pf = PIVOT_FIELDS.find(f => f.key === pivotField);
-  if (!pf) return "";
-  const drilled = filtered.filter(c => pf.accessor(c) === pivotDrillValue);
-  const sorted = sortCases(drilled);
-  const pageCount = Math.ceil(sorted.length / PER_PAGE);
-  if (page > pageCount && pageCount > 0) page = pageCount;
-  const slice = sorted.slice((page - 1) * PER_PAGE, page * PER_PAGE);
-
-  let h = `<button class="pivot-back" onclick="clearPivotDrill()">← Back to ${esc(pf.label)} pivot</button>`;
-  h += `<div style="margin-bottom:10px"><span style="font-size:14px;font-weight:600">${esc(pivotDrillValue)}</span> <span style="font-size:12px;color:var(--muted)">· ${drilled.length} case${drilled.length !== 1 ? "s" : ""}</span></div>`;
-
-  const cols = [{key:"docket",label:"Docket"},{key:"status",label:"Status"},{key:"outcome",label:"Outcome"},{key:"plaintiff",label:"Plaintiff"},{key:"defendant",label:"Defendant"},{key:"fileDate",label:"Filed"},{key:"updated",label:"Updated"},{key:"district",label:"District"}];
-  h += `<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th class="${sortCol===c.key?"sorted":""}" onclick="toggleSort('${c.key}')">${c.label}${sortArrow(c.key)}</th>`).join("")}<th>Log</th></tr></thead><tbody>`;
-  slice.forEach(c => {
-    const logN = (c._rawStateData || []).length;
-    h += `<tr onclick="selectedCase=allCases.find(x=>x.id===${c.id});detailTab='overview';render()"><td class="mono docket">${esc(c.docket)}</td><td><span class="badge ${statusBadgeClass(c.status)}">${esc(c.status)}</span></td><td><span class="badge ${outcomeBadgeClass(c.outcome)}">${esc(c.outcome)}</span></td><td class="ellip">${c.plaintiff?esc(c.plaintiff):"—"}</td><td class="ellip">${c.defendant?esc(c.defendant):"—"}</td><td class="mono dim">${c.fileDate?esc(c.fileDate):"—"}</td><td class="mono dim" style="font-size:10px;white-space:nowrap">${c.updatedParsed?formatTS(c.updatedParsed.toISOString()):"—"}</td><td class="dim" style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.districtNum?"Dist. "+c.districtNum:"—"}</td><td class="dim" style="text-align:center">${logN>1?`<span style="background:#eef2ff;color:#4a6cf7;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600">${logN}</span>`:logN}</td></tr>`;
-  });
-  h += `</tbody></table></div>`;
-  if (pageCount > 1) h += `<div class="pager"><button ${page<=1?"disabled":""} onclick="page--;render()">← Prev</button><span>Page ${page} of ${pageCount}</span><button ${page>=pageCount?"disabled":""} onclick="page++;render()">Next →</button></div>`;
-  return h;
-}
-
-function statusBadgeClass(s){return s==="PENDING"?"b-pending":s==="CLOSED"?"b-closed":"b-unknown";}
-function outcomeBadgeClass(o){return{"Writ Issued":"b-writ",Possession:"b-possession","Non-Suit":"b-nonsuit",Closed:"b-closedout","Closed (minimal)":"b-minimal",Pending:"b-pendingout",Dismissed:"b-dismissed",Executed:"b-executed"}[o]||"b-minimal";}
-function chipClass(s){return s==="PENDING"?"chip-pending":s==="CLOSED"?"chip-closed":"chip-unknown";}
-function opBorderClass(o){if(!o)return"";const u=o.toUpperCase();return u==="INS"?"op-ins-border":u.startsWith("UPD")?"op-upd-border":u.startsWith("DEL")?"op-del-border":"";}
-function opBadgeClass(o){if(!o)return"op-default";const u=o.toUpperCase();return u==="INS"?"op-ins":u.startsWith("UPD")?"op-upd":u.startsWith("DEL")?"op-del":"op-default";}
-function formatTS(t){if(!t)return"";try{return new Date(t).toLocaleString("en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit",second:"2-digit",hour12:true})}catch{return t;}}
-const LOG_SKIP=new Set(["op","ts"]);
-const LOG_META=new Set(["op","ts","source","step","scraped_at"]);
-function getEntryDataFields(e){const d={};Object.keys(e).forEach(k=>{if(!LOG_META.has(k)&&e[k]!==undefined&&e[k]!==null&&e[k]!=="")d[k]=e[k];});return d;}
-function filterRedundantEntries(entries){
-  if(!entries||!entries.length)return[];
-  const result=[];const seen={};
-  for(const e of entries){
-    if(!e.op&&!e.step){result.push(e);continue;}
-    const data=getEntryDataFields(e);const keys=Object.keys(data);
-    if(!keys.length){continue;}
-    const changed={};let hasChange=false;
-    for(const k of keys){
-      const cur=typeof data[k]==="object"?JSON.stringify(data[k]):String(data[k]);
-      if(seen[k]!==cur){changed[k]=data[k];hasChange=true;seen[k]=cur;}
-    }
-    if(hasChange){const slim=Object.assign({},changed);if(e.op)slim.op=e.op;if(e.ts)slim.ts=e.ts;if(e.source)slim.source=e.source;if(e.step)slim.step=e.step;if(e.scraped_at)slim.scraped_at=e.scraped_at;result.push(slim);}
+// Close dropdowns on outside click
+document.addEventListener("click", e => {
+  if (activeDropdown && !e.target.closest(".filter-btn") && !e.target.closest(".dropdown")) {
+    document.getElementById("dd-" + activeDropdown).style.display = "none";
+    activeDropdown = null;
   }
-  return result;
-}
-let showAllLogEntries=false;
-function renderLogEntry(e){const f=Object.keys(e).filter(k=>!LOG_SKIP.has(k)&&e[k]!==undefined&&e[k]!==null&&e[k]!=="");return`<div class="log-entry ${opBorderClass(e.op)}"><div class="log-header"><span class="badge ${opBadgeClass(e.op)}">${esc(e.op||"STATE")}</span>${e.source?`<span class="badge op-default">${esc(e.source)}</span>`:""}${e.step?`<span class="badge op-default">${esc(e.step)}</span>`:""}<span class="log-ts">${formatTS(e.ts||e.scraped_at)}</span></div><div class="log-fields">${f.filter(k=>k!=="source"&&k!=="step").map(k=>{let v=e[k];if(typeof v==="object")v=Array.isArray(v)?`[${v.length} items]`:JSON.stringify(v).substring(0,80);if(typeof v==="boolean")v=v?"true":"false";return`<span class="log-kv"><span class="log-field-label">${esc(k)}:</span> <span class="log-field-value">${esc(String(v))}</span></span>`;}).join("")}</div></div>`;}
+});
 
-function renderDetail(c){
-  const caseF=[{l:"Docket",v:c.docket},{l:"Office",v:c.office},{l:"Case Type",v:c.description},{l:"File Date",v:c.fileDate},{l:"Individual Landlord",v:c.individualLL===true?"Yes":c.individualLL===false?"No":""},{l:"Scrape Step",v:c.step},{l:"Scraped At",v:c.scrapedAt?formatTS(c.scrapedAt):""}].filter(f=>f.v);
-  const partyF=[{l:"Plaintiff / Petitioner",v:c.plaintiff},{l:"Defendant / Respondent",v:c.defendant},{l:"Defendant Name",v:c.defendantName},{l:"Plaintiff Attorney",v:c.attorney},{l:"Defendant Attorney",v:c.defAttorney}].filter(f=>f.v);
-  const locF=[{l:"Address",v:c.addressFormatted||c.address},{l:"Raw Address",v:!c.addressFormatted&&c.address?"":c.address},{l:"Council District",v:c.district?`${c.district}${c.councilMember?" — "+c.councilMember:""}`:""},{l:"Coordinates",v:c.lat&&c.lng?`${c.lat}, ${c.lng}`:""},{l:"Geocode Status",v:c.geocodeStatus}].filter(f=>f.v);
-  const tlF=[{l:"Filing Date",v:c.filingDate},{l:"Service Date",v:c.serviceDate},{l:"Judgment Date",v:c.judgmentDate},{l:"Judgment Type",v:c.judgmentType},{l:"Judgment For",v:c.judgmentFor},{l:"Judgment Amount",v:c.judgmentAmount?"$"+c.judgmentAmount.toLocaleString():""},{l:"Writ Issued",v:c.writIssuedDate},{l:"Writ Served",v:c.writServedDate},{l:"Eviction Executed",v:c.evictionExecuted?"Yes":c.evictionDate?"Yes":""},{l:"Eviction Date",v:c.evictionDate},{l:"Eviction Method",v:c.evictionMethod},{l:"Case Dismissed",v:c.caseDismissed?"Yes":""},{l:"Dismissal Date",v:c.dismissalDate}].filter(f=>f.v);
-  const totalE=(c._rawStateData||[]).length;
-  const meaningfulE=filterRedundantEntries(c._rawStateData||[]).length;
-  function sec(t,f){if(!f.length)return"";return`<div class="section-title">${t}</div><div class="field-grid">${f.map(f=>`<div class="field-card"><div class="field-label">${esc(f.l)}</div><div class="field-value">${esc(f.v)}</div></div>`).join("")}</div>`;}
-  const scrapedNote = c.scrapedAt ? `Last observed: ${formatTS(c.scrapedAt)}` : "Observation date unknown";
-  let h=`<div class="detail"><button class="back-btn" onclick="selectedCase=null;render()"><span style="font-size:16px">←</span> Back to list</button><div class="detail-header"><h2>${esc(c.docket)}</h2><span class="badge ${statusBadgeClass(c.status)}" title="Status as of last observation — may have changed">${esc(c.status)}</span><span class="badge ${outcomeBadgeClass(c.outcome)}" title="Derived outcome — verify with court records">${esc(c.outcome)}</span><span class="data-age">${esc(scrapedNote)}</span></div><div class="snapshot-note">This case snapshot may be outdated. Statuses and dates reflect when the record was last observed, not necessarily the current state of the case.</div><div class="tabs"><button class="tab ${detailTab==="overview"?"active":""}" onclick="detailTab='overview';render()">Overview</button><button class="tab ${detailTab==="log"?"active":""}" onclick="detailTab='log';render()">Activity Log <span class="tab-count">${meaningfulE<totalE?meaningfulE+"/"+totalE:totalE}</span></button><button class="tab ${detailTab==="raw"?"active":""}" onclick="detailTab='raw';render()">Raw JSON</button></div>`;
-  if(detailTab==="overview"){
-    h+=sec("Case Info",caseF)+sec("Parties",partyF)+sec("Location",locF);
-    if(tlF.length)h+=sec("Timeline & Outcome",tlF);
-    if(c.pleadings.length){h+=`<div class="section-title">Pleadings</div><div class="timeline">`;c.pleadings.forEach(p=>{h+=`<div class="tl-item"><div class="tl-dot ${p.has_image?"has-img":"no-img"}"></div><div class="tl-date">${esc(p.date||"")}</div><div class="tl-desc">${esc(p.description||p.code||"")}</div>${p.detail?`<div class="tl-detail">${esc(p.detail)}</div>`:""}</div>`;});h+=`</div>`;}
-    if(c.judgments.length){h+=`<div class="section-title">Judgments</div><div style="overflow-x:auto"><table class="j-table"><thead><tr><th>Date</th><th>Type</th><th>Party</th><th>Detail</th></tr></thead><tbody>`;c.judgments.forEach(j=>{h+=`<tr><td class="jmono">${esc(j.judgment_date||"")}</td><td style="font-weight:500">${esc(j.judgment_type||"")}</td><td class="jdim">${esc(j.party_name||"")}</td><td class="jdim">${esc(j.judge||"")}</td></tr>`;});h+=`</tbody></table></div>`;}
-    if(!c.pleadings.length&&!c.judgments.length&&caseF.length<=3)h+=`<div style="padding:20px;background:#f8f9fb;border-radius:8px;color:var(--muted);font-size:13px;text-align:center;margin-top:12px">Limited resolved data — check the <strong>Activity Log</strong> tab.</div>`;
-  }
-  if(detailTab==="log"){const entries=c._rawStateData||[];if(!entries.length)h+=`<div style="padding:20px;color:var(--muted);font-size:13px;text-align:center">No entries.</div>`;else{const meaningful=filterRedundantEntries(entries);const display=showAllLogEntries?entries:meaningful;const hiddenN=entries.length-meaningful.length;h+=`<div style="margin-bottom:8px;font-size:12px;color:var(--muted);display:flex;align-items:center;gap:8px">${showAllLogEntries?entries.length+" entries":meaningful.length+" meaningful updates"} (newest first)${hiddenN>0?`<button onclick="showAllLogEntries=!showAllLogEntries;render()" style="background:none;border:1px solid #d1d5db;border-radius:6px;padding:2px 8px;font-size:11px;color:var(--muted);cursor:pointer">${showAllLogEntries?"Hide "+hiddenN+" redundant":"Show all "+entries.length}</button>`:""}</div>`;[...display].reverse().forEach(entry=>{if(entry.op||entry.step){h+=renderLogEntry(entry);}else{h+=`<div class="log-entry" style="border-left-color:#10b981"><div class="log-header"><span class="badge" style="background:#d1fae5;color:#065f46">RESOLVED STATE</span></div><div class="log-fields">`;Object.keys(entry).filter(k=>entry[k]!==undefined&&entry[k]!==null&&entry[k]!=="").forEach(k=>{let v=entry[k];if(typeof v==="object")v=Array.isArray(v)?`[${v.length} items]`:JSON.stringify(v).substring(0,100);if(typeof v==="boolean")v=v?"true":"false";h+=`<span class="log-kv"><span class="log-field-label">${esc(k)}:</span> <span class="log-field-value">${esc(String(v))}</span></span>`;});h+=`</div></div>`;}});}}
-  if(detailTab==="raw")h+=`<div class="raw-block">${esc(JSON.stringify({id:c.id,docket_number:c.docket,stateData:c._rawStateData,fileDate:c.fileDate},null,2))}</div>`;
-  return h+`</div>`;
-}
-
-let searchTimer = null;
-function render(){
-  const app=document.getElementById("exploreView");
-  if(selectedCase){app.innerHTML=renderDetail(selectedCase);return;}
-  const filtered=getFiltered();const pageCount=Math.ceil(filtered.length/PER_PAGE);
-  if(page>pageCount&&pageCount>0)page=pageCount;
-  const slice=filtered.slice((page-1)*PER_PAGE,page*PER_PAGE);
-  const sc=countBy(allCases,"status"),oc=countBy(allCases,"outcome");
-  const cols=[{key:"docket",label:"Docket"},{key:"status",label:"Status"},{key:"outcome",label:"Outcome"},{key:"plaintiff",label:"Plaintiff"},{key:"defendant",label:"Defendant"},{key:"fileDate",label:"Filed"},{key:"updated",label:"Updated"},{key:"district",label:"District"}];
-  const newestUpdate = getNewestObservationTime();
-  const dataAgeStr = newestUpdate ? formatTS(new Date(newestUpdate).toISOString()) : "unknown";
-  const refreshLabel = isRefreshing ? '<span class="refresh-icon" style="display:inline-block;animation:spin .8s linear infinite">&#8635;</span> Refreshing…' : '<span class="refresh-icon">&#8635;</span> Refresh';
-  const ingestPct = isStreaming && totalFromAPI > 0 ? Math.min(100, Math.round(allCases.length / totalFromAPI * 100)) : 0;
-  const ingestBanner = isStreaming ? `<div class="ingest-banner"><div class="ingest-spinner"></div><span>Ingesting in background</span><div class="ingest-bar-wrap"><div class="ingest-bar" style="width:${ingestPct}%"></div></div><span class="ingest-count">${allCases.length.toLocaleString()} / ${totalFromAPI > 0 ? '~' + totalFromAPI.toLocaleString() : '?'}</span></div>` : '';
-  let h= ingestBanner + `<p class="subtitle">${totalFromAPI.toLocaleString()} cases on file (snapshot) · Showing ${allCases.length.toLocaleString()} · Most recent observation: ${esc(dataAgeStr)} <button class="refresh-btn${isRefreshing?" refreshing":""}" onclick="refreshData()" ${isRefreshing?"disabled":""}>${refreshLabel}</button></p>
-    <div class="chip-row">${sc.map(([s,n])=>`<div class="chip ${chipClass(s)} ${statusFilter===s?"active":""}" onclick="statusFilter=statusFilter==='${s}'?'ALL':'${s}';page=1;render()">${esc(s)} (observed): ${n}</div>`).join("")}</div>
-    <div class="controls"><input type="text" id="searchBox" placeholder="Search docket, plaintiff, defendant, address, attorney, council member…" value="${esc(search)}"><select id="outcomeSelect"><option value="ALL">All outcomes</option>${oc.map(([o,n])=>`<option value="${esc(o)}" ${outcomeFilter===o?"selected":""}>${esc(o)} (${n})</option>`).join("")}</select><select id="pivotSelect" class="pivot-select${pivotField?" pivot-active":""}"><option value="">Pivot by…</option>${PIVOT_FIELDS.map(f=>`<option value="${f.key}" ${pivotField===f.key?"selected":""}>${f.label}</option>`).join("")}</select><div class="export-bar"><button class="export-btn" onclick="exportData('csv')" title="Export filtered cases as CSV"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 13h8M8 3v8M5 8l3 3 3-3"/></svg>CSV</button><button class="export-btn" onclick="exportData('json')" title="Export filtered cases as JSON"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 13h8M8 3v8M5 8l3 3 3-3"/></svg>JSON</button><button class="export-btn" onclick="exportData('tsv')" title="Export filtered cases as TSV"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 13h8M8 3v8M5 8l3 3 3-3"/></svg>TSV</button><button class="export-btn" id="idbSaveBtn" onclick="saveToIdbManual()" title="Download all cases and save to local IndexedDB"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13h12M4 3v7h8V3M6 3V1h4v2"/></svg>Save DB</button><span class="db-status" id="idbStatus"></span></div></div>
-    <div class="match-count">${filtered.length} case${filtered.length!==1?"s":""} matched${pivotField?" · Pivot by <strong>"+esc(PIVOT_FIELDS.find(f=>f.key===pivotField).label)+"</strong>":""} · <span class="data-age">Statuses may not reflect current court records</span></div>`;
-
-  if (pivotField && pivotDrillValue) {
-    // Drill-down view: show cases for one pivot group
-    h += renderDrillView(filtered);
-  } else if (pivotField) {
-    // Pivot table view
-    h += renderPivotView(filtered);
-  } else {
-    // Normal table view
-    h += `<div class="table-wrap"><table><thead><tr>${cols.map(c=>`<th class="${sortCol===c.key?"sorted":""}" onclick="toggleSort('${c.key}')">${c.label}${sortArrow(c.key)}</th>`).join("")}<th>Log</th></tr></thead><tbody>`;
-    slice.forEach(c=>{const logN=(c._rawStateData||[]).length;
-      h+=`<tr onclick="selectedCase=allCases.find(x=>x.id===${c.id});detailTab='overview';render()"><td class="mono docket">${esc(c.docket)}</td><td><span class="badge ${statusBadgeClass(c.status)}">${esc(c.status)}</span></td><td><span class="badge ${outcomeBadgeClass(c.outcome)}">${esc(c.outcome)}</span></td><td class="ellip">${c.plaintiff?esc(c.plaintiff):"—"}</td><td class="ellip">${c.defendant?esc(c.defendant):"—"}</td><td class="mono dim">${c.fileDate?esc(c.fileDate):"—"}</td><td class="mono dim" style="font-size:10px;white-space:nowrap">${c.updatedParsed?formatTS(c.updatedParsed.toISOString()):"—"}</td><td class="dim" style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.districtNum?"Dist. "+c.districtNum:"—"}</td><td class="dim" style="text-align:center">${logN>1?`<span style="background:#eef2ff;color:#4a6cf7;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600">${logN}</span>`:logN}</td></tr>`;});
-    h+=`</tbody></table></div>`;
-    if(pageCount>1)h+=`<div class="pager"><button ${page<=1?"disabled":""} onclick="page--;render()">← Prev</button><span>Page ${page} of ${pageCount}</span><button ${page>=pageCount?"disabled":""} onclick="page++;render()">Next →</button></div>`;
-  }
-
-  app.innerHTML=h;
-  const searchBox = document.getElementById("searchBox");
-  searchBox.addEventListener("input",e=>{
-    const val = e.target.value;
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => { search = val; page = 1; renderTableOnly(); }, 200);
-  });
-  document.getElementById("outcomeSelect").addEventListener("change",e=>{outcomeFilter=e.target.value;page=1;render();});
-  document.getElementById("pivotSelect").addEventListener("change",e=>{pivotField=e.target.value||null;pivotDrillValue=null;pivotSortCol="total";pivotSortDir="desc";page=1;render();});
-  // Pivot row click handler (delegated)
-  if (pivotField && !pivotDrillValue) {
-    document.querySelectorAll(".pivot-row").forEach(tr => {
-      tr.addEventListener("click", () => {
-        const idx = parseInt(tr.getAttribute("data-pivot-idx"), 10);
-        if (window._pivotRowNames && window._pivotRowNames[idx] !== undefined) {
-          handlePivotDrill(window._pivotRowNames[idx]);
-        }
-      });
-    });
-  }
-  // Restore cursor position
-  if (document.activeElement !== searchBox && search) { searchBox.focus(); searchBox.setSelectionRange(search.length, search.length); }
-}
-
-// Render just the table + pager + match count without touching controls
-function renderTableOnly() {
-  const filtered=getFiltered();const pageCount=Math.ceil(filtered.length/PER_PAGE);
-  if(page>pageCount&&pageCount>0)page=pageCount;
-  const slice=filtered.slice((page-1)*PER_PAGE,page*PER_PAGE);
-  const cols=[{key:"docket",label:"Docket"},{key:"status",label:"Status"},{key:"outcome",label:"Outcome"},{key:"plaintiff",label:"Plaintiff"},{key:"defendant",label:"Defendant"},{key:"fileDate",label:"Filed"},{key:"updated",label:"Updated"},{key:"district",label:"District"}];
-  let h=`<table><thead><tr>${cols.map(c=>`<th class="${sortCol===c.key?"sorted":""}" onclick="toggleSort('${c.key}')">${c.label}${sortArrow(c.key)}</th>`).join("")}<th>Log</th></tr></thead><tbody>`;
-  slice.forEach(c=>{const logN=(c._rawStateData||[]).length;
-    h+=`<tr onclick="selectedCase=allCases.find(x=>x.id===${c.id});detailTab='overview';render()"><td class="mono docket">${esc(c.docket)}</td><td><span class="badge ${statusBadgeClass(c.status)}">${esc(c.status)}</span></td><td><span class="badge ${outcomeBadgeClass(c.outcome)}">${esc(c.outcome)}</span></td><td class="ellip">${c.plaintiff?esc(c.plaintiff):"—"}</td><td class="ellip">${c.defendant?esc(c.defendant):"—"}</td><td class="mono dim">${c.fileDate?esc(c.fileDate):"—"}</td><td class="mono dim" style="font-size:10px;white-space:nowrap">${c.updatedParsed?formatTS(c.updatedParsed.toISOString()):"—"}</td><td class="dim" style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.districtNum?"Dist. "+c.districtNum:"—"}</td><td class="dim" style="text-align:center">${logN>1?`<span style="background:#eef2ff;color:#4a6cf7;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600">${logN}</span>`:logN}</td></tr>`;});
-  h+=`</tbody></table>`;
-  const tableWrap = document.querySelector("#exploreView .table-wrap");
-  if (tableWrap) tableWrap.innerHTML = h;
-  // Update match count
-  const mc = document.querySelector("#exploreView .match-count");
-  if (mc) mc.innerHTML = `${filtered.length} case${filtered.length!==1?"s":""} matched · <span class="data-age">Statuses may not reflect current court records</span>`;
-  // Update pager
-  let existingPager = document.querySelector("#exploreView .pager");
-  if (pageCount > 1) {
-    const ph = `<div class="pager"><button ${page<=1?"disabled":""} onclick="page--;renderTableOnly()">← Prev</button><span>Page ${page} of ${pageCount}</span><button ${page>=pageCount?"disabled":""} onclick="page++;renderTableOnly()">Next →</button></div>`;
-    if (existingPager) existingPager.outerHTML = ph;
-    else { const tw = document.querySelector("#exploreView .table-wrap"); if(tw) tw.insertAdjacentHTML("afterend", ph); }
-  } else if (existingPager) { existingPager.remove(); }
-}
-
-// ══════════════════════════════════════════════════════════
-// EXPORT MODULE
-// ══════════════════════════════════════════════════════════
-function getExportRows() {
-  const filtered = getFiltered();
-  return filtered.map(c => ({
-    "Docket": c.docket,
-    "Status (observed)": c.status,
-    "Outcome (observed)": c.outcome,
-    "File Date": c.fileDate || "",
-    "Plaintiff": c.plaintiff || "",
-    "Defendant": c.defendant || "",
-    "Plaintiff Attorney": c.attorney || "",
-    "Defendant Attorney": c.defAttorney || "",
-    "Address": c.addressFormatted || c.address || "",
-    "Council District": c.district || "",
-    "Council Member": c.councilMember || "",
-    "Office": c.office || "",
-    "Case Type": c.description || "",
-    "Judgment Date": c.judgmentDate || "",
-    "Judgment Type": c.judgmentType || "",
-    "Judgment Amount": c.judgmentAmount ? "$" + c.judgmentAmount.toLocaleString() : "",
-    "Writ Issued Date": c.writIssuedDate || "",
-    "Eviction Executed": c.evictionExecuted ? "Yes" : "",
-    "Eviction Date": c.evictionDate || "",
-    "Case Dismissed": c.caseDismissed ? "Yes" : "",
-    "Dismissal Date": c.dismissalDate || "",
-    "Last Observed": c.scrapedAt ? formatTS(c.scrapedAt) : "",
-    "Last Updated": c.updatedParsed ? formatTS(c.updatedParsed.toISOString()) : "",
-    "Individual Landlord": c.individualLL === true ? "Yes" : c.individualLL === false ? "No" : "",
-  }));
-}
-
-function exportData(format) {
-  const rows = getExportRows();
-  if (!rows.length) { alert("No cases to export with current filters."); return; }
-
-  const disclaimer = "DISCLAIMER: This data is a point-in-time snapshot from court records and may not reflect current case statuses. Always verify with official court records before taking action.";
-  const timestamp = new Date().toISOString();
-  let blob, filename;
-
-  if (format === "csv" || format === "tsv") {
-    const sep = format === "tsv" ? "\t" : ",";
-    const ext = format === "tsv" ? "tsv" : "csv";
-    const headers = Object.keys(rows[0]);
-    const escapeFn = (v) => {
-      const s = String(v);
-      if (format === "csv" && (s.includes(",") || s.includes('"') || s.includes("\n"))) {
-        return '"' + s.replace(/"/g, '""') + '"';
-      }
-      return s;
-    };
-    let content = "";
-    // Add disclaimer as comment rows
-    content += (format === "csv" ? '"' + disclaimer + '"' : disclaimer) + "\n";
-    content += (format === "csv" ? '"Exported: ' + timestamp + '"' : "Exported: " + timestamp) + "\n";
-    content += "\n";
-    content += headers.map(escapeFn).join(sep) + "\n";
-    rows.forEach(r => {
-      content += headers.map(h => escapeFn(r[h])).join(sep) + "\n";
-    });
-    blob = new Blob([content], { type: format === "csv" ? "text/csv;charset=utf-8;" : "text/tab-separated-values;charset=utf-8;" });
-    filename = `eviction-overwatch-export-${timestamp.slice(0,10)}.${ext}`;
-  } else if (format === "json") {
-    const payload = {
-      _disclaimer: disclaimer,
-      _exportedAt: timestamp,
-      _totalFiltered: rows.length,
-      _filtersApplied: {
-        statusFilter: statusFilter,
-        outcomeFilter: outcomeFilter,
-        searchQuery: search || null,
-      },
-      cases: rows,
-    };
-    const content = JSON.stringify(payload, null, 2);
-    blob = new Blob([content], { type: "application/json;charset=utf-8;" });
-    filename = `eviction-overwatch-export-${timestamp.slice(0,10)}.json`;
-  }
-
-  // Trigger download
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-
-// ══════════════════════════════════════════════════════════
-// REFRESH
-// ══════════════════════════════════════════════════════════
-let isRefreshing = false;
-let isStreaming = false; // true while loadData() is fetching pages
-let lastFetchedAt = null;
-
-function getNewestObservationTime() {
-  return allCases.reduce((best, c) => {
-    let t = c.updatedParsed ? c.updatedParsed.getTime() : 0;
-    (c._rawStateData || []).forEach(e => {
-      const ets = e.scraped_at || e.ts;
-      if (ets) { const et = new Date(ets).getTime(); if (!isNaN(et) && et > t) t = et; }
-    });
-    return t > best ? t : best;
-  }, 0);
-}
-
-function updateDataAgeBanner() {
-  const newestUpdate = getNewestObservationTime();
-  if (newestUpdate) {
-    const ageMs = Date.now() - newestUpdate;
-    const ageHrs = Math.round(ageMs / 3600000);
-    const ageStr = ageHrs < 1 ? "less than an hour" : ageHrs < 24 ? ageHrs + " hour" + (ageHrs > 1 ? "s" : "") : Math.round(ageHrs / 24) + " day" + (Math.round(ageHrs / 24) > 1 ? "s" : "");
-    const noteEl = document.getElementById("dataAgeNote");
-    if (noteEl) noteEl.textContent = " · Most recent data is ~" + ageStr + " old.";
-  }
-}
-
-let _rawAPIItems = []; // raw items from API (for IndexedDB persistence)
-
-function deduplicateById(items) {
-  const seen = new Set();
-  return items.filter(item => {
-    if (seen.has(item.id)) return false;
-    seen.add(item.id);
-    return true;
-  });
-}
-
-function updateLoadingProgress(loaded, total) {
-  // Legacy element support (no longer used in main view)
-  const el = document.getElementById("loadProgress");
-  if (el) {
-    if (total > 0) {
-      el.textContent = "Loading cases\u2026 " + loaded.toLocaleString() + " / " + total.toLocaleString();
-    } else {
-      el.textContent = "Loading cases\u2026 " + loaded.toLocaleString() + " fetched";
-    }
-  }
-}
-
-async function fetchWithRetry(url, maxRetries = 3) {
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      if (attempt > 0) {
-        const delay = 1000 * Math.pow(2, attempt - 1); // 1s, 2s, 4s
-        console.log("[API] Retry " + attempt + "/" + maxRetries + " after " + delay + "ms");
-        await new Promise(r => setTimeout(r, delay));
-      }
-      const resp = await fetch(url);
-      if (!resp.ok) throw new Error("HTTP " + resp.status);
-      return await resp.json();
-    } catch (err) {
-      if (attempt === maxRetries) throw err;
-    }
-  }
-}
-
-async function loadData() {
-  let allItems = [];
-  let currentPage = 1;
-  let total = 0;
-  isStreaming = true;
-
-  // Render immediately so the ingestion banner is visible from the start
-  totalFromAPI = totalFromAPI || 0;
-  render();
-
-  // Fetch first page to learn total count
-  const firstUrl = API_READ + "?page=" + currentPage + "&per_page=" + API_PAGE_SIZE;
-  const firstData = await fetchWithRetry(firstUrl);
-  const firstItems = firstData.items || [];
-  total = firstData.itemsTotal || 0;
-  allItems = allItems.concat(firstItems);
-  updateLoadingProgress(allItems.length, total);
-
-  // Stream first batch to UI immediately so the user sees data right away
-  _rawAPIItems = allItems;
-  allCases = deduplicateById(_rawAPIItems).map(extractCase);
-  totalFromAPI = total || allCases.length;
-  render();
-
-  // Paginate through remaining pages. Keep fetching as long as
-  // the previous page returned a full batch (API_PAGE_SIZE items).
-  let lastBatchSize = firstItems.length;
-  let paginationError = null;
-  while (lastBatchSize >= API_PAGE_SIZE) {
-    currentPage++;
-    // Small delay between pages to avoid triggering rate limits
-    await new Promise(r => setTimeout(r, 300));
-    const url = API_READ + "?page=" + currentPage + "&per_page=" + API_PAGE_SIZE;
-    try {
-      const data = await fetchWithRetry(url);
-      const items = data.items || [];
-      lastBatchSize = items.length;
-      if (items.length === 0) break; // no more data
-      allItems = allItems.concat(items);
-      // Update total to reflect true count if we've exceeded Xano's reported cap
-      if (allItems.length > total) total = allItems.length;
-      updateLoadingProgress(allItems.length, total);
-
-      // Stream each page to UI — update data and re-render so the user
-      // sees new records appear as they arrive from the API
-      _rawAPIItems = allItems;
-      allCases = deduplicateById(_rawAPIItems).map(extractCase);
-      totalFromAPI = total || allCases.length;
-      render();
-    } catch (err) {
-      console.warn("[API] Pagination stopped at page " + currentPage + ":", err.message);
-      paginationError = err;
-      break;
-    }
-  }
-
-  // Show warning if pagination was cut short due to errors
-  if (paginationError && total > allItems.length) {
-    const warnMsg = "Loaded " + allItems.length.toLocaleString() + " of ~" +
-      total.toLocaleString() + " cases. Some pages could not be fetched " +
-      "(network/CORS error). The data shown may be incomplete.";
-    const banner = document.createElement("div");
-    banner.className = "snapshot-banner";
-    banner.style.background = "#fef2f2";
-    banner.style.borderColor = "#fca5a5";
-    banner.innerHTML = '<span class="sb-icon">\u26A0</span><span>' + warnMsg +
-      '</span><button class="sb-dismiss" onclick="this.parentElement.remove()" title="Dismiss">&times;</button>';
-    const target = document.getElementById("exploreView");
-    if (target) target.insertBefore(banner, target.firstChild);
-  }
-
-  isStreaming = false;
-  _rawAPIItems = allItems;
-  allCases = deduplicateById(_rawAPIItems).map(extractCase);
-  totalFromAPI = total || allCases.length;
-  lastFetchedAt = new Date();
-  updateDataAgeBanner();
-  console.log("[API] Fetched " + allItems.length + " cases across " + currentPage + " page(s)");
-  // Auto-save to IndexedDB in background
-  idbSaveAllCases(_rawAPIItems).then(n => {
-    _lastIdbSave = { time: new Date().toISOString(), count: n };
-    console.log("[IndexedDB] Auto-saved " + n + " cases");
-  }).catch(err => console.warn("[IndexedDB] Auto-save failed:", err));
-}
-
-async function loadFromIdb() {
-  try {
-    const cached = await idbLoadAllCases();
-    if (cached.items.length > 0) {
-      _rawAPIItems = cached.items;
-      allCases = deduplicateById(_rawAPIItems).map(extractCase);
-      totalFromAPI = allCases.length;
-      _lastIdbSave = cached.meta ? { time: cached.meta.value, count: cached.meta.count } : null;
-      return true;
-    }
-  } catch (e) { console.warn("[IndexedDB] Load failed:", e); }
-  return false;
-}
-
-async function saveToIdbManual() {
-  const btn = document.getElementById("idbSaveBtn");
-  if (!_rawAPIItems.length) { alert("No data loaded to save."); return; }
-  if (btn) { btn.classList.add("db-saving"); btn.textContent = "Saving…"; }
-  try {
-    const n = await idbSaveAllCases(_rawAPIItems);
-    _lastIdbSave = { time: new Date().toISOString(), count: n };
-    if (btn) { btn.classList.remove("db-saving"); btn.classList.add("db-done"); btn.innerHTML = '\u2713 Saved ' + n; }
-    updateIdbStatus();
-    setTimeout(() => { if (btn) { btn.classList.remove("db-done"); btn.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13h12M4 3v7h8V3M6 3V1h4v2"/></svg>Save DB'; } }, 3000);
-  } catch (err) {
-    if (btn) { btn.classList.remove("db-saving"); btn.textContent = "Error"; }
-    alert("Failed to save to IndexedDB: " + err.message);
-  }
-}
-
-function updateIdbStatus() {
-  const el = document.getElementById("idbStatus");
-  if (!el) return;
-  if (_lastIdbSave) {
-    el.textContent = _lastIdbSave.count + " cases in DB · " + formatTS(_lastIdbSave.time);
-  } else {
-    el.textContent = "";
-  }
-}
-
-async function refreshData() {
-  if (isRefreshing) return;
-  isRefreshing = true;
-  render();
-  try {
-    await loadData();
-  } catch (err) {
-    alert("Refresh failed: " + err.message);
-  }
-  isRefreshing = false;
-  render();
-  // Also update activity view if visible
-  if (currentView === "activity") renderActivity();
-}
-
-// ══════════════════════════════════════════════════════════
-// SCRAPER ACTIVITY MODULE
-// ══════════════════════════════════════════════════════════
-function getScraperActivity() {
-  // Extract all state_data entries with timestamps, across all cases
-  const activity = [];
-  allCases.forEach(c => {
-    const entries = c._rawStateData || [];
-    entries.forEach(entry => {
-      const ts = entry.ts || entry.scraped_at;
-      if (!ts) return;
-      activity.push({
-        ts: ts,
-        tsDate: new Date(ts),
-        docket: c.docket,
-        caseId: c.id,
-        op: entry.op || "",
-        step: entry.step || entry.source || "",
-        status: entry.status || entry.Status || "",
-        fields: Object.keys(entry).filter(k => !["op","ts","scraped_at","source","step"].includes(k) && entry[k] !== undefined && entry[k] !== null && entry[k] !== ""),
-      });
-    });
-  });
-  activity.sort((a, b) => b.tsDate.getTime() - a.tsDate.getTime());
-  return activity;
-}
-
-function getScraperStats(activity) {
-  if (!activity.length) return { status: "idle", recentCount: 0, stepsActive: [], lastTs: null, last24h: 0, last1h: 0 };
-  const now = Date.now();
-  const last1h = activity.filter(a => now - a.tsDate.getTime() < 3600000).length;
-  const last24h = activity.filter(a => now - a.tsDate.getTime() < 86400000).length;
-  const lastTs = activity[0].tsDate;
-  const msSinceLast = now - lastTs.getTime();
-
-  // Determine scraper status
-  let status = "idle";
-  if (msSinceLast < 3600000) status = "active";        // activity within last hour
-  else if (msSinceLast < 86400000) status = "idle";     // within a day
-  else status = "stale";                                 // over a day old
-
-  // What steps are running (from recent entries)
-  const recentSteps = {};
-  activity.slice(0, 100).forEach(a => { if (a.step) recentSteps[a.step] = (recentSteps[a.step] || 0) + 1; });
-  const stepsActive = Object.entries(recentSteps).sort((a, b) => b[1] - a[1]).map(([s, n]) => ({ step: s, count: n }));
-
-  return { status, recentCount: activity.length, stepsActive, lastTs, last24h, last1h };
-}
-
-function renderActivity() {
-  const el = document.getElementById("activityView");
-  const activity = getScraperActivity();
-  const stats = getScraperStats(activity);
-
-  const statusLabels = { active: "Active", idle: "Idle", stale: "Stale — no recent updates" };
-  const refreshLabel = isRefreshing ? '<span class="refresh-icon" style="display:inline-block;animation:spin .8s linear infinite">&#8635;</span> Refreshing…' : '<span class="refresh-icon">&#8635;</span> Refresh';
-
-  let h = `<div class="scraper-panel">
-    <div class="scraper-header">
-      <h3>Scraper Status</h3>
-      <span class="scraper-status-dot ${esc(stats.status)}"></span>
-      <span class="scraper-status-label ${esc(stats.status)}">${esc(statusLabels[stats.status] || "Unknown")}</span>
-      <span style="margin-left:auto"><button class="refresh-btn${isRefreshing?" refreshing":""}" onclick="refreshData()" ${isRefreshing?"disabled":""}>${refreshLabel}</button></span>
-    </div>
-
-    <div class="scraper-stats">
-      <div class="scraper-stat-card">
-        <div class="scraper-stat-val">${stats.last1h}</div>
-        <div class="scraper-stat-lbl">Updates (last hour)</div>
-      </div>
-      <div class="scraper-stat-card">
-        <div class="scraper-stat-val">${stats.last24h}</div>
-        <div class="scraper-stat-lbl">Updates (last 24h)</div>
-      </div>
-      <div class="scraper-stat-card">
-        <div class="scraper-stat-val">${stats.lastTs ? formatTS(stats.lastTs.toISOString()) : "—"}</div>
-        <div class="scraper-stat-lbl">Last Update</div>
-      </div>
-      <div class="scraper-stat-card">
-        <div class="scraper-stat-val">${lastFetchedAt ? formatTS(lastFetchedAt.toISOString()) : "—"}</div>
-        <div class="scraper-stat-lbl">Data Fetched At</div>
-      </div>
-    </div>`;
-
-  // Active pipeline steps
-  if (stats.stepsActive.length) {
-    h += `<div class="section-title">Active Pipeline Steps</div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px">`;
-    stats.stepsActive.forEach(s => {
-      h += `<span class="badge op-default" style="font-size:11px">${esc(s.step)} <span style="opacity:.6">(${s.count})</span></span>`;
-    });
-    h += `</div>`;
-  }
-
-  h += `</div>`; // close scraper-panel
-
-  // Activity feed
-  h += `<div class="section-title">Recent Activity Feed</div>
-  <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Showing the last ${Math.min(activity.length, 200)} of ${activity.length} total logged updates</div>`;
-
-  if (!activity.length) {
-    h += `<div style="padding:30px;text-align:center;color:var(--muted);font-size:13px">No scraper activity found in the loaded data.</div>`;
-  } else {
-    h += `<div class="activity-feed">`;
-    activity.slice(0, 200).forEach(a => {
-      const opClass = (a.op || "").toUpperCase() === "INS" ? "op-ins" : (a.op || "").toUpperCase().startsWith("UPD") ? "op-upd" : (a.op || "").toUpperCase().startsWith("DEL") ? "op-del" : "op-default";
-      h += `<div class="activity-item">
-        <span class="activity-ts">${formatTS(a.ts)}</span>
-        <div class="activity-body">
-          <span class="activity-docket" onclick="const c=allCases.find(x=>x.id===${a.caseId});if(c){selectedCase=c;detailTab='overview';switchView('explore');render();}">${esc(a.docket)}</span>
-          ${a.op ? `<span class="activity-op ${opClass}">${esc(a.op)}</span>` : ""}
-          ${a.step ? `<span class="activity-step">${esc(a.step)}</span>` : ""}
-          ${a.status ? ` <span class="badge ${statusBadgeClass(a.status.toUpperCase())}" style="font-size:10px">${esc(a.status)}</span>` : ""}
-          <span style="color:var(--muted);font-size:10px;margin-left:4px">${a.fields.length} field${a.fields.length !== 1 ? "s" : ""}</span>
-        </div>
-      </div>`;
-    });
-    h += `</div>`;
-  }
-
-  el.innerHTML = h;
-}
-
-// ══════════════════════════════════════════════════════════
-// ENRICH MODULE — background geocoding + district lookup
-// ══════════════════════════════════════════════════════════
-const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
-const NASHVILLE_DISTRICT_URL = "https://maps.nashville.gov/arcgis/rest/services/Elections/Precincts/MapServer/1/query";
-const NASHVILLE_DISTRICT_FALLBACK_URL = "https://maps.nashville.gov/arcgis/rest/services/Elections/PoliticalDistricts/MapServer/0/query";
-const GEOCODE_DELAY = 1100;   // Nominatim asks for 1 req/sec — stay just above
-const DISTRICT_DELAY = 200;   // Nashville GIS is fast, no strict rate limit
-
-let enrichRunning = false;
-let enrichStats = { geocoded: 0, districts: 0, errors: 0, total: 0, processed: 0, skippedFailed: 0, rateLimited: 0, googleFallbacks: 0, googleSuccesses: 0 };
-let enrichLog = [];
-let enrichPaused = false;
-// Track failed geocodes so we don't retry the same address endlessly
-const geocodeFailedAddresses = new Set();
-// Track cases where district lookup returned no result (e.g. outside Nashville)
-const districtFailedCases = new Set();
-// Rate limit backoff state
-let geocodeBackoff = GEOCODE_DELAY;
-const GEOCODE_BACKOFF_MAX = 60000;  // max 60s backoff
-let consecutiveGeoErrors = 0;
-
-function getCasesNeedingGeocode() {
-  return allCases.filter(c => {
-    const hasAddress = c.address1 || c.address || c.addressFormatted;
-    const hasLatLng = c.lat && c.lng;
-    if (!hasAddress || hasLatLng) return false;
-    // Skip addresses that already failed geocoding
-    const addrStr = c.addressFormatted || c.address || [c.address1, c.cityStateZip].filter(Boolean).join(", ");
-    return !geocodeFailedAddresses.has(addrStr);
-  });
-}
-
-function getCasesNeedingDistrict() {
-  return allCases.filter(c => {
-    if (!(c.lat && c.lng && !c.districtNum && !c.district)) return false;
-    // Skip cases where district lookup already returned no result
-    return !districtFailedCases.has(c.docket);
-  });
-}
-
-function getCasesGeocodeFailed() {
-  return allCases.filter(c => {
-    const hasAddress = c.address1 || c.address || c.addressFormatted;
-    const hasLatLng = c.lat && c.lng;
-    if (!hasAddress || hasLatLng) return false;
-    const addrStr = c.addressFormatted || c.address || [c.address1, c.cityStateZip].filter(Boolean).join(", ");
-    return geocodeFailedAddresses.has(addrStr);
-  });
-}
-
-/**
- * Normalize an address string for geocoding:
- * - Strip unit/apt/suite/# designators (Nominatim lacks sub-address data)
- * - Expand common street-type abbreviations
- * - Collapse extra whitespace and trailing commas
- */
-function normalizeAddressForGeocode(addr) {
-  let s = addr;
-  // Remove unit designators and their values (e.g., "APT. 233", "UNIT 618", "STE 4B", "LOT A-4")
-  s = s.replace(/\b(APT\.?|APARTMENT|UNIT|STE\.?|SUITE|RM\.?|ROOM|BLDG\.?|BUILDING|FL\.?|FLOOR|LOT|TRLR|TRAILER|SP\.?|SPACE)\s*\.?\s*\S+/gi, "");
-  // Handle # designator separately — \b before # never fires because # is a non-word char
-  s = s.replace(/,?\s*#\s*\S+/gi, "");
-  // Remove bare secondary unit codes like "B204" (single letter + digits, no prefix)
-  s = s.replace(/(?<=\s)[A-Z]-?\d{2,}(?=\s)/gi, "");
-  // Expand common abbreviations that can trip up Nominatim
-  const abbrevs = [
-    [/\bRD\b/gi, "ROAD"], [/\bDR\b/gi, "DRIVE"], [/\bCT\b/gi, "COURT"],
-    [/\bLN\b/gi, "LANE"], [/\bST\b/gi, "STREET"], [/\bAVE\b/gi, "AVENUE"],
-    [/\bBLVD\b/gi, "BOULEVARD"], [/\bPL\b/gi, "PLACE"], [/\bPKWY\b/gi, "PARKWAY"],
-    [/\bCIR\b/gi, "CIRCLE"], [/\bTRL\b/gi, "TRAIL"], [/\bHWY\b/gi, "HIGHWAY"],
-  ];
-  for (const [re, full] of abbrevs) s = s.replace(re, full);
-  // Clean up extra whitespace and stray commas
-  s = s.replace(/,\s*,/g, ",").replace(/\s{2,}/g, " ").trim();
-  return s;
-}
-
-async function geocodeAddress(addressStr) {
-  const cleaned = normalizeAddressForGeocode(addressStr);
-  // --- Primary: Nominatim ---
-  let nominatimFailed = false;
-  try {
-    const params = new URLSearchParams({
-      q: cleaned,
-      format: "json",
-      limit: "1",
-      countrycodes: "us",
-    });
-    const resp = await fetch(`${NOMINATIM_URL}?${params}`, {
-      headers: { "Accept": "application/json" }
-    });
-    if (resp.status === 429) {
-      enrichStats.rateLimited++;
-      consecutiveGeoErrors++;
-      geocodeBackoff = Math.min(geocodeBackoff * 2, GEOCODE_BACKOFF_MAX);
-      nominatimFailed = true;
-    } else if (!resp.ok) {
-      nominatimFailed = true;
-    } else {
-      consecutiveGeoErrors = 0;
-      geocodeBackoff = GEOCODE_DELAY;
-      const data = await resp.json();
-      if (data.length) {
-        return {
-          lat: parseFloat(data[0].lat),
-          lng: parseFloat(data[0].lon),
-          displayName: data[0].display_name || "",
-          source: "nominatim",
-        };
-      }
-      // No results from Nominatim — fall through to Google
-      nominatimFailed = true;
-    }
-  } catch (e) {
-    nominatimFailed = true;
-  }
-
-  // --- Fallback: Google Maps Geocoding API ---
-  if (nominatimFailed && _gmapsKey) {
-    try {
-      enrichStats.googleFallbacks = (enrichStats.googleFallbacks || 0) + 1;
-      const gParams = new URLSearchParams({ address: cleaned, key: _gmapsKey });
-      const gResp = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?${gParams}`);
-      if (gResp.ok) {
-        const gData = await gResp.json();
-        if (gData.status === "OK" && gData.results && gData.results.length) {
-          const loc = gData.results[0].geometry.location;
-          enrichStats.googleSuccesses = (enrichStats.googleSuccesses || 0) + 1;
-          return {
-            lat: loc.lat,
-            lng: loc.lng,
-            displayName: gData.results[0].formatted_address || "",
-            source: "google",
-          };
-        }
-      }
-    } catch (ge) {
-      // Google also failed — fall through to return null
-    }
-  }
-
-  // Both failed
-  if (!nominatimFailed) return null; // Nominatim returned empty, no Google key
-  return null;
-}
-
-async function lookupNashvilleDistrict(lat, lng) {
-  const params = new URLSearchParams({
-    geometry: `${lng},${lat}`,
-    geometryType: "esriGeometryPoint",
-    inSR: "4326",
-    spatialRel: "esriSpatialRelIntersects",
-    outFields: "*",
-    f: "json",
-  });
-  // Try the representatives layer first (has council member info)
-  let resp = await fetch(`${NASHVILLE_DISTRICT_URL}?${params}`);
-  if (resp.ok) {
-    const data = await resp.json();
-    if (data.features && data.features.length > 0) {
-      const attrs = data.features[0].attributes;
-      const distName = attrs.DistrictName || attrs.DISTRICT || attrs.District || "";
-      const numMatch = distName.match(/(\d+)/);
-      return {
-        district: distName,
-        districtNumber: numMatch ? parseInt(numMatch[1]) : null,
-        councilMember: attrs.Representative || attrs.Name || [attrs.FirstName, attrs.LastName].filter(Boolean).join(" ") || "",
-      };
-    }
-  }
-  // Fallback to PoliticalDistricts layer
-  resp = await fetch(`${NASHVILLE_DISTRICT_FALLBACK_URL}?${params}`);
-  if (resp.ok) {
-    const data = await resp.json();
-    if (data.features && data.features.length > 0) {
-      const attrs = data.features[0].attributes;
-      const distName = attrs.DistrictName || attrs.DISTRICT || attrs.District || attrs.NAME || "";
-      const numMatch = distName.match(/(\d+)/);
-      return {
-        district: distName,
-        districtNumber: numMatch ? parseInt(numMatch[1]) : null,
-        councilMember: "",
-      };
-    }
-  }
-  return null;
-}
-
-async function enrichOneCase(c) {
-  const now = new Date().toISOString();
-  const stateData = { step: "client_enrich", scraped_at: now };
-  let didGeocode = false;
-  let didDistrict = false;
-
-  // Step 1: Geocode if needed
-  if (!c.lat || !c.lng) {
-    const addrStr = c.addressFormatted || c.address || [c.address1, c.cityStateZip].filter(Boolean).join(", ");
-    if (!addrStr) {
-      enrichLog.push({ type: "skip", msg: `${c.docket}: no address to geocode` });
-      return false;
-    }
-    // Skip if this address already failed
-    if (geocodeFailedAddresses.has(addrStr)) {
-      enrichStats.skippedFailed++;
-      return false;
-    }
-    try {
-      const geo = await geocodeAddress(addrStr);
-      if (geo) {
-        stateData.op = (c.lat || c.lng) ? "ALT" : "INS";
-        stateData.latitude = String(geo.lat);
-        stateData.longitude = String(geo.lng);
-        stateData.geocoded_address = geo.displayName;
-        stateData.geocode_status = "success";
-        stateData.geocode_source = geo.source || "nominatim";
-        c.lat = geo.lat;
-        c.lng = geo.lng;
-        c.addressFormatted = geo.displayName;
-        c.geocodeStatus = "success";
-        didGeocode = true;
-        enrichStats.geocoded++;
-        const srcTag = geo.source === "google" ? " [Google fallback]" : "";
-        enrichLog.push({ type: "ok", msg: `${c.docket}: geocoded → ${geo.lat.toFixed(4)}, ${geo.lng.toFixed(4)}${srcTag}` });
-      } else {
-        stateData.geocode_status = "no_match";
-        geocodeFailedAddresses.add(addrStr);
-        enrichLog.push({ type: "err", msg: `${c.docket}: no geocode match for "${addrStr}" (won't retry)` });
-      }
-      await new Promise(r => setTimeout(r, geocodeBackoff));
-    } catch (e) {
-      enrichLog.push({ type: "err", msg: `${c.docket}: geocode error — ${e.message}` });
-      enrichStats.errors++;
-      // On rate limit, wait the backoff before continuing
-      if (e.message.includes("429")) {
-        enrichLog.push({ type: "info", msg: `Rate limited — waiting ${(geocodeBackoff/1000).toFixed(0)}s before next request` });
-        await new Promise(r => setTimeout(r, geocodeBackoff));
-      }
-      return false;
-    }
-  }
-
-  // Step 2: District lookup if we have coordinates
-  if (c.lat && c.lng && !c.districtNum && !c.district) {
-    try {
-      const dist = await lookupNashvilleDistrict(c.lat, c.lng);
-      if (dist) {
-        if (!stateData.op) stateData.op = (c.district || c.districtNum) ? "ALT" : "INS";
-        stateData.council_district = dist.district;
-        if (dist.districtNumber) stateData.council_district_number = dist.districtNumber;
-        if (dist.councilMember) stateData.council_member = dist.councilMember;
-        c.district = dist.district;
-        c.districtNum = dist.districtNumber;
-        c.councilMember = dist.councilMember || c.councilMember;
-        didDistrict = true;
-        enrichStats.districts++;
-        enrichLog.push({ type: "ok", msg: `${c.docket}: district → ${dist.district}${dist.councilMember ? " (" + dist.councilMember + ")" : ""}` });
-      } else {
-        districtFailedCases.add(c.docket);
-        enrichLog.push({ type: "skip", msg: `${c.docket}: no district found (may be outside Nashville — won't retry)` });
-      }
-    } catch (e) {
-      enrichLog.push({ type: "err", msg: `${c.docket}: district lookup error — ${e.message}` });
-      enrichStats.errors++;
-    }
-  }
-
-  // Step 3: Write back to API if we have new data
-  if (didGeocode || didDistrict) {
-    if (!stateData.op) stateData.op = "INS";
-    try {
-      await fetch(API_WRITE, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          docket_number: c.docket,
-          state_data: stateData,
-          updated_at: now,
-        }),
-      });
-      enrichLog.push({ type: "info", msg: `${c.docket}: saved to API (${stateData.op})` });
-    } catch (e) {
-      enrichLog.push({ type: "err", msg: `${c.docket}: API write error — ${e.message}` });
-      enrichStats.errors++;
-    }
-  }
-
-  enrichStats.processed++;
-  return didGeocode || didDistrict;
-}
-
-// District-only fast loop — runs quickly since Nashville GIS has no strict rate limit
-async function enrichDistrictLoop() {
-  const needDist = getCasesNeedingDistrict();
-  if (!needDist.length) return;
-  enrichLog.push({ type: "info", msg: `Fast district pass: ${needDist.length} cases with coords but no district` });
-  for (const c of needDist) {
-    if (!enrichRunning || enrichPaused) break;
-    try {
-      const now = new Date().toISOString();
-      const dist = await lookupNashvilleDistrict(c.lat, c.lng);
-      if (dist) {
-        const stateData = { step: "client_enrich", scraped_at: now, op: "INS" };
-        stateData.council_district = dist.district;
-        if (dist.districtNumber) stateData.council_district_number = dist.districtNumber;
-        if (dist.councilMember) stateData.council_member = dist.councilMember;
-        c.district = dist.district;
-        c.districtNum = dist.districtNumber;
-        c.councilMember = dist.councilMember || c.councilMember;
-        enrichStats.districts++;
-        enrichLog.push({ type: "ok", msg: `${c.docket}: district → ${dist.district}${dist.councilMember ? " (" + dist.councilMember + ")" : ""}` });
-        // Save to API
-        try {
-          await fetch(API_WRITE, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ docket_number: c.docket, state_data: stateData, updated_at: now }),
-          });
-          enrichLog.push({ type: "info", msg: `${c.docket}: saved to API (${stateData.op})` });
-        } catch (e) {
-          enrichLog.push({ type: "err", msg: `${c.docket}: API write error — ${e.message}` });
-          enrichStats.errors++;
-        }
-      } else {
-        districtFailedCases.add(c.docket);
-        enrichLog.push({ type: "skip", msg: `${c.docket}: no district found (won't retry)` });
-      }
-    } catch (e) {
-      enrichLog.push({ type: "err", msg: `${c.docket}: district error — ${e.message}` });
-      enrichStats.errors++;
-    }
-    enrichStats.processed++;
-    if (currentView === "enrich") renderEnrich();
-    await new Promise(r => setTimeout(r, DISTRICT_DELAY));
-  }
-}
-
-async function enrichLoop() {
-  if (enrichRunning) return;
-  enrichRunning = true;
-
-  // Phase 1: Fast district pass — process all cases that already have coords but need district
-  await enrichDistrictLoop();
-
-  // Phase 2: Geocode pass — process cases needing geocoding (rate-limited by Nominatim)
-  while (enrichRunning && !enrichPaused) {
-    const needGeo = getCasesNeedingGeocode();
-    const needDist = getCasesNeedingDistrict();
-    const candidates = [...needGeo, ...needDist];
-    const seen = new Set();
-    const unique = candidates.filter(c => { if (seen.has(c.id)) return false; seen.add(c.id); return true; });
-
-    enrichStats.total = unique.length;
-
-    if (!unique.length) {
-      const failedCount = geocodeFailedAddresses.size;
-      const distFailedCount = districtFailedCases.size;
-      enrichLog.push({ type: "info", msg: `All available cases enriched${failedCount ? ` (${failedCount} addresses had no geocode match)` : ""}${distFailedCount ? ` (${distFailedCount} cases had no district match)` : ""}. Pausing.` });
-      break;
-    }
-
-    // Prefer district-only cases (faster) over geocode cases
-    const picked = needDist.length ? needDist[0] : needGeo[0];
-    try {
-      await enrichOneCase(picked);
-    } catch (e) {
-      enrichLog.push({ type: "err", msg: `Unexpected error: ${e.message}` });
-      enrichStats.errors++;
-    }
-
-    if (currentView === "enrich") renderEnrich();
-
-    // Shorter delay for district-only, normal delay for geocode
-    const delay = (!picked.lat || !picked.lng) ? geocodeBackoff : DISTRICT_DELAY;
-    await new Promise(r => setTimeout(r, delay));
-  }
-
-  enrichRunning = false;
-  if (currentView === "enrich") renderEnrich();
-}
-
-function stopEnrich() {
-  enrichPaused = true;
-  enrichRunning = false;
-}
-
-function startEnrich() {
-  enrichPaused = false;
-  enrichLoop();
-}
-
-function renderEnrich() {
-  const el = document.getElementById("enrichView");
-  const needGeo = getCasesNeedingGeocode();
-  const needDist = getCasesNeedingDistrict();
-  const failedGeo = getCasesGeocodeFailed();
-  // Deduplicate
-  const seen = new Set();
-  const allNeed = [...needGeo, ...needDist].filter(c => { if (seen.has(c.id)) return false; seen.add(c.id); return true; });
-
-  const statusDot = enrichRunning ? "active" : enrichPaused ? "idle" : "idle";
-  const statusLabel = enrichRunning
-    ? (consecutiveGeoErrors > 0 ? `Running (backoff ${(geocodeBackoff/1000).toFixed(0)}s)` : "Running")
-    : enrichPaused ? "Paused" : "Idle";
-  const statusClass = enrichRunning ? (consecutiveGeoErrors > 0 ? "warning" : "active") : "idle";
-
-  let h = `<div class="enrich-panel">
-    <div class="enrich-header">
-      <h3>Background Data Enrichment</h3>
-      <span class="scraper-status-dot ${statusDot}"></span>
-      <span class="scraper-status-label ${statusClass}">${esc(statusLabel)}</span>
-      <span style="margin-left:auto">
-        ${enrichRunning
-          ? `<button class="btn btn-secondary" onclick="stopEnrich()" style="font-size:12px;padding:5px 14px">Pause</button>`
-          : `<button class="btn btn-primary" onclick="startEnrich()" style="font-size:12px;padding:5px 14px" ${!allNeed.length?"disabled":""}>${allNeed.length ? "Start Enrichment" : "All Enriched"}</button>`
-        }
-      </span>
-    </div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6">
-      Enrichment auto-starts on page load. District lookups run fast (~5/sec). Geocoding uses Nominatim (1 req/sec)
-      with Google Maps as a backup when Nominatim returns no match. Automatic backoff on rate limits. Failed addresses are skipped on retry.
-    </div>
-    <div class="enrich-stats">
-      <div class="enrich-stat-card">
-        <div class="enrich-stat-val">${needGeo.length}</div>
-        <div class="enrich-stat-lbl">Need Geocoding</div>
-      </div>
-      <div class="enrich-stat-card">
-        <div class="enrich-stat-val">${needDist.length}</div>
-        <div class="enrich-stat-lbl">Need District</div>
-      </div>
-      <div class="enrich-stat-card">
-        <div class="enrich-stat-val">${enrichStats.geocoded}</div>
-        <div class="enrich-stat-lbl">Geocoded</div>
-      </div>
-      <div class="enrich-stat-card">
-        <div class="enrich-stat-val">${enrichStats.districts}</div>
-        <div class="enrich-stat-lbl">Districts Found</div>
-      </div>
-      <div class="enrich-stat-card">
-        <div class="enrich-stat-val">${enrichStats.processed}</div>
-        <div class="enrich-stat-lbl">Processed</div>
-      </div>
-      <div class="enrich-stat-card">
-        <div class="enrich-stat-val">${enrichStats.errors}</div>
-        <div class="enrich-stat-lbl">Errors</div>
-      </div>
-      <div class="enrich-stat-card">
-        <div class="enrich-stat-val">${failedGeo.length}</div>
-        <div class="enrich-stat-lbl">No Geocode Match</div>
-      </div>
-      <div class="enrich-stat-card">
-        <div class="enrich-stat-val">${districtFailedCases.size}</div>
-        <div class="enrich-stat-lbl">No District Match</div>
-      </div>
-      <div class="enrich-stat-card">
-        <div class="enrich-stat-val">${enrichStats.rateLimited}</div>
-        <div class="enrich-stat-lbl">Rate Limited</div>
-      </div>
-      <div class="enrich-stat-card">
-        <div class="enrich-stat-val">${enrichStats.googleSuccesses || 0}/${enrichStats.googleFallbacks || 0}</div>
-        <div class="enrich-stat-lbl">Google Fallback</div>
-      </div>
-    </div>
-  </div>`;
-
-  // Log
-  if (enrichLog.length) {
-    h += `<div class="section-title">Enrichment Log</div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:6px">${enrichLog.length} entries (newest first)</div>
-    <div class="enrich-log">`;
-    [...enrichLog].reverse().slice(0, 200).forEach(l => {
-      const cls = l.type === "ok" ? "e-ok" : l.type === "err" ? "e-err" : l.type === "skip" ? "e-skip" : "e-info";
-      h += `<div class="${cls}">${esc(l.msg)}</div>`;
-    });
-    h += `</div>`;
-  }
-
-  el.innerHTML = h;
-}
-
-// ── Init ──
-(async function init() {
-  // Try loading cached data from IndexedDB first for instant startup
-  let hadCache = false;
-  try {
-    hadCache = await loadFromIdb();
-    if (hadCache) {
-      console.log("[Init] Loaded " + allCases.length + " cases from IndexedDB cache");
-      render();
-      updateIdbStatus();
-    }
-  } catch (e) { console.warn("[Init] IndexedDB cache load failed:", e); }
-
-  // Always fetch fresh data from API
-  try {
-    await loadData();
-    render();
-    updateIdbStatus();
-    // Auto-start enrichment immediately after data loads
-    enrichLoop();
-  } catch (err) {
-    if (!hadCache) {
-      document.getElementById("exploreView").innerHTML = `<div class="error-box">Error: ${esc(err.message)}</div>`;
-    } else {
-      console.warn("[Init] API fetch failed, using cached data:", err.message);
-    }
-  }
-})();
+document.getElementById("search").addEventListener("input", render);
+loadData();
 </script>
 </body>
 </html>
