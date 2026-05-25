@@ -217,9 +217,17 @@ h1 {
   margin-left: 6px; cursor: pointer; font-weight: bold;
 }
 
-.export-wrap { position: relative; margin-left: auto; }
+.table-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 24px;
+  background: #181712;
+  border-bottom: 1px solid var(--border);
+}
+.table-header .result-count { margin-top: 0; }
+
+.export-wrap { position: relative; }
 .export-btn {
-  padding: 4px 12px; font-size: 11px;
+  padding: 5px 14px; font-size: 11px;
   font-family: var(--mono); color: var(--gold);
   background: transparent; border: 1px solid var(--gold-dim);
   border-radius: 3px; cursor: pointer; letter-spacing: 0.04em;
@@ -558,14 +566,15 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 
   <div class="toolbar" id="local-toolbar">
     <input id="search" placeholder="Search docket, plaintiff, attorney, address...">
-    <div class="filter-row">
-      <div id="filters" style="display:contents"></div>
-      <div class="export-wrap">
-        <button class="export-btn" id="export-btn" type="button" onclick="toggleExportMenu()">Export ▾</button>
-        <div class="export-menu" id="export-menu" style="display:none"></div>
-      </div>
-    </div>
+    <div class="filter-row" id="filters"></div>
+  </div>
+
+  <div class="table-header" id="table-header">
     <div class="result-count" id="result-count"></div>
+    <div class="export-wrap">
+      <button class="export-btn" id="export-btn" type="button" onclick="toggleExportMenu()">Export ▾</button>
+      <div class="export-menu" id="export-menu" style="display:none"></div>
+    </div>
   </div>
 
   <div class="table-wrap" id="local-table-wrap">
@@ -1737,6 +1746,7 @@ function setVisibility() {
   const isCoverage = viewMode === 'coverage';
   const isMap      = viewMode === 'map';
   document.getElementById('local-toolbar').style.display      = isCases    ? '' : 'none';
+  document.getElementById('table-header').style.display       = isCases    ? '' : 'none';
   document.getElementById('local-table-wrap').style.display   = isCases    ? '' : 'none';
   document.getElementById('grid-view').style.display          = isCoverage ? '' : 'none';
   document.getElementById('map-view').style.display           = isMap      ? '' : 'none';
