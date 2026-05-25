@@ -328,8 +328,22 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
       <label>View</label>
       <div class="seg" id="view-seg">
         <button data-val="cases" class="on">Cases</button>
-        <button data-val="coverage">Coverage by District</button>
+        <button data-val="coverage">Coverage</button>
         <button data-val="map">Map</button>
+      </div>
+    </div>
+    <div class="group" id="coverage-mode-group" style="display:none">
+      <label>By</label>
+      <div class="seg" id="coverage-mode-seg">
+        <button data-val="district" class="on">District</button>
+        <button data-val="tract">Tract</button>
+      </div>
+    </div>
+    <div class="group" id="map-source-group" style="display:none">
+      <label>Source</label>
+      <div class="seg" id="map-source-seg">
+        <button data-val="princeton" class="on">Princeton (2020–21)</button>
+        <button data-val="scraped">Scraped (live)</button>
       </div>
     </div>
     <div class="coverage" id="coverage-headline"></div>
@@ -366,8 +380,7 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 <div id="error" style="display:none"></div>
 
 <script>
-const CASES_URL    = "https://raw.githubusercontent.com/clovenbradshaw-ctrl/plain-text/main/cases.json";
-const SNAPSHOT_URL = "https://raw.githubusercontent.com/clovenbradshaw-ctrl/plain-text/main/eviction-lab-snapshot.json";
+const CASES_URL = "https://raw.githubusercontent.com/clovenbradshaw-ctrl/plain-text/main/cases.json";
 
 /* ───────────────────────── Existing case-table state ───────────────────────── */
 
@@ -397,14 +410,27 @@ let sortDir = -1;
 let filters = {};
 let activeDropdown = null;
 
-let snapshot = null;          // decoded eviction-lab-snapshot.json
 let viewMode = 'cases';       // 'cases' | 'coverage' | 'map'
+let coverageMode = 'district';// 'district' | 'tract'
+let mapSource = 'princeton';  // 'princeton' | 'scraped'
+
+// Princeton CSV — fetched live from evictionlab.org each session, never persisted.
+let princetonRows = null;     // raw rows: [{ GEOID, month, filings_2020, ... }]
+
+// Per-source aggregates, rebuilt when either side's data changes.
+let agg = {
+  tractToDistrict: {},        // { GEOID: { council_district, council_rep } }  (from our cases)
+  tractInfo:       {},        // { GEOID: { name, district, rep } }            (from our cases)
+  localTract:      {},        // { GEOID: { "MM/YYYY": count } }
+  localDistrict:   {},        // { "5":   { "MM/YYYY": count } }
+  princetonTract:    {},      // { GEOID: { "MM/YYYY": filings } }
+  princetonDistrict: {},      // { "5":   { "MM/YYYY": filings } }
+  localMonths:     [],        // sorted asc, derived from allRows
+  princetonMonths: [],        // sorted asc, derived from princetonRows
+};
 
 // Map view state
-let tractMonthlyData = null;  // { GEOID: { "MM/YYYY": filings } }
-let mapMonths = [];           // sorted ascending: ["01/2024", "02/2024", ...]
-let maxFilings = 0;           // max single-tract single-month value across CSV
-let tractGeometries = null;   // GeoJSON FeatureCollection from TIGERweb
+let tractGeometries = null;   // GeoJSON FeatureCollection from TIGERweb (shared by both sources)
 let leafletMap = null;
 let tractLayer = null;
 let mapMonth = null;          // currently displayed "MM/YYYY"
@@ -426,31 +452,9 @@ async function loadCases() {
   return data;
 }
 
-async function loadSnapshot() {
-  try {
-    const r = await fetch(SNAPSHOT_URL, { cache: "no-store" });
-    if (!r.ok) return null;
-    let data = await r.json();
-    if (data.format === "gzip+base64" && data.data) {
-      const bin = Uint8Array.from(atob(data.data), c => c.charCodeAt(0));
-      const raw = pako.inflate(bin, { to: "string" });
-      data = JSON.parse(raw);
-    }
-    return data;
-  } catch (e) {
-    console.warn("snapshot load failed:", e);
-    return null;
-  }
-}
-
 async function loadData() {
   try {
-    // Kick all three loads in parallel — snapshot + library are independent of cases.json
-    const casesPromise    = loadCases();
-    const snapshotPromise = loadSnapshot();
-    const libraryPromise  = loadLibrary();
-
-    const data = await casesPromise;
+    const data = await loadCases();
 
     const cases = data.cases || {};
     allRows = Object.entries(cases).map(([docket, c]) => ({
@@ -458,6 +462,8 @@ async function loadData() {
       ...c,
       Defendant_1: (c.Defendant_1 || "").startsWith("ENC:") ? "—" : c.Defendant_1 || "",
     }));
+
+    rebuildLocalAggregates();
 
     document.getElementById("loading").style.display = "none";
     document.getElementById("app").style.display = "block";
@@ -470,21 +476,9 @@ async function loadData() {
     bindViewControls();
     render();
 
-    Promise.all([snapshotPromise, libraryPromise]).then(([s, lib]) => {
-      snapshot = s;
-      // Use an empty sentinel rather than null when the file doesn't exist on
-      // GitHub yet — that way kickBackgroundSync's `library ?` guard correctly
-      // skips re-fetching the same 404.
-      library = lib || { built_at: null, tracts: {} };
-      const tractCount = Object.keys(library.tracts).length;
-      const mappedCount = Object.values(library.tracts).filter(t => t.council_district).length;
-      console.info(
-        `[eo] library: ${lib ? 'loaded' : 'absent (404)'}` +
-        ` · ${tractCount} tracts · ${mappedCount} mapped to districts`
-      );
-      refreshSnapshotUi();
-      kickBackgroundSync();
-    });
+    // Pull the Princeton CSV live from evictionlab.org in the background.
+    // Nothing is written back to GitHub — Princeton lives only in memory.
+    kickBackgroundSync();
   } catch (e) {
     document.getElementById("loading").style.display = "none";
     document.getElementById("error").style.display = "block";
@@ -494,11 +488,10 @@ async function loadData() {
 
 function updateSubtitle() {
   const enriched = allRows.filter(r => r.enriched).length;
-  const withDistrict = allRows.filter(r => r.council_district).length;
-  let s = `${allRows.length} cases · ${enriched} enriched · ${withDistrict} with districts`;
-  if (snapshot && snapshot.updated_at) {
-    s += ` · baseline updated ${snapshot.updated_at.slice(0,10)}`;
-  }
+  const withTract = allRows.filter(r => r.census_geoid).length;
+  const tractCount = Object.keys(agg.tractInfo).length;
+  let s = `${allRows.length} cases · ${enriched} enriched · ${withTract} with tracts (${tractCount} unique)`;
+  if (princetonRows) s += ` · Princeton: ${princetonRows.length} rows (live)`;
   document.getElementById("subtitle").textContent = s;
 }
 
@@ -690,36 +683,78 @@ function caseFileDateToMonth(fileDate) {
   return `${m[1].padStart(2,'0')}/${m[2]}`;
 }
 
-function localByDistrictMonth() {
-  const out = {};
+/* Build agg.tractToDistrict / tractInfo / localTract / localDistrict from allRows.
+   Run on cases load. Cheap (~3k rows). */
+function rebuildLocalAggregates() {
+  const t2d = {}, info = {}, byTract = {}, byDistrict = {}, months = new Set();
   for (const r of allRows) {
+    const g = r.census_geoid ? String(r.census_geoid) : null;
     const d = normalizeDistrict(r.council_district);
     const m = caseFileDateToMonth(r.file_date);
-    if (!d || !m) continue;
-    if (!out[d]) out[d] = {};
-    out[d][m] = (out[d][m] || 0) + 1;
+
+    if (g && d && !t2d[g]) t2d[g] = { council_district: r.council_district, council_rep: r.council_rep || '' };
+    if (g && !info[g]) info[g] = { name: r.census_name || '', district: r.council_district || '', rep: r.council_rep || '' };
+
+    if (g && m) {
+      if (!byTract[g]) byTract[g] = {};
+      byTract[g][m] = (byTract[g][m] || 0) + 1;
+      months.add(m);
+    }
+    if (d && m) {
+      if (!byDistrict[d]) byDistrict[d] = {};
+      byDistrict[d][m] = (byDistrict[d][m] || 0) + 1;
+    }
   }
-  return out;
+  agg.tractToDistrict = t2d;
+  agg.tractInfo       = info;
+  agg.localTract      = byTract;
+  agg.localDistrict   = byDistrict;
+  agg.localMonths     = sortMonthsAsc([...months]);
 }
 
-function princetonByDistrictMonth() {
-  if (!snapshot || !snapshot.by_district_month) return {};
-  const out = {};
-  for (const d in snapshot.by_district_month) {
-    out[normalizeDistrict(d)] = snapshot.by_district_month[d];
+/* Build agg.princetonTract / princetonDistrict from princetonRows × tractToDistrict.
+   Run when CSV arrives. */
+function rebuildPrincetonAggregates() {
+  const byTract = {}, byDistrict = {}, months = new Set();
+  if (!princetonRows) {
+    agg.princetonTract = {}; agg.princetonDistrict = {}; agg.princetonMonths = [];
+    return;
   }
-  return out;
+  const t2d = agg.tractToDistrict;
+  for (const r of princetonRows) {
+    const g = String(r.GEOID);
+    const m = String(r.month);
+    const f = r.filings_2020 || 0;
+    if (!byTract[g]) byTract[g] = {};
+    byTract[g][m] = (byTract[g][m] || 0) + f;
+    months.add(m);
+
+    const t = t2d[g];
+    if (t && t.council_district) {
+      const d = normalizeDistrict(t.council_district);
+      if (!byDistrict[d]) byDistrict[d] = {};
+      byDistrict[d][m] = (byDistrict[d][m] || 0) + f;
+    }
+  }
+  agg.princetonTract    = byTract;
+  agg.princetonDistrict = byDistrict;
+  agg.princetonMonths   = sortMonthsAsc([...months]);
 }
 
-function recentMonths(princeton, n=6) {
-  const set = new Set();
-  for (const row of Object.values(princeton)) {
-    for (const m in row) set.add(m);
-  }
-  return [...set].sort((a, b) => {
+function sortMonthsAsc(arr) {
+  return arr.sort((a, b) => {
     const [am, ay] = a.split('/'); const [bm, by] = b.split('/');
-    return (by + bm).localeCompare(ay + am);
-  }).slice(0, n).reverse();
+    return (ay + am).localeCompare(by + bm);
+  });
+}
+
+// Most recent N months from the union of both sources (oldest→newest in the returned array).
+// Showing the union (not just Princeton's months) lets recent scrape months
+// appear even though Princeton's CSV stops in 2021.
+function recentMonthsUnion(n=12) {
+  const set = new Set([...agg.princetonMonths, ...agg.localMonths]);
+  const sorted = sortMonthsAsc([...set]);
+  return sorted.slice(-n);
 }
 
 function ratioClass(ratio) {
@@ -738,77 +773,86 @@ function median(arr) {
 
 function updateCoverageHeadline() {
   const el = document.getElementById('coverage-headline');
-  // Coverage is only meaningful when comparing — keep Local view clean.
   if (viewMode === 'cases') { el.textContent = ''; return; }
-  if (!snapshot) { el.innerHTML = '<span style="color:var(--dim)">Princeton snapshot not yet on GitHub</span>'; return; }
-  const princeton = princetonByDistrictMonth();
-  const local = localByDistrictMonth();
-  const months = recentMonths(princeton, 6);
-  if (!months.length) { el.textContent = ''; return; }
-  const latest = months[months.length - 1];
-  const ratios = [];
-  for (const d in princeton) {
-    const p = princeton[d][latest] || 0;
-    const l = (local[d] && local[d][latest]) || 0;
-    if (p > 0) ratios.push(l / p);
+  if (!princetonRows) {
+    el.innerHTML = '<span style="color:var(--dim)">Fetching Princeton CSV…</span>';
+    return;
   }
-  const med = median(ratios);
-  if (med == null) { el.innerHTML = `<span style="color:var(--dim)">no overlap for ${latest}</span>`; return; }
-  el.innerHTML = `Coverage for <strong>${latest}</strong>: <strong>${(med * 100).toFixed(0)}%</strong> of Princeton (median across ${ratios.length} districts)`;
+  // Pick the most recent month with overlap (both sides > 0 for at least one
+  // district/tract). Princeton stops in 2021 and we start in 2026, so an empty
+  // result is the honest answer.
+  const months = recentMonthsUnion(24).slice().reverse(); // newest first
+  const p = coverageMode === 'tract' ? agg.princetonTract : agg.princetonDistrict;
+  const l = coverageMode === 'tract' ? agg.localTract     : agg.localDistrict;
+  for (const m of months) {
+    const ratios = [];
+    for (const k in p) {
+      const pv = p[k][m] || 0;
+      const lv = (l[k] && l[k][m]) || 0;
+      if (pv > 0) ratios.push(lv / pv);
+    }
+    const med = median(ratios);
+    if (med != null) {
+      el.innerHTML = `Coverage for <strong>${m}</strong>: <strong>${(med * 100).toFixed(0)}%</strong> of Princeton (median across ${ratios.length} ${coverageMode}s)`;
+      return;
+    }
+  }
+  el.innerHTML = '<span style="color:var(--dim)">no Princeton↔scrape month overlap (Princeton CSV ends 2021)</span>';
 }
 
-/* ───────────────────────── Coverage by District (Princeton vs Scraped) ───────────────────────── */
+/* ───────────────────────── Coverage view (District or Tract) ───────────────────────── */
 
 function renderCoverageGrid() {
   const root = document.getElementById('grid-view');
 
-  if (!snapshot) {
-    root.innerHTML = `<div class="notice">Loading Princeton data…</div>`;
+  if (!princetonRows) {
+    root.innerHTML = `<div class="notice">Fetching Princeton CSV from evictionlab.org…</div>`;
     return;
   }
 
-  const princeton = princetonByDistrictMonth();
-  const local     = localByDistrictMonth();
-  const months    = recentMonths(princeton, 12);
-  const districts = Object.keys(princeton).sort((a, b) => {
+  const months = recentMonthsUnion(12);
+  if (!months.length) {
+    root.innerHTML = `<div class="notice">No monthly data on either side yet.</div>`;
+    return;
+  }
+
+  const isTract = coverageMode === 'tract';
+  const princeton = isTract ? agg.princetonTract    : agg.princetonDistrict;
+  const local     = isTract ? agg.localTract        : agg.localDistrict;
+
+  // Row keys = union of both sides, so we surface tracts/districts that appear
+  // in our scrape but not Princeton (and vice versa).
+  const keys = [...new Set([...Object.keys(princeton), ...Object.keys(local)])].sort((a, b) => {
     const an = parseInt(a, 10), bn = parseInt(b, 10);
     if (!isNaN(an) && !isNaN(bn)) return an - bn;
     return a.localeCompare(b);
   });
 
-  if (!districts.length || !months.length) {
-    const libTracts = (library && library.tracts) || {};
-    const total = Object.keys(libTracts).length;
-    const mapped = Object.values(libTracts).filter(t => t.council_district).length;
-    const unmappedNote = snapshot && snapshot.unmapped_tracts ? ` · ${snapshot.unmapped_tracts.length} tracts still unmapped from the CSV` : '';
-    root.innerHTML = `<div class="notice">Building the tract→district library (${mapped}/${total} tracts mapped so far${unmappedNote}). Reload in a few minutes.</div>`;
-    return;
-  }
+  const labelFor = isTract
+    ? (k => { const info = agg.tractInfo[k]; return info && info.name ? info.name : `Tract ${k}`; })
+    : (k => `D${k}`);
 
-  let html = `<table class="coverage-tbl"><thead><tr><th>District</th><th>Source</th>`;
+  let html = `<table class="coverage-tbl"><thead><tr><th>${isTract ? 'Tract' : 'District'}</th><th>Source</th>`;
   for (const m of months) html += `<th class="num">${m}</th>`;
   html += `</tr></thead><tbody>`;
 
-  for (const d of districts) {
-    // Row 1: Princeton (ground truth)
-    html += `<tr class="dist-princeton"><td class="row-label" rowspan="2">D${d}</td><td class="src-label src-princeton">Princeton</td>`;
+  for (const k of keys) {
+    html += `<tr class="dist-princeton"><td class="row-label" rowspan="2">${labelFor(k)}</td><td class="src-label src-princeton">Princeton</td>`;
     for (const m of months) {
-      const p = princeton[d][m];
-      html += `<td class="num">${p != null ? p : '—'}</td>`;
+      const v = princeton[k] && princeton[k][m];
+      html += `<td class="num">${v != null ? v : '—'}</td>`;
     }
     html += `</tr>`;
 
-    // Row 2: Scraped (ours), color-coded by ratio
     html += `<tr class="dist-scraped"><td class="src-label src-scraped">Scraped</td>`;
     for (const m of months) {
-      const p = princeton[d][m];
-      const l = (local[d] && local[d][m]) || 0;
+      const p = princeton[k] && princeton[k][m];
+      const lv = (local[k] && local[k][m]) || 0;
       if (p == null || p === 0) {
-        html += `<td class="num cell-na">${l || '—'}</td>`;
+        html += `<td class="num cell-na">${lv || '—'}</td>`;
       } else {
-        const ratio = l / p;
-        const cls = ratioClass(ratio);
-        html += `<td class="num ${cls}"><div class="cell-stack"><span>${l}</span><span class="ratio">${(ratio*100).toFixed(0)}%</span></div></td>`;
+        const ratio = lv / p;
+        html += `<td class="num ${ratioClass(ratio)}"><div class="cell-stack"><span>${lv}</span><span class="ratio">${(ratio*100).toFixed(0)}%</span></div></td>`;
       }
     }
     html += `</tr>`;
@@ -819,7 +863,7 @@ function renderCoverageGrid() {
     <span><span class="sw green"></span> Scraped ≥85% of Princeton</span>
     <span><span class="sw amber"></span> 50–85%</span>
     <span><span class="sw red"></span> &lt;50%</span>
-    <span style="color:var(--dim)">Top row = Princeton Eviction Lab (ground truth) · Bottom row = our scrape</span>
+    <span style="color:var(--dim)">Princeton CSV is live from evictionlab.org · only months where Princeton > 0 get a ratio</span>
   </div>`;
 
   root.innerHTML = html;
@@ -827,24 +871,14 @@ function renderCoverageGrid() {
 
 /* ───────────────────────── Map view (heat map + time slider) ───────────────────────── */
 
-function buildTractMonthlyData(csvRows) {
-  const data = {};
-  const months = new Set();
+// Active data layer for the map: returns { data, months, max } for whichever
+// source is selected. Recomputes max each call (cheap; runs once per render).
+function mapLayer() {
+  const data   = mapSource === 'scraped' ? agg.localTract   : agg.princetonTract;
+  const months = mapSource === 'scraped' ? agg.localMonths  : agg.princetonMonths;
   let max = 0;
-  for (const r of csvRows) {
-    const g = String(r.GEOID);
-    const m = String(r.month);
-    const f = r.filings_2020 || 0;
-    if (!data[g]) data[g] = {};
-    data[g][m] = f;
-    months.add(m);
-    if (f > max) max = f;
-  }
-  const sorted = [...months].sort((a, b) => {
-    const [am, ay] = a.split('/'); const [bm, by] = b.split('/');
-    return (ay + am).localeCompare(by + bm);
-  });
-  return { data, months: sorted, max };
+  for (const g in data) for (const m in data[g]) if (data[g][m] > max) max = data[g][m];
+  return { data, months, max };
 }
 
 async function fetchTractGeometries() {
@@ -885,27 +919,49 @@ function colorForFilings(filings, max) {
 }
 
 function updateMapColors() {
-  if (!tractLayer || !tractMonthlyData || !mapMonth) return;
+  if (!tractLayer || !mapMonth) return;
+  const { data, max } = mapLayer();
   tractLayer.eachLayer(layer => {
     const geoid = String(layer.feature.properties.GEOID);
-    const filings = (tractMonthlyData[geoid] && tractMonthlyData[geoid][mapMonth]) || 0;
-    layer.setStyle({ fillColor: colorForFilings(filings, maxFilings) });
+    const filings = (data[geoid] && data[geoid][mapMonth]) || 0;
+    layer.setStyle({ fillColor: colorForFilings(filings, max) });
   });
+}
+
+// Reset the slider's min/max/value to the active source's month range.
+// Called on first map init and whenever the source toggle changes.
+function syncMapSlider() {
+  const { months } = mapLayer();
+  const slider = document.getElementById('map-slider');
+  if (!months.length) {
+    mapMonth = null;
+    slider.min = 0; slider.max = 0; slider.value = 0;
+    document.getElementById('map-month-label').textContent = '—';
+    return;
+  }
+  // Try to keep the same month across source toggles; fall back to latest.
+  let idx = months.indexOf(mapMonth);
+  if (idx < 0) idx = months.length - 1;
+  mapMonth = months[idx];
+  slider.min = 0;
+  slider.max = months.length - 1;
+  slider.value = idx;
+  document.getElementById('map-month-label').textContent = mapMonth;
 }
 
 async function renderMapView() {
   const status = document.getElementById('map-status');
   const controls = document.getElementById('map-controls');
 
-  // Waiting on the CSV parse (kicked by kickBackgroundSync)
-  if (!tractMonthlyData || mapMonths.length === 0) {
-    status.textContent = 'Waiting for Princeton CSV…';
+  const { months } = mapLayer();
+  if (!months.length) {
+    status.textContent = mapSource === 'princeton'
+      ? 'Waiting for Princeton CSV…'
+      : 'No scraped cases have census tracts yet.';
     status.style.display = '';
     controls.style.display = 'none';
     return;
   }
-
-  if (!mapMonth) mapMonth = mapMonths[mapMonths.length - 1];
 
   // Fetch tract polygons once per session
   if (!tractGeometries) {
@@ -939,12 +995,14 @@ async function renderMapView() {
       onEachFeature: (feature, layer) => {
         const geoid = String(feature.properties.GEOID);
         layer.on('mouseover', e => {
-          const filings = (tractMonthlyData[geoid] && tractMonthlyData[geoid][mapMonth]) || 0;
-          const districtInfo = library && library.tracts && library.tracts[geoid];
-          const districtLine = districtInfo && districtInfo.council_district
-            ? `<br>${districtInfo.council_district}` : '';
+          const { data } = mapLayer();
+          const filings = (data[geoid] && data[geoid][mapMonth]) || 0;
+          const info = agg.tractInfo[geoid];
+          const nameLine = info && info.name ? info.name : `Tract ${geoid}`;
+          const districtLine = info && info.district ? `<br>${info.district}` : '';
+          const sourceLabel = mapSource === 'scraped' ? 'cases' : 'filings';
           layer.bindTooltip(
-            `<strong>Tract ${geoid}</strong>${districtLine}<br>${mapMonth}: ${filings} filings`,
+            `<strong>${nameLine}</strong>${districtLine}<br>${mapMonth}: ${filings} ${sourceLabel}`,
             { sticky: true }
           ).openTooltip(e.latlng);
         });
@@ -954,23 +1012,19 @@ async function renderMapView() {
 
     leafletMap.fitBounds(tractLayer.getBounds(), { padding: [20, 20] });
 
-    // Slider
     const slider = document.getElementById('map-slider');
-    slider.min = 0;
-    slider.max = mapMonths.length - 1;
-    slider.value = mapMonths.length - 1;
     slider.addEventListener('input', e => {
-      mapMonth = mapMonths[parseInt(e.target.value, 10)];
+      const { months: ms } = mapLayer();
+      mapMonth = ms[parseInt(e.target.value, 10)];
       document.getElementById('map-month-label').textContent = mapMonth;
       updateMapColors();
     });
-    document.getElementById('map-month-label').textContent = mapMonth;
   }
 
+  syncMapSlider();
   status.style.display = 'none';
   controls.style.display = '';
   updateMapColors();
-  // Leaflet needs a kick to recompute size after its container becomes visible
   setTimeout(() => leafletMap && leafletMap.invalidateSize(), 50);
 }
 
@@ -980,10 +1034,12 @@ function setVisibility() {
   const isCases    = viewMode === 'cases';
   const isCoverage = viewMode === 'coverage';
   const isMap      = viewMode === 'map';
-  document.getElementById('local-toolbar').style.display    = isCases    ? '' : 'none';
-  document.getElementById('local-table-wrap').style.display = isCases    ? '' : 'none';
-  document.getElementById('grid-view').style.display        = isCoverage ? '' : 'none';
-  document.getElementById('map-view').style.display         = isMap      ? '' : 'none';
+  document.getElementById('local-toolbar').style.display      = isCases    ? '' : 'none';
+  document.getElementById('local-table-wrap').style.display   = isCases    ? '' : 'none';
+  document.getElementById('grid-view').style.display          = isCoverage ? '' : 'none';
+  document.getElementById('map-view').style.display           = isMap      ? '' : 'none';
+  document.getElementById('coverage-mode-group').style.display = isCoverage ? '' : 'none';
+  document.getElementById('map-source-group').style.display    = isMap      ? '' : 'none';
 }
 
 function render() {
@@ -1006,31 +1062,33 @@ function bindViewControls() {
       render();
     });
   });
+  document.querySelectorAll('#coverage-mode-seg button').forEach(b => {
+    b.addEventListener('click', () => {
+      coverageMode = b.dataset.val;
+      document.querySelectorAll('#coverage-mode-seg button').forEach(x => x.classList.toggle('on', x === b));
+      if (viewMode === 'coverage') render();
+    });
+  });
+  document.querySelectorAll('#map-source-seg button').forEach(b => {
+    b.addEventListener('click', () => {
+      mapSource = b.dataset.val;
+      document.querySelectorAll('#map-source-seg button').forEach(x => x.classList.toggle('on', x === b));
+      if (viewMode === 'map') {
+        syncMapSlider();
+        updateMapColors();
+      }
+    });
+  });
 }
 
-/* ───────────────────────── Background snapshot enrichment ───────────────────────── */
-/* Runs after the main UI loads. Fetches Princeton CSV, diffs against the
-   snapshot we already loaded, enriches any new tracts (rate-limited TIGER +
-   Nashville GIS calls), and POSTs an updated snapshot to /webhook/site/publish.
-   No-op if there's nothing new. Multiple concurrent visitors may race; the
-   write is idempotent (overwrite mode) so the cost is at worst a duplicate
-   commit. */
+/* ───────────────────────── Princeton CSV fetch ─────────────────────────
+   Fetched once per session direct from evictionlab.org through the n8n CORS
+   proxy. Nothing is persisted — no GitHub round-trip, no snapshot file, no
+   tract→district library. Every case in cases.json already carries its own
+   GEOID + council_district, so the comparison is apples-to-apples in memory. */
 
-const N8N_PUBLISH = 'https://n8n.intelechia.com/webhook/site/publish';
-const N8N_PROXY   = 'https://n8n.intelechia.com/webhook/feed';
-const N8N_AUTH    = 'Bearer Provoking0-Cranium7-Penpal4-Childlike0-Uranium9';
-const SNAPSHOT_FILE = 'eviction-lab-snapshot.json';
-const LIBRARY_FILE  = 'tract-district-map.json';
-const LIBRARY_URL   = 'https://raw.githubusercontent.com/clovenbradshaw-ctrl/plain-text/main/tract-district-map.json';
+const N8N_PROXY     = 'https://n8n.intelechia.com/webhook/feed';
 const PRINCETON_CSV = 'https://evictionlab.org/uploads/nashville_monthly_2020_2021.csv';
-const TIGER_URL = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWL_Current/MapServer/8/query';
-const NASH_GIS_BASE = 'https://maps.nashville.gov/arcgis/rest/services/Elections/Precincts/MapServer/1/query';
-const GEOCODE_DELAY_MS = 1100;
-const LIBRARY_BATCH_SIZE = 25;                 // republish library every N tracts mapped
-const LAST_LIBRARY_RUN_KEY = 'eo-last-library-run';
-const LIBRARY_RESTART_THROTTLE_MS = 60 * 1000; // 1 min before another tab joins library build
-
-let library = null;  // { built_at, tracts: { GEOID: {lat, lon, council_district, council_rep, racial_majority} } }
 
 function bgStatus(msg, active=false) {
   const el = document.getElementById('bg-sync');
@@ -1040,16 +1098,6 @@ function bgStatus(msg, active=false) {
 
 function pxProxy(url) { return `${N8N_PROXY}?url=${encodeURIComponent(url)}`; }
 
-function recentlyRan(key, throttleMs) {
-  try {
-    const last = parseInt(localStorage.getItem(key) || '0', 10);
-    return Date.now() - last < throttleMs;
-  } catch { return false; }
-}
-function markRan(key) {
-  try { localStorage.setItem(key, String(Date.now())); } catch {}
-}
-
 async function fetchPrincetonCsvRows() {
   const r = await fetch(pxProxy(PRINCETON_CSV));
   if (!r.ok) throw new Error(`csv HTTP ${r.status}`);
@@ -1058,250 +1106,24 @@ async function fetchPrincetonCsvRows() {
   return parsed.data.filter(r => r.GEOID && r.month);
 }
 
-async function loadLibrary() {
-  try {
-    const r = await fetch(LIBRARY_URL, { cache: "no-store" });
-    if (!r.ok) return null;
-    let data = await r.json();
-    if (data.format === "gzip+base64" && data.data) {
-      const bin = Uint8Array.from(atob(data.data), c => c.charCodeAt(0));
-      const raw = pako.inflate(bin, { to: "string" });
-      data = JSON.parse(raw);
-    }
-    return data;
-  } catch (e) {
-    console.warn("library load failed:", e);
-    return null;
-  }
-}
-
-async function bgGetCentroid(geoid) {
-  const url = `${TIGER_URL}?where=${encodeURIComponent("GEOID='" + geoid + "'")}&outFields=GEOID,CENTLAT,CENTLON&returnGeometry=false&f=json`;
-  const r = await fetch(pxProxy(url));
-  if (!r.ok) return null;
-  const data = await r.json();
-  if (data.features && data.features.length > 0) {
-    const f = data.features[0].attributes;
-    return { lat: parseFloat(f.CENTLAT), lon: parseFloat(f.CENTLON) };
-  }
-  return null;
-}
-async function bgGetCouncilDistrict(lat, lon) {
-  const params = new URLSearchParams({
-    geometry: `${lon},${lat}`, geometryType: 'esriGeometryPoint', inSR: '4326',
-    spatialRel: 'esriSpatialRelIntersects',
-    outFields: 'DistrictName,Representative', returnGeometry: 'false', f: 'json',
-  });
-  const r = await fetch(pxProxy(`${NASH_GIS_BASE}?${params}`));
-  if (!r.ok) return null;
-  const data = await r.json();
-  if (data.features && data.features.length > 0) {
-    const a = data.features[0].attributes;
-    return { district: a.DistrictName || '', rep: a.Representative || '' };
-  }
-  return null;
-}
-
-async function publishGzippedJson(filename, payload, commitMsg) {
-  const raw = JSON.stringify(payload);
-  const compressed = pako.gzip(raw);
-  let bin = '';
-  for (let i = 0; i < compressed.length; i++) bin += String.fromCharCode(compressed[i]);
-  const wrapper = {
-    format: 'gzip+base64',
-    raw_bytes: raw.length,
-    compressed_bytes: compressed.length,
-    data: btoa(bin),
-  };
-  const r = await fetch(N8N_PUBLISH, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': N8N_AUTH },
-    body: JSON.stringify({
-      filename, mode: 'overwrite', content: wrapper, commit_message: commitMsg,
-    }),
-  });
-  if (!r.ok) throw new Error(`publish HTTP ${r.status}`);
-}
-
 function refreshSnapshotUi() {
   updateCoverageHeadline();
   updateSubtitle();
   if (viewMode !== 'cases') render();
 }
 
-// Build the district-month rollup from the CSV using the library for tract→district.
-// Cheap, deterministic, ~5000 row loop.
-function buildSnapshotFromCsv(csvRows, lib) {
-  const tracts = (lib && lib.tracts) || {};
-  const byDistrictMonth = {};
-  const unmappedGeoids = new Set();
-  for (const r of csvRows) {
-    const geoid = String(r.GEOID);
-    const month = String(r.month);
-    const filings = r.filings_2020 || 0;
-    const t = tracts[geoid];
-    if (!t || !t.council_district) {
-      unmappedGeoids.add(geoid);
-      continue;
-    }
-    const d = t.council_district;
-    if (!byDistrictMonth[d]) byDistrictMonth[d] = {};
-    byDistrictMonth[d][month] = (byDistrictMonth[d][month] || 0) + filings;
-  }
-  return {
-    updated_at: new Date().toISOString(),
-    source_url: PRINCETON_CSV,
-    by_district_month: byDistrictMonth,
-    unmapped_tracts: [...unmappedGeoids].sort(),
-    csv_row_count: csvRows.length,
-  };
-}
-
-function snapshotsEqual(a, b) {
-  if (!a || !b) return false;
-  return JSON.stringify(a.by_district_month || {}) === JSON.stringify(b.by_district_month || {});
-}
-
-// Walk missing tracts, enrich each one with TIGER + Nashville GIS, append to
-// the library, and batch-publish so the next visitor inherits the progress.
-// This is the slow path — runs only when the library has gaps. Most visitors
-// after the first round will skip it entirely.
-async function extendLibrary(missingGeoids, csvRows) {
-  if (recentlyRan(LAST_LIBRARY_RUN_KEY, LIBRARY_RESTART_THROTTLE_MS)) {
-    bgStatus(`${missingGeoids.length} tracts need mapping — another tab is on it`, false);
-    setTimeout(() => bgStatus(''), 5000);
-    return false;
-  }
-
-  const sampleByGeoid = {};
-  for (const r of csvRows) {
-    const g = String(r.GEOID);
-    if (!sampleByGeoid[g]) sampleByGeoid[g] = r;
-  }
-
-  if (!library) library = { built_at: null, tracts: {} };
-
-  let mapped = 0, done = 0, sinceLastPublish = 0;
-  for (const geoid of missingGeoids) {
-    markRan(LAST_LIBRARY_RUN_KEY);
-    bgStatus(`Mapping tract ${done+1}/${missingGeoids.length}: ${geoid}`, true);
-    try {
-      const centroid = await bgGetCentroid(geoid);
-      if (centroid) {
-        let council = '', rep = '';
-        try {
-          const dist = await bgGetCouncilDistrict(centroid.lat, centroid.lon);
-          if (dist) { council = dist.district; rep = dist.rep; }
-        } catch {}
-        const sample = sampleByGeoid[geoid] || {};
-        library.tracts[geoid] = {
-          lat: centroid.lat, lon: centroid.lon,
-          council_district: council, council_rep: rep,
-          racial_majority: sample.racial_majority || '',
-        };
-        if (council) { mapped++; sinceLastPublish++; }
-      }
-    } catch (e) {
-      console.warn('library entry failed for', geoid, e);
-    }
-    done++;
-
-    if (sinceLastPublish >= LIBRARY_BATCH_SIZE) {
-      library.built_at = new Date().toISOString();
-      try {
-        await publishGzippedJson(
-          LIBRARY_FILE, library,
-          `tract-district-map: +${sinceLastPublish} mapped (${Object.keys(library.tracts).length} total)`
-        );
-      } catch (e) {
-        console.warn('mid-library publish failed:', e);
-      }
-      sinceLastPublish = 0;
-    }
-
-    await new Promise(r => setTimeout(r, GEOCODE_DELAY_MS));
-  }
-
-  if (sinceLastPublish > 0) {
-    library.built_at = new Date().toISOString();
-    try {
-      await publishGzippedJson(
-        LIBRARY_FILE, library,
-        `tract-district-map: ${Object.keys(library.tracts).length} tracts (build complete)`
-      );
-    } catch (e) {
-      console.warn('final library publish failed:', e);
-    }
-  }
-
-  bgStatus(`Mapped ${mapped} new tracts to council districts`, false);
-  setTimeout(() => bgStatus(''), 5000);
-  return mapped > 0;
-}
-
-// One unified flow:
-//   1. Fetch Princeton CSV + load tract-district library
-//   2. Build the snapshot in memory from CSV × library (instant)
-//   3. Publish snapshot if it differs from what's on GitHub
-//   4. Only if the library is missing tracts the CSV mentions — extend it
-//      (slow, one-time work), then rebuild + republish the snapshot
 async function kickBackgroundSync() {
   try {
     bgStatus('Fetching Princeton CSV…', true);
-    // library was populated (possibly as an empty sentinel) in loadData;
-    // don't re-fetch it here.
-    const csvRows = await fetchPrincetonCsvRows();
-    console.info(`[eo] princeton csv: ${csvRows.length} rows · library has ${Object.keys(library.tracts).length} tracts`);
-
-    // Per-tract monthly data powers the Map view; build it once per session.
-    const tmd = buildTractMonthlyData(csvRows);
-    tractMonthlyData = tmd.data;
-    mapMonths = tmd.months;
-    maxFilings = tmd.max;
-    if (viewMode === 'map') renderMapView();
-
-    const newSnapshot = buildSnapshotFromCsv(csvRows, library);
-    const changed = !snapshot || !snapshotsEqual(snapshot, newSnapshot);
-
-    if (changed) {
-      snapshot = newSnapshot;
-      refreshSnapshotUi();
-      if (Object.keys(newSnapshot.by_district_month).length > 0) {
-        publishGzippedJson(
-          SNAPSHOT_FILE, newSnapshot,
-          `eviction-lab: rebuild from CSV+library (${Object.keys(newSnapshot.by_district_month).length} districts, ${csvRows.length} rows)`
-        ).catch(e => console.warn('snapshot publish failed:', e));
-      }
-    }
-
-    // Library check: any tract Princeton mentions that we haven't mapped yet?
-    const csvTracts = [...new Set(csvRows.map(r => String(r.GEOID)))];
-    const missing = csvTracts.filter(g => !library.tracts[g] || !library.tracts[g].council_district);
-
-    if (missing.length === 0) {
-      console.info(`[eo] library is complete (${csvTracts.length}/${csvTracts.length} CSV tracts mapped) — skipping enrichment`);
-      bgStatus(`Up to date · library covers ${csvTracts.length} tracts`, false);
-      setTimeout(() => bgStatus(''), 3000);
-      return;
-    }
-
-    console.info(`[eo] library has ${missing.length} unmapped tracts — extending`);
-    const extended = await extendLibrary(missing, csvRows);
-    if (extended) {
-      // Rebuild snapshot with the new mappings now folded in
-      const finalSnapshot = buildSnapshotFromCsv(csvRows, library);
-      if (!snapshotsEqual(snapshot, finalSnapshot)) {
-        snapshot = finalSnapshot;
-        refreshSnapshotUi();
-        publishGzippedJson(
-          SNAPSHOT_FILE, finalSnapshot,
-          `eviction-lab: rebuild after library extension`
-        ).catch(e => console.warn('snapshot publish failed:', e));
-      }
-    }
+    princetonRows = await fetchPrincetonCsvRows();
+    rebuildPrincetonAggregates();
+    console.info(`[eo] princeton csv: ${princetonRows.length} rows · ${agg.princetonMonths.length} months`);
+    refreshSnapshotUi();
+    bgStatus(`Princeton: ${princetonRows.length} rows loaded (live)`, false);
+    setTimeout(() => bgStatus(''), 3000);
   } catch (e) {
-    console.warn('bg sync failed:', e);
-    bgStatus(`Sync failed: ${e.message}`, false);
+    console.warn('Princeton CSV fetch failed:', e);
+    bgStatus(`Princeton fetch failed: ${e.message}`, false);
     setTimeout(() => bgStatus(''), 5000);
   }
 }
