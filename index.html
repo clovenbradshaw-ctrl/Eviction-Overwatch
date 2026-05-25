@@ -380,7 +380,11 @@ async function loadSnapshot() {
 
 async function loadData() {
   try {
-    const data = await loadCases();
+    // Kick both loads in parallel — snapshot fetch is independent of cases.json
+    const casesPromise = loadCases();
+    const snapshotPromise = loadSnapshot();
+
+    const data = await casesPromise;
 
     const cases = data.cases || {};
     allRows = Object.entries(cases).map(([docket, c]) => ({
@@ -400,13 +404,9 @@ async function loadData() {
     bindViewControls();
     render();
 
-    // Fire-and-forget: load Princeton snapshot for the toggle, then kick off
-    // background enrichment if anything new is in Princeton's CSV.
-    loadSnapshot().then(s => {
+    snapshotPromise.then(s => {
       snapshot = s;
-      updateCoverageHeadline();
-      updateSubtitle();
-      if (viewSource !== 'local') render();
+      refreshSnapshotUi();
       kickBackgroundSync();
     });
   } catch (e) {
@@ -1010,7 +1010,7 @@ function refreshSnapshotUi() {
 // Phase 1 — fetch Princeton, write any new data to GitHub immediately.
 // Returns the CSV rows so Phase 2 can keep using them.
 async function syncPrincetonData() {
-  bgStatus('Checking Princeton for updates…', true);
+  bgStatus('Fetching Princeton CSV…', true);
   const csvRows = await fetchPrincetonCsvRows();
   const { newTracts, changedPairs } = diffSnapshot(csvRows, snapshot);
 
@@ -1018,14 +1018,18 @@ async function syncPrincetonData() {
     return csvRows;
   }
 
-  bgStatus(`Princeton: ${newTracts.length} new tracts, ${changedPairs.length} new cells — publishing…`, true);
+  // Merge in memory and surface the data IMMEDIATELY — visitor sees Princeton
+  // numbers the moment we have them, without waiting for the GitHub publish.
   const rawEntries = buildRawTractEntries(newTracts, csvRows);
   snapshot = mergeAndRecompute(snapshot, rawEntries, changedPairs);
-  await publishSnapshot(
+  refreshSnapshotUi();
+
+  bgStatus(`Princeton: ${newTracts.length} new tracts, ${changedPairs.length} new cells — persisting…`, true);
+  // Persist to GitHub in the background; don't block enrichment on it.
+  publishSnapshot(
     snapshot,
     `eviction-lab: +${newTracts.length} tracts, +${changedPairs.length} cells (raw)`
-  );
-  refreshSnapshotUi();
+  ).catch(e => console.warn('phase-1 publish failed:', e));
   return csvRows;
 }
 
@@ -1105,9 +1109,11 @@ async function enrichMissingTracts(csvRows) {
 
 async function kickBackgroundSync() {
   try {
-    // Phase 1: data check (throttled per browser)
+    // Phase 1: data check. Skip the throttle if we have no snapshot yet —
+    // we always want to build the first one ASAP.
+    const haveSnapshot = snapshot && Object.keys(snapshot.tracts || {}).length > 0;
     let csvRows = null;
-    if (!recentlyRan(LAST_DATA_CHECK_KEY, DATA_CHECK_THROTTLE_MS)) {
+    if (!haveSnapshot || !recentlyRan(LAST_DATA_CHECK_KEY, DATA_CHECK_THROTTLE_MS)) {
       markRan(LAST_DATA_CHECK_KEY);
       try {
         csvRows = await syncPrincetonData();
@@ -1121,8 +1127,6 @@ async function kickBackgroundSync() {
     // Phase 2: enrichment (always attempt — there may be leftover work
     // from a previous visitor who closed the tab mid-run)
     if (snapshot && Object.keys(snapshot.tracts).length > 0) {
-      // Need CSV rows for racial_majority on any tract we add (already handled
-      // in Phase 1). For pure enrichment of existing tracts we don't need them.
       await enrichMissingTracts(csvRows);
     }
   } catch (e) {
