@@ -344,10 +344,13 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 #tract-panel .tp-title { font-family: var(--serif); font-size: 16px; color: #f5f0e0; }
 #tract-panel .tp-geoid { font-size: 10px; color: var(--dim); margin-top: 2px; letter-spacing: 0.06em; }
 #tract-panel .tp-close {
-  background: transparent; border: 1px solid var(--border); color: var(--muted);
-  font-family: var(--mono); font-size: 14px; padding: 2px 8px; border-radius: 3px; cursor: pointer;
+  background: transparent; border: none; color: var(--dim);
+  font-family: var(--mono); font-size: 16px; line-height: 1;
+  width: 22px; height: 22px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 3px; cursor: pointer;
 }
-#tract-panel .tp-close:hover { color: var(--gold); border-color: var(--gold-dim); }
+#tract-panel .tp-close:hover { color: var(--gold); background: rgba(196,164,74,0.10); }
 #tract-panel .tp-districts { padding: 12px 16px; border-bottom: 1px solid var(--border); }
 #tract-panel .tp-district-row {
   display: flex; justify-content: space-between; padding: 4px 0;
@@ -375,27 +378,48 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 
 .map-wrap { position: relative; }
 
-/* Case record detail panel — fixed to the right of the viewport so it floats
-   over whatever view is active (mostly the cases table, but also map/coverage). */
+/* Case record detail panel — pinned to the right edge of the table area.
+   Visually treated as a continuation of the table (same background, hairline
+   border, no heavy drop shadow) rather than a floating overlay. */
 #record-panel {
   position: fixed; top: 0; right: 0; bottom: 0;
   width: 380px; max-width: 95vw;
-  background: var(--surface); border-left: 1px solid var(--border);
+  background: var(--bg); border-left: 1px solid var(--border);
   z-index: 1000; overflow-y: auto;
-  box-shadow: -8px 0 24px rgba(0,0,0,0.55);
   display: none;
 }
 #record-panel.open { display: block; }
-#record-panel .tp-head { padding: 16px 18px 12px; }
-#record-panel .tp-title { font-family: var(--mono); font-size: 14px; color: var(--gold); }
-#record-panel .rp-fields { padding: 4px 0 24px; }
+#record-panel .tp-head {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 12px; padding: 9px 14px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+#record-panel .tp-title {
+  font-family: var(--mono); font-size: 12px; color: var(--gold);
+  font-weight: 500; letter-spacing: 0.02em;
+}
+#record-panel .tp-geoid {
+  font-size: 10px; color: var(--dim); margin-top: 2px; letter-spacing: 0.04em;
+}
+#record-panel .tp-close {
+  background: transparent; border: none; color: var(--dim);
+  font-family: var(--mono); font-size: 16px; line-height: 1;
+  width: 22px; height: 22px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 3px; cursor: pointer;
+  flex-shrink: 0;
+}
+#record-panel .tp-close:hover { color: var(--gold); background: rgba(196,164,74,0.10); }
+#record-panel .rp-fields { padding: 0 0 24px; }
 #record-panel .rp-row {
-  display: grid; grid-template-columns: 140px 1fr;
-  gap: 10px; padding: 7px 18px;
-  border-bottom: 1px solid #1f1d17;
+  display: grid; grid-template-columns: 130px 1fr;
+  gap: 10px; padding: 7px 14px;
+  border-bottom: 1px solid var(--surface);
   font-size: 11px;
 }
-#record-panel .rp-row:hover { background: rgba(255,255,255,0.02); }
+#record-panel .rp-row:hover { background: rgba(255,255,255,0.015); }
 #record-panel .rp-row .lbl {
   color: var(--dim); text-transform: uppercase;
   letter-spacing: 0.06em; font-size: 10px;
