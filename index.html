@@ -73,6 +73,63 @@ h1 {
 .bg-sync { font-size: 10px; color: var(--dim); margin-top: 4px; text-align: right; font-style: italic; }
 .bg-sync.active { color: var(--amber); }
 
+.header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.login-btn {
+  font-family: var(--mono); font-size: 11px;
+  padding: 4px 14px;
+  color: var(--gold); background: transparent;
+  border: 1px solid var(--gold-dim); border-radius: 3px;
+  cursor: pointer; letter-spacing: 0.04em;
+}
+.login-btn:hover { background: rgba(196,164,74,0.10); }
+.login-btn.unlocked { color: var(--green); border-color: var(--green); }
+.login-btn.unlocked:hover { background: rgba(74,186,138,0.10); }
+
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.65);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 2000;
+}
+.modal {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 6px; padding: 22px 22px 18px;
+  width: 320px; max-width: 92vw;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+}
+.modal h3 {
+  font-family: var(--serif); font-size: 16px;
+  color: #f5f0e0; font-weight: 400; margin-bottom: 14px;
+}
+.modal input[type=password] {
+  width: 100%; padding: 8px 12px;
+  font-family: var(--mono); font-size: 12px;
+  color: var(--text); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 4px; outline: none;
+}
+.modal input[type=password]:focus { border-color: var(--gold-dim); }
+.login-error {
+  margin-top: 8px; min-height: 14px;
+  font-size: 11px; color: var(--red);
+}
+.modal-actions {
+  display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px;
+}
+.modal-actions button {
+  font-family: var(--mono); font-size: 11px;
+  padding: 6px 14px; border-radius: 3px; cursor: pointer;
+}
+.btn-cancel {
+  background: transparent; color: var(--muted);
+  border: 1px solid var(--border);
+}
+.btn-cancel:hover { color: var(--text); border-color: var(--muted); }
+.btn-primary {
+  background: var(--gold); color: #1a1814;
+  border: 1px solid var(--gold); font-weight: 500;
+}
+.btn-primary:hover { background: #d4b25a; }
+.btn-primary[disabled] { opacity: 0.5; cursor: wait; }
+
 .stats-row {
   display: grid; grid-template-columns: 1fr 1fr;
   gap: 16px; padding: 16px 24px;
@@ -208,6 +265,10 @@ td {
 
 tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 
+#tbody tr { cursor: pointer; }
+#tbody tr:hover td { background: rgba(196,164,74,0.10); }
+#tbody tr.selected td { background: rgba(196,164,74,0.16); }
+
 .docket { color: var(--gold); font-weight: 500; }
 
 .dot {
@@ -228,10 +289,13 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 #grid-view td.row-label { font-weight: 500; color: var(--gold); }
 #grid-view .cell-stack { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.2; }
 #grid-view .cell-stack .ratio { font-size: 10px; color: var(--dim); }
-#grid-view td.cell-green { background: rgba(74,186,138,0.10); }
-#grid-view td.cell-amber { background: rgba(232,167,53,0.10); }
-#grid-view td.cell-red   { background: rgba(232,93,58,0.12); }
+#grid-view td.cell-green { background: rgba(74,186,138,0.45); color: #eafff3; }
+#grid-view td.cell-amber { background: rgba(232,167,53,0.50); color: #1a1410; }
+#grid-view td.cell-red   { background: rgba(232,93,58,0.55); color: #fff3ee; }
 #grid-view td.cell-na    { color: var(--dim); }
+#grid-view td.cell-green .ratio,
+#grid-view td.cell-red   .ratio { color: rgba(255,255,255,0.85); }
+#grid-view td.cell-amber .ratio { color: rgba(0,0,0,0.7); }
 
 /* Coverage by district table: paired Princeton + Scraped rows per district */
 #grid-view .coverage-tbl td.src-label {
@@ -249,6 +313,100 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 #grid-view .legend .sw.green { background: rgba(74,186,138,0.4); }
 #grid-view .legend .sw.amber { background: rgba(232,167,53,0.4); }
 #grid-view .legend .sw.red   { background: rgba(232,93,58,0.4); }
+
+/* Coverage table scroll: many months can blow past viewport width */
+#grid-view .coverage-tbl-wrap { overflow-x: auto; }
+#grid-view .coverage-tbl th:nth-child(1),
+#grid-view .coverage-tbl th:nth-child(2),
+#grid-view .coverage-tbl td:nth-child(1),
+#grid-view .coverage-tbl td:nth-child(2) {
+  position: sticky; background: var(--bg); z-index: 2;
+}
+#grid-view .coverage-tbl th:nth-child(1),
+#grid-view .coverage-tbl td:nth-child(1) { left: 0; }
+#grid-view .coverage-tbl th:nth-child(2),
+#grid-view .coverage-tbl td:nth-child(2) { left: 120px; }
+
+/* Tract detail panel (map view) */
+#tract-panel {
+  position: absolute; top: 0; right: 0; bottom: 0;
+  width: 340px; max-width: 90vw;
+  background: var(--surface); border-left: 1px solid var(--border);
+  z-index: 500; overflow-y: auto;
+  box-shadow: -8px 0 24px rgba(0,0,0,0.4);
+  display: none;
+}
+#tract-panel.open { display: block; }
+#tract-panel .tp-head {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  padding: 14px 16px 10px; border-bottom: 1px solid var(--border); gap: 8px;
+}
+#tract-panel .tp-title { font-family: var(--serif); font-size: 16px; color: #f5f0e0; }
+#tract-panel .tp-geoid { font-size: 10px; color: var(--dim); margin-top: 2px; letter-spacing: 0.06em; }
+#tract-panel .tp-close {
+  background: transparent; border: 1px solid var(--border); color: var(--muted);
+  font-family: var(--mono); font-size: 14px; padding: 2px 8px; border-radius: 3px; cursor: pointer;
+}
+#tract-panel .tp-close:hover { color: var(--gold); border-color: var(--gold-dim); }
+#tract-panel .tp-districts { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+#tract-panel .tp-district-row {
+  display: flex; justify-content: space-between; padding: 4px 0;
+  font-size: 11px;
+}
+#tract-panel .tp-district-row .lbl { color: var(--dim); text-transform: uppercase; letter-spacing: 0.08em; font-size: 10px; }
+#tract-panel .tp-district-row .val { color: var(--text); font-weight: 500; text-align: right; }
+#tract-panel .tp-section-label {
+  padding: 12px 16px 6px; font-size: 10px; text-transform: uppercase;
+  letter-spacing: 0.1em; color: var(--dim);
+}
+#tract-panel .tp-months { padding: 0 16px 16px; display: flex; flex-direction: column; gap: 4px; }
+#tract-panel .tp-month {
+  display: grid; grid-template-columns: 64px 1fr 1fr;
+  gap: 8px; padding: 6px 8px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 3px;
+  font-variant-numeric: tabular-nums; font-size: 11px;
+}
+#tract-panel .tp-month .m { color: var(--gold); font-weight: 500; }
+#tract-panel .tp-month .src { display: flex; flex-direction: column; }
+#tract-panel .tp-month .src .label { font-size: 9px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; }
+#tract-panel .tp-month .src .val { color: var(--text); }
+#tract-panel .tp-month.has-both { border-color: var(--gold-dim); }
+#tract-panel .tp-empty { padding: 16px; color: var(--muted); font-size: 11px; text-align: center; }
+
+.map-wrap { position: relative; }
+
+/* Case record detail panel — fixed to the right of the viewport so it floats
+   over whatever view is active (mostly the cases table, but also map/coverage). */
+#record-panel {
+  position: fixed; top: 0; right: 0; bottom: 0;
+  width: 380px; max-width: 95vw;
+  background: var(--surface); border-left: 1px solid var(--border);
+  z-index: 1000; overflow-y: auto;
+  box-shadow: -8px 0 24px rgba(0,0,0,0.55);
+  display: none;
+}
+#record-panel.open { display: block; }
+#record-panel .tp-head { padding: 16px 18px 12px; }
+#record-panel .tp-title { font-family: var(--mono); font-size: 14px; color: var(--gold); }
+#record-panel .rp-fields { padding: 4px 0 24px; }
+#record-panel .rp-row {
+  display: grid; grid-template-columns: 140px 1fr;
+  gap: 10px; padding: 7px 18px;
+  border-bottom: 1px solid #1f1d17;
+  font-size: 11px;
+}
+#record-panel .rp-row:hover { background: rgba(255,255,255,0.02); }
+#record-panel .rp-row .lbl {
+  color: var(--dim); text-transform: uppercase;
+  letter-spacing: 0.06em; font-size: 10px;
+  word-break: break-word;
+}
+#record-panel .rp-row .val {
+  color: var(--text); word-break: break-word; white-space: pre-wrap;
+  font-variant-numeric: tabular-nums;
+}
+#record-panel .rp-row .val.empty { color: var(--dim); }
+#record-panel .rp-row .val.enc { color: var(--muted); font-style: italic; }
 
 .spark { display: inline-flex; gap: 1px; align-items: flex-end; height: 16px; }
 .spark span { display: inline-block; width: 4px; background: var(--gold-dim); border-radius: 1px; }
@@ -303,34 +461,34 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 #districts-view .spark { height: 18px; }
 #districts-view .spark span { background: var(--gold-dim); width: 3px; min-height: 1px; }
 
-/* District profile modal */
-.modal-backdrop {
+/* District profile modal (separate from main's .modal-overlay system) */
+.dp-backdrop {
   position: fixed; inset: 0; z-index: 100;
   background: rgba(10,9,7,0.78);
   display: flex; align-items: flex-start; justify-content: center;
   padding: 40px 16px; overflow-y: auto;
 }
-.modal {
+.dp-modal {
   background: var(--bg); border: 1px solid var(--border);
   border-radius: 6px; width: 100%; max-width: 880px;
   box-shadow: 0 24px 64px rgba(0,0,0,0.6);
 }
-.modal-header {
+.dp-header {
   display: flex; justify-content: space-between; align-items: flex-start;
   padding: 20px 24px; border-bottom: 1px solid var(--border);
 }
-.modal-header h2 {
+.dp-header h2 {
   font-family: var(--serif); font-size: 22px; font-weight: 400;
   color: #f5f0e0; letter-spacing: -0.02em;
 }
-.modal-header .modal-sub { margin-top: 4px; font-size: 11px; color: var(--muted); }
-.modal-close {
+.dp-header .dp-sub { margin-top: 4px; font-size: 11px; color: var(--muted); }
+.dp-close {
   background: transparent; border: 1px solid var(--border);
   color: var(--muted); font-family: var(--mono); font-size: 14px;
   width: 28px; height: 28px; border-radius: 4px; cursor: pointer;
 }
-.modal-close:hover { color: var(--text); border-color: var(--muted); }
-.modal-body { padding: 20px 24px 24px; }
+.dp-close:hover { color: var(--text); border-color: var(--muted); }
+.dp-body { padding: 20px 24px 24px; }
 
 .profile-grid {
   display: grid; grid-template-columns: repeat(4, 1fr);
@@ -372,14 +530,6 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 .profile-list li .count { color: var(--dim); font-variant-numeric: tabular-nums; }
 .profile-empty { color: var(--dim); font-style: italic; font-size: 11px; }
 
-.profile-cases { width: 100%; }
-.profile-cases td {
-  padding: 5px 8px; font-size: 11px;
-  border-bottom: 1px solid var(--surface);
-  white-space: nowrap; max-width: 220px;
-  overflow: hidden; text-overflow: ellipsis;
-}
-.profile-cases td.docket { color: var(--gold); }
 .profile-trend {
   display: flex; gap: 2px; align-items: flex-end; height: 48px;
   padding: 8px 0;
@@ -389,16 +539,13 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   border-radius: 1px; position: relative;
 }
 .profile-trend .bar:hover { background: var(--gold); }
-.profile-trend .month-labels {
-  display: flex; gap: 2px; margin-top: 4px;
-}
 .trend-wrap { padding: 4px 0; }
 .trend-axis {
   display: flex; justify-content: space-between;
   font-size: 9px; color: var(--dim); margin-top: 4px;
 }
 
-/* Race / ethnicity breakdown inside profile */
+/* Race / ethnicity breakdown in district profile */
 .race-bars { display: flex; flex-direction: column; gap: 4px; }
 .race-row {
   display: grid; grid-template-columns: 200px 1fr 110px;
@@ -409,9 +556,7 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   height: 8px; background: rgba(255,255,255,0.04);
   border-radius: 2px; overflow: hidden;
 }
-.race-row .bar-cell > div {
-  height: 100%; background: var(--gold-dim); border-radius: 2px;
-}
+.race-row .bar-cell > div { height: 100%; background: var(--gold-dim); border-radius: 2px; }
 .race-row .num-cell {
   font-variant-numeric: tabular-nums; color: var(--dim);
   text-align: right; font-size: 11px;
@@ -424,36 +569,12 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 .race-source-note a:hover { text-decoration: underline; }
 .race-overlap { border-top: 1px dashed var(--border); margin-top: 6px; padding-top: 6px; }
 
-/* Case detail modal */
-.docket-clickable { cursor: pointer; }
-.docket-clickable:hover { text-decoration: underline; }
-.case-fields {
-  display: grid; grid-template-columns: 1fr 1fr;
-  gap: 4px 24px;
-}
-@media (max-width: 640px) {
-  .case-fields { grid-template-columns: 1fr; }
-}
-.case-field {
-  display: flex; gap: 12px; padding: 3px 0;
-  font-size: 11px; align-items: baseline;
-}
-.case-field .label {
-  width: 130px; min-width: 130px;
-  color: var(--dim); font-size: 9px;
-  text-transform: uppercase; letter-spacing: 0.1em;
-}
-.case-field .value {
-  flex: 1; color: var(--text); word-break: break-word;
-}
-.case-field .value .rep { color: var(--muted); }
-
-/* Pleadings timeline */
-.pleadings-list { display: flex; flex-direction: column; }
+/* Pleadings timeline (used inside main's record-panel) */
+.pleadings-list { display: flex; flex-direction: column; margin-top: 4px; }
 .pleading-row {
   display: grid; grid-template-columns: 88px 64px 1fr auto;
-  gap: 12px; align-items: start;
-  padding: 8px 0; border-bottom: 1px solid var(--surface);
+  gap: 10px; align-items: start;
+  padding: 7px 0; border-bottom: 1px solid var(--border);
 }
 .pleading-row:last-child { border-bottom: none; }
 .pleading-date {
@@ -466,12 +587,12 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   border: 1px solid var(--gold-dim); border-radius: 3px;
   text-align: center; letter-spacing: 0.06em; font-weight: 500;
 }
-.pleading-body { padding-top: 1px; }
-.pleading-desc { font-size: 12px; color: var(--text); line-height: 1.3; }
-.pleading-detail {
-  font-size: 10px; color: var(--dim);
-  margin-top: 2px;
+.pleading-body { padding-top: 1px; min-width: 0; }
+.pleading-desc {
+  font-size: 12px; color: var(--text); line-height: 1.3;
+  word-break: break-word;
 }
+.pleading-detail { font-size: 10px; color: var(--dim); margin-top: 2px; }
 .pleading-image-badge {
   font-size: 9px; letter-spacing: 0.1em;
   color: var(--muted); border: 1px solid var(--border);
@@ -525,11 +646,24 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
       <h1>Nashville Eviction Tracker</h1>
       <div class="subtitle" id="subtitle"></div>
     </div>
-    <div>
+    <div class="header-right">
+      <button id="login-btn" class="login-btn" type="button" onclick="onLoginButtonClick()">Login</button>
       <div class="updated" id="updated"></div>
       <div class="bg-sync" id="bg-sync"></div>
     </div>
   </header>
+
+  <div id="login-modal" class="modal-overlay" style="display:none" role="dialog" aria-modal="true" aria-label="Login">
+    <form id="login-form" class="modal" onsubmit="event.preventDefault(); submitLogin();">
+      <h3>Login</h3>
+      <input type="password" id="login-password" placeholder="Password" autocomplete="current-password">
+      <div class="login-error" id="login-error" role="alert"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn-cancel" onclick="closeLoginModal()">Cancel</button>
+        <button type="submit" class="btn-primary" id="login-submit">Unlock</button>
+      </div>
+    </form>
+  </div>
 
   <div class="stats-row">
     <div class="stat-card">
@@ -559,11 +693,18 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
         <button data-val="tract">Tract</button>
       </div>
     </div>
+    <div class="group" id="coverage-dir-group" style="display:none">
+      <label>Order</label>
+      <div class="seg" id="coverage-dir-seg">
+        <button data-val="desc" class="on">Newest left</button>
+        <button data-val="asc">Oldest left</button>
+      </div>
+    </div>
     <div class="group" id="map-source-group" style="display:none">
       <label>Source</label>
       <div class="seg" id="map-source-seg">
-        <button data-val="princeton" class="on">Princeton (2020–21)</button>
-        <button data-val="scraped">Scraped (live)</button>
+        <button data-val="princeton" class="on">Princeton data</button>
+        <button data-val="scraped">Local scrape</button>
       </div>
     </div>
     <div class="group" id="map-mode-group" style="display:none">
@@ -594,6 +735,8 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
     </table>
   </div>
 
+  <aside id="record-panel" aria-hidden="true"></aside>
+
   <div id="districts-view" style="display:none"></div>
 
   <div id="grid-view" style="display:none"></div>
@@ -606,7 +749,10 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
         <span>fewer</span><span class="scale-bar"></span><span>more</span>
       </div>
     </div>
-    <div id="map"></div>
+    <div class="map-wrap" id="map-wrap">
+      <div id="map"></div>
+      <aside id="tract-panel" aria-hidden="true"></aside>
+    </div>
     <div class="map-status" id="map-status">Loading map…</div>
   </div>
 
@@ -630,7 +776,7 @@ const ACS_YEAR = 2022;  // ACS 5-year vintage we query (2018–2022 averages)
 const ACS_RACE_URL = `https://api.census.gov/data/${ACS_YEAR}/acs/acs5`
   + `?get=NAME,B02001_001E,B02001_002E,B02001_003E,B02001_004E,B02001_005E,B02001_006E,B02001_007E,B02001_008E,B03003_003E`
   + `&for=tract:*&in=state:47%20county:037`;
-const TIGER_TRACT_URL = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWL_Current/MapServer/8/query?'
+const TIGER_TRACT_URL = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWMS_Current/MapServer/8/query?'
   + 'where=' + encodeURIComponent("STATE='47' AND COUNTY='037'")
   + '&outFields=GEOID&returnGeometry=true&f=geojson';
 
@@ -638,7 +784,7 @@ const sources = {
   cases: {
     name: 'Nashville eviction cases',
     url: CASES_URL,
-    notes: 'Court records compiled from circuitclerk.nashville.gov, gzipped + base64-wrapped in a GitHub-hosted JSON.',
+    notes: 'Court records compiled from circuitclerk.nashville.gov, gzipped + base64-wrapped in a GitHub-hosted JSON. Polled every 5 minutes for updates.',
     status: 'pending', fetchedAt: null, rows: null, error: null,
   },
   princeton: {
@@ -732,7 +878,19 @@ let activeDropdown = null;
 
 let viewMode = 'cases';       // 'cases' | 'coverage' | 'map'
 let coverageMode = 'district';// 'district' | 'tract'
+let coverageDir  = 'desc';    // 'desc' = newest on left, 'asc' = oldest on left
 let mapSource = 'princeton';  // 'princeton' | 'scraped'
+let selectedTract = null;     // GEOID of currently-open tract panel
+let selectedRecordDocket = null; // docket of currently-open case panel
+
+// Update-polling state. Captured once after the initial load, then
+// re-compared every 5 min against the latest commit on cases.json.
+const CASES_REPO_OWNER = 'clovenbradshaw-ctrl';
+const CASES_REPO_NAME  = 'plain-text';
+const CASES_REPO_PATH  = 'cases.json';
+const POLL_INTERVAL_MS = 5 * 60 * 1000;
+let casesSha = null;
+let updatePollHandle = null;
 
 // Princeton CSV — fetched live from evictionlab.org each session, never persisted.
 let princetonRows = null;     // raw rows: [{ GEOID, month, filings_2020, ... }]
@@ -781,10 +939,11 @@ async function loadData() {
     const data = await loadCases();
 
     const cases = data.cases || {};
+    // Keep ENC: values verbatim so they can be decrypted after login. The
+    // display layer hides them until the user unlocks.
     allRows = Object.entries(cases).map(([docket, c]) => ({
       docket,
       ...c,
-      Defendant_1: (c.Defendant_1 || "").startsWith("ENC:") ? "—" : c.Defendant_1 || "",
     }));
 
     markSource('cases', { status: 'ok', rows: allRows.length });
@@ -799,6 +958,7 @@ async function loadData() {
     buildFilters();
     buildHeader();
     bindViewControls();
+    bindRowClicks();
     renderProvenance();
     render();
 
@@ -806,6 +966,11 @@ async function loadData() {
     // table). Nothing is written back to GitHub — both live only in memory.
     kickBackgroundSync();
     kickCensusRaceSync();
+
+    // Capture the current commit sha for cases.json, then start a 5-min
+    // poll that re-fetches and diff-merges only when the sha changes.
+    captureCasesSha();
+    startUpdatePolling();
   } catch (e) {
     markSource('cases', { status: 'failed', error: e.message });
     document.getElementById("loading").style.display = "none";
@@ -981,13 +1146,11 @@ function renderLocalTable() {
     const dotClass = r.status === "PENDING" ? "dot-pending"
       : (r.status === "DISMISSED" || r.status === "NONSUIT") ? "dot-dismissed"
       : "dot-other";
-    return "<tr>" + COLUMNS.map(c => {
+    const sel = selectedRecordDocket === r.docket ? ' class="selected"' : '';
+    return `<tr data-docket="${escapeAttr(r.docket)}"${sel}>` + COLUMNS.map(c => {
       let v = r[c.key] || "";
       if (c.key === "Attorney" && v === ", PRS") v = "pro se";
-      if (c.key === "docket") {
-        const safe = String(v).replace(/'/g, "\\'");
-        return `<td><span class="docket docket-clickable" onclick="showCaseProfile('${safe}')">${v}</span></td>`;
-      }
+      if (c.key === "docket") return `<td><span class="docket">${v}</span></td>`;
       if (c.key === "status") return `<td><span class="dot ${dotClass}"></span>${v}</td>`;
       if (c.key === "council_district") v = shorten(v, "Council District ");
       if (c.key === "state_house_district") v = shorten(v, "State House District ");
@@ -1024,7 +1187,15 @@ function rebuildLocalAggregates() {
     const m = caseFileDateToMonth(r.file_date);
 
     if (g && d && !t2d[g]) t2d[g] = { council_district: r.council_district, council_rep: r.council_rep || '' };
-    if (g && !info[g]) info[g] = { name: r.census_name || '', district: r.council_district || '', rep: r.council_rep || '' };
+    if (g) {
+      const cur = info[g] || { name: '', district: '', rep: '', state_house: '', us_congressional: '' };
+      if (!cur.name && r.census_name) cur.name = r.census_name;
+      if (!cur.district && r.council_district) cur.district = r.council_district;
+      if (!cur.rep && r.council_rep) cur.rep = r.council_rep;
+      if (!cur.state_house && r.state_house_district) cur.state_house = r.state_house_district;
+      if (!cur.us_congressional && r.us_congressional_district) cur.us_congressional = r.us_congressional_district;
+      info[g] = cur;
+    }
 
     if (g && m) {
       if (!byTract[g]) byTract[g] = {};
@@ -1079,13 +1250,17 @@ function sortMonthsAsc(arr) {
   });
 }
 
-// Most recent N months from the union of both sources (oldest→newest in the returned array).
-// Showing the union (not just Princeton's months) lets recent scrape months
-// appear even though Princeton's CSV stops in 2021.
-function recentMonthsUnion(n=12) {
+// Full union of months across both sources (oldest→newest). Showing every
+// month lets Princeton's 2020-2021 history sit next to the recent scrape
+// even though they don't overlap.
+function allMonthsUnion() {
   const set = new Set([...agg.princetonMonths, ...agg.localMonths]);
-  const sorted = sortMonthsAsc([...set]);
-  return sorted.slice(-n);
+  return sortMonthsAsc([...set]);
+}
+
+// Used by the coverage headline: scan recent months for the first overlap.
+function recentMonthsUnion(n=24) {
+  return allMonthsUnion().slice(-n);
 }
 
 function ratioClass(ratio) {
@@ -1141,11 +1316,12 @@ function renderCoverageGrid() {
     return;
   }
 
-  const months = recentMonthsUnion(12);
+  let months = allMonthsUnion();
   if (!months.length) {
     root.innerHTML = `<div class="notice">No monthly data on either side yet.</div>`;
     return;
   }
+  if (coverageDir === 'desc') months = months.slice().reverse();
 
   const isTract = coverageMode === 'tract';
   const princeton = isTract ? agg.princetonTract    : agg.princetonDistrict;
@@ -1163,7 +1339,7 @@ function renderCoverageGrid() {
     ? (k => { const info = agg.tractInfo[k]; return info && info.name ? info.name : `Tract ${k}`; })
     : (k => `D${k}`);
 
-  let html = `<table class="coverage-tbl"><thead><tr><th>${isTract ? 'Tract' : 'District'}</th><th>Source</th>`;
+  let html = `<div class="coverage-tbl-wrap"><table class="coverage-tbl"><thead><tr><th>${isTract ? 'Tract' : 'District'}</th><th>Source</th>`;
   for (const m of months) html += `<th class="num">${m}</th>`;
   html += `</tr></thead><tbody>`;
 
@@ -1188,13 +1364,13 @@ function renderCoverageGrid() {
     }
     html += `</tr>`;
   }
-  html += `</tbody></table>`;
+  html += `</tbody></table></div>`;
 
   html += `<div class="legend">
     <span><span class="sw green"></span> Scraped ≥85% of Princeton</span>
     <span><span class="sw amber"></span> 50–85%</span>
     <span><span class="sw red"></span> &lt;50%</span>
-    <span style="color:var(--dim)">Princeton CSV is live from evictionlab.org · only months where Princeton > 0 get a ratio</span>
+    <span style="color:var(--dim)">Princeton CSV is live from evictionlab.org · only months where Princeton > 0 get a ratio · showing ${months.length} months</span>
   </div>`;
 
   root.innerHTML = html;
@@ -1213,19 +1389,29 @@ function mapLayer() {
 }
 
 async function fetchTractGeometries() {
+  // Correct service is tigerWMS_Current; tigerWL_Current returns 404. Layer
+  // 8 = "Census Tracts (Current)". Try direct (TIGERweb sends permissive
+  // CORS) then fall back to the n8n proxy if the browser blocks it.
   markSource('tiger', { status: 'pending' });
-  const r = await fetch(pxProxy(TIGER_TRACT_URL));
-  if (!r.ok) {
-    markSource('tiger', { status: 'failed', error: `HTTP ${r.status}` });
-    throw new Error(`TIGER geometry HTTP ${r.status}`);
+  const attempts = [TIGER_TRACT_URL, pxProxy(TIGER_TRACT_URL)];
+  let lastErr = null;
+  for (const u of attempts) {
+    try {
+      const r = await fetch(u);
+      if (!r.ok) { lastErr = new Error(`HTTP ${r.status}`); continue; }
+      const data = await r.json();
+      if (data.features && data.features.length) {
+        markSource('tiger', { status: 'ok', rows: data.features.length });
+        return data;
+      }
+      lastErr = new Error('no features');
+    } catch (e) {
+      lastErr = e;
+    }
   }
-  const data = await r.json();
-  if (!data.features) {
-    markSource('tiger', { status: 'failed', error: 'no features' });
-    throw new Error('TIGER geometry: no features');
-  }
-  markSource('tiger', { status: 'ok', rows: data.features.length });
-  return data;
+  const msg = lastErr ? lastErr.message : 'unknown';
+  markSource('tiger', { status: 'failed', error: msg });
+  throw new Error(`TIGER geometry: ${msg}`);
 }
 
 // YlOrRd sequential palette
@@ -1270,16 +1456,14 @@ function availableYears() {
      { values: { geoid: number }, max, label, tooltipFmt(geoid) → string }
    - alltime:    sum of every month in the source
    - year:       sum within the selected year
-   - trajectory: exponentially decayed running total at mapMonth.
-                 tract heat(m) = Σ_{i ≤ k} filings_i * decay^(k-i)
-                 with half-life of TRAJECTORY_HALF_LIFE_MONTHS.
-*/
+   - trajectory: exponentially decayed running total at mapMonth
+                 (half-life of TRAJECTORY_HALF_LIFE_MONTHS) */
 function mapHeatFrame() {
   const { data, months } = mapLayer();
   const sourceLabel = mapSource === 'scraped' ? 'cases' : 'filings';
 
   if (!months.length) {
-    return { values: {}, max: 0, label: '—', tooltipFmt: () => `no data` };
+    return { values: {}, max: 0, label: '—', tooltipFmt: () => 'no data' };
   }
 
   if (mapMode === 'alltime') {
@@ -1353,18 +1537,15 @@ function updateMapColors() {
   if (labelEl) labelEl.textContent = frame.label;
 }
 
-// Show only the controls relevant to the current mode, and seed default
+// Show only the controls relevant to the current mode and seed default
 // values (year, month) from the source's available data.
 function syncMapControls() {
   const { months } = mapLayer();
-  const yearGroup    = document.getElementById('map-year-group');
-  const sliderEl     = document.getElementById('map-slider');
-  const scaleLegend  = document.querySelector('#map-controls .scale-legend');
-
-  // Trajectory: month slider
+  const yearGroup = document.getElementById('map-year-group');
+  const sliderEl  = document.getElementById('map-slider');
   const isTrajectory = mapMode === 'trajectory';
+
   sliderEl.style.display = isTrajectory ? '' : 'none';
-  if (scaleLegend) scaleLegend.style.display = isTrajectory || mapMode === 'year' || mapMode === 'alltime' ? '' : 'none';
 
   if (isTrajectory) {
     if (!months.length) {
@@ -1380,7 +1561,6 @@ function syncMapControls() {
     }
   }
 
-  // By year: dropdown
   const isYear = mapMode === 'year';
   yearGroup.style.display = isYear ? '' : 'none';
   if (isYear) {
@@ -1391,6 +1571,8 @@ function syncMapControls() {
     if (mapYear) sel.value = mapYear;
   }
 }
+// Back-compat alias: main called syncMapSlider() in places.
+const syncMapSlider = syncMapControls;
 
 async function renderMapView() {
   const status = document.getElementById('map-status');
@@ -1443,11 +1625,16 @@ async function renderMapView() {
           const nameLine = info && info.name ? info.name : `Tract ${geoid}`;
           const districtLine = info && info.district ? `<br>${info.district}` : '';
           layer.bindTooltip(
-            `<strong>${nameLine}</strong>${districtLine}<br>${frame.tooltipFmt(geoid)}`,
+            `<strong>${nameLine}</strong>${districtLine}<br>${frame.tooltipFmt(geoid)}<br><span style="color:#c4a44a">click for detail</span>`,
             { sticky: true }
           ).openTooltip(e.latlng);
+          layer.setStyle({ weight: 2, color: '#c4a44a' });
         });
-        layer.on('mouseout', () => layer.closeTooltip());
+        layer.on('mouseout', () => {
+          layer.closeTooltip();
+          if (geoid !== selectedTract) layer.setStyle({ weight: 1, color: '#2a2820' });
+        });
+        layer.on('click', () => openTractPanel(geoid));
       },
     }).addTo(leafletMap);
 
@@ -1471,6 +1658,474 @@ async function renderMapView() {
   controls.style.display = '';
   updateMapColors();
   setTimeout(() => leafletMap && leafletMap.invalidateSize(), 50);
+}
+
+/* ───────────────────────── Tract detail panel ───────────────────────── */
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function escapeAttr(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
+// Render the PLEADINGS array as a vertical timeline. Pleadings are stored on
+// each case as objects of { date, code, description, detail, has_image },
+// sorted newest-first; an "IMG" badge marks pleadings that have a scanned
+// image on file (no URL to link to — marker only).
+function formatPleadings(pleadings) {
+  if (!Array.isArray(pleadings) || !pleadings.length) {
+    return '<span class="empty">— no pleadings —</span>';
+  }
+  const parseDate = v => {
+    const m = String(v || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    return m ? new Date(+m[3], +m[1] - 1, +m[2]).getTime() : 0;
+  };
+  const sorted = [...pleadings].sort((a, b) => parseDate(b.date) - parseDate(a.date));
+  return `<div class="pleadings-list">${sorted.map(p => {
+    const code = String(p.code || '').toUpperCase();
+    return `<div class="pleading-row">
+      <div class="pleading-date">${escapeHtml(p.date || '')}</div>
+      <div class="pleading-code">${escapeHtml(code)}</div>
+      <div class="pleading-body">
+        <div class="pleading-desc">${escapeHtml(p.description || '')}</div>
+        ${p.detail ? `<div class="pleading-detail">${escapeHtml(p.detail)}</div>` : ''}
+      </div>
+      ${p.has_image ? '<div class="pleading-image-badge">IMG</div>' : '<div></div>'}
+    </div>`;
+  }).join('')}</div>`;
+}
+
+function openTractPanel(geoid) {
+  selectedTract = geoid;
+  // Visually distinguish the selected tract on the map.
+  if (tractLayer) {
+    tractLayer.eachLayer(l => {
+      const g = String(l.feature.properties.GEOID);
+      l.setStyle({
+        weight: g === geoid ? 2.5 : 1,
+        color:  g === geoid ? '#c4a44a' : '#2a2820',
+      });
+    });
+  }
+  renderTractPanel(geoid);
+}
+
+function closeTractPanel() {
+  selectedTract = null;
+  const panel = document.getElementById('tract-panel');
+  panel.classList.remove('open');
+  panel.setAttribute('aria-hidden', 'true');
+  if (tractLayer) {
+    tractLayer.eachLayer(l => l.setStyle({ weight: 1, color: '#2a2820' }));
+  }
+}
+
+function renderTractPanel(geoid) {
+  const panel = document.getElementById('tract-panel');
+  const info = agg.tractInfo[geoid] || {};
+  const p = agg.princetonTract[geoid] || {};
+  const l = agg.localTract[geoid]     || {};
+
+  // Months: every month where either source has data for this tract.
+  const monthSet = new Set([...Object.keys(p), ...Object.keys(l)]);
+  let months = sortMonthsAsc([...monthSet]).reverse(); // newest first, top→bottom
+
+  const districtRows = [
+    ['Census tract', info.name || `Tract ${geoid}`],
+    ['Council district', info.district || '—'],
+    ['Council rep', info.rep || '—'],
+    ['State house', info.state_house || '—'],
+    ['US congressional', info.us_congressional || '—'],
+  ];
+
+  let html = `
+    <div class="tp-head">
+      <div>
+        <div class="tp-title">${escapeHtml(info.name || `Tract ${geoid}`)}</div>
+        <div class="tp-geoid">GEOID ${escapeHtml(geoid)}</div>
+      </div>
+      <button class="tp-close" onclick="closeTractPanel()" title="Close">×</button>
+    </div>
+    <div class="tp-districts">
+      ${districtRows.map(([k, v]) => `
+        <div class="tp-district-row">
+          <span class="lbl">${escapeHtml(k)}</span>
+          <span class="val">${escapeHtml(v)}</span>
+        </div>`).join('')}
+    </div>
+    <div class="tp-section-label">Monthly filings (Princeton vs scraped)</div>
+  `;
+
+  if (!months.length) {
+    html += `<div class="tp-empty">No monthly data for this tract on either side.</div>`;
+  } else {
+    html += `<div class="tp-months">`;
+    for (const m of months) {
+      const pv = p[m];
+      const lv = l[m];
+      const both = (pv != null && pv > 0) && (lv != null && lv > 0);
+      html += `
+        <div class="tp-month${both ? ' has-both' : ''}">
+          <span class="m">${escapeHtml(m)}</span>
+          <span class="src"><span class="label">Princeton</span><span class="val">${pv != null ? pv : '—'}</span></span>
+          <span class="src"><span class="label">Scraped</span><span class="val">${lv != null ? lv : '—'}</span></span>
+        </div>`;
+    }
+    html += `</div>`;
+  }
+
+  panel.innerHTML = html;
+  panel.classList.add('open');
+  panel.setAttribute('aria-hidden', 'false');
+}
+
+/* ───────────────────────── Case record panel ───────────────────────── */
+
+function openRecordPanel(docket) {
+  selectedRecordDocket = docket;
+  // Re-mark the selected row without rebuilding the whole table.
+  document.querySelectorAll('#tbody tr.selected').forEach(t => t.classList.remove('selected'));
+  const tr = document.querySelector(`#tbody tr[data-docket="${CSS.escape(docket)}"]`);
+  if (tr) tr.classList.add('selected');
+  renderRecordPanel(docket);
+}
+
+function closeRecordPanel() {
+  selectedRecordDocket = null;
+  document.querySelectorAll('#tbody tr.selected').forEach(t => t.classList.remove('selected'));
+  const p = document.getElementById('record-panel');
+  p.classList.remove('open');
+  p.setAttribute('aria-hidden', 'true');
+}
+
+function renderRecordPanel(docket) {
+  const r = allRows.find(x => x.docket === docket);
+  const panel = document.getElementById('record-panel');
+  if (!r) {
+    panel.innerHTML = `<div class="tp-empty">Case ${escapeHtml(docket)} not found.</div>`;
+    panel.classList.add('open');
+    return;
+  }
+
+  // Show every field, including 'docket' itself, sorted with the common
+  // identifying fields first for at-a-glance scanning.
+  const PRIORITY = [
+    'docket', 'status', 'file_date', 'Plaintiff_1', 'Attorney',
+    'address_formatted', 'council_district', 'council_rep',
+    'state_house_district', 'us_congressional_district',
+    'census_geoid', 'census_name',
+  ];
+  const seen = new Set();
+  const ordered = [];
+  for (const k of PRIORITY) if (k in r) { ordered.push(k); seen.add(k); }
+  for (const k of Object.keys(r).sort()) if (!seen.has(k)) ordered.push(k);
+
+  const rowHtml = ordered.map(k => {
+    let v = r[k];
+    let cls = 'val';
+    let display;
+    let encAttr = '';
+    // Pleadings get a formatted timeline instead of raw JSON.
+    if (k === 'pleadings' && Array.isArray(v)) {
+      return `<div class="rp-row">
+        <span class="lbl">${escapeHtml(k)}</span>
+        <span class="val">${formatPleadings(v)}</span>
+      </div>`;
+    }
+    if (v == null || v === '') { display = '—'; cls += ' empty'; }
+    else if (isEncrypted(v)) {
+      encAttr = ` data-enc="${escapeAttr(v)}"`;
+      if (isUnlocked()) { display = 'decrypting…'; cls += ' enc'; }
+      else { display = '—'; cls += ' empty'; }
+    }
+    else if (typeof v === 'object') { display = JSON.stringify(v, null, 2); }
+    else display = String(v);
+    return `<div class="rp-row"${encAttr}>
+      <span class="lbl">${escapeHtml(k)}</span>
+      <span class="${cls}">${escapeHtml(display)}</span>
+    </div>`;
+  }).join('');
+
+  panel.innerHTML = `
+    <div class="tp-head">
+      <div>
+        <div class="tp-title">${escapeHtml(r.docket)}</div>
+        <div class="tp-geoid">${escapeHtml(r.status || '—')} · filed ${escapeHtml(r.file_date || '—')}</div>
+      </div>
+      <button class="tp-close" onclick="closeRecordPanel()" title="Close">×</button>
+    </div>
+    <div class="rp-fields">${rowHtml}</div>`;
+  panel.classList.add('open');
+  panel.setAttribute('aria-hidden', 'false');
+
+  // After the panel is in the DOM, kick off async decryption for any
+  // ENC: rows. Each row gets patched independently when its plaintext
+  // resolves; cached hits resolve almost instantly.
+  if (isUnlocked()) {
+    panel.querySelectorAll('.rp-row[data-enc]').forEach(async (row) => {
+      const enc = row.getAttribute('data-enc');
+      const plain = await decryptValue(enc, unlockKeyPassword);
+      // The user may have closed the panel or opened a different record
+      // while the promise was in flight — bail if so.
+      if (!document.body.contains(row)) return;
+      const valEl = row.querySelector('.val');
+      if (plain != null) {
+        valEl.textContent = plain;
+        valEl.className = 'val';
+      } else {
+        valEl.textContent = 'decrypt failed';
+        valEl.className = 'val empty';
+      }
+    });
+  }
+}
+
+/* ───────────────────────── Login / decryption ─────────────────────
+   ENC: values are assumed to be base64( salt[16] || iv[12] || ciphertext )
+   with the key derived via PBKDF2-SHA256 (100k iterations, 256-bit AES-GCM).
+   If the producer uses different params, only the four constants and the
+   slice offsets below need to change.
+
+   The plaintext is held only in memory and never persisted. Closing the
+   tab or pressing the Logout button purges the password and the cache. */
+
+const PBKDF2_ITERATIONS = 100000;
+const PBKDF2_HASH       = 'SHA-256';
+const AES_KEY_LENGTH    = 256;
+const SALT_BYTES        = 16;
+const IV_BYTES          = 12;
+
+let unlockKeyPassword = null;             // raw password held in memory only
+const decryptCache    = new Map();        // ENC:... → plaintext | '__FAIL__'
+const SENTINEL_FAIL   = '__FAIL__';
+
+function base64ToBytes(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+async function deriveAesKey(password, salt) {
+  const baseKey = await crypto.subtle.importKey(
+    'raw', new TextEncoder().encode(password),
+    'PBKDF2', false, ['deriveKey']
+  );
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS, hash: PBKDF2_HASH },
+    baseKey,
+    { name: 'AES-GCM', length: AES_KEY_LENGTH },
+    false, ['decrypt']
+  );
+}
+
+function isEncrypted(v) {
+  return typeof v === 'string' && v.startsWith('ENC:');
+}
+
+async function decryptValue(encStr, password) {
+  if (!isEncrypted(encStr)) return encStr;
+  if (decryptCache.has(encStr)) {
+    const v = decryptCache.get(encStr);
+    return v === SENTINEL_FAIL ? null : v;
+  }
+  try {
+    const bytes = base64ToBytes(encStr.slice(4));
+    if (bytes.length < SALT_BYTES + IV_BYTES + 1) throw new Error('blob too short');
+    const salt = bytes.slice(0, SALT_BYTES);
+    const iv   = bytes.slice(SALT_BYTES, SALT_BYTES + IV_BYTES);
+    const ct   = bytes.slice(SALT_BYTES + IV_BYTES);
+    const key  = await deriveAesKey(password, salt);
+    const pt   = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+    const out  = new TextDecoder().decode(pt);
+    decryptCache.set(encStr, out);
+    return out;
+  } catch (e) {
+    decryptCache.set(encStr, SENTINEL_FAIL);
+    return null;
+  }
+}
+
+function isUnlocked() { return unlockKeyPassword != null; }
+
+function firstEncryptedValue() {
+  for (const r of allRows) {
+    for (const k in r) if (isEncrypted(r[k])) return r[k];
+  }
+  return null;
+}
+
+function updateLoginButton() {
+  const btn = document.getElementById('login-btn');
+  if (isUnlocked()) {
+    btn.textContent = 'Logout';
+    btn.classList.add('unlocked');
+  } else {
+    btn.textContent = 'Login';
+    btn.classList.remove('unlocked');
+  }
+}
+
+function onLoginButtonClick() {
+  if (isUnlocked()) { logout(); return; }
+  openLoginModal();
+}
+
+function openLoginModal() {
+  const modal = document.getElementById('login-modal');
+  document.getElementById('login-password').value = '';
+  document.getElementById('login-error').textContent = '';
+  document.getElementById('login-submit').disabled = false;
+  modal.style.display = 'flex';
+  setTimeout(() => document.getElementById('login-password').focus(), 0);
+}
+
+function closeLoginModal() {
+  document.getElementById('login-modal').style.display = 'none';
+}
+
+async function submitLogin() {
+  const password = document.getElementById('login-password').value;
+  const errEl = document.getElementById('login-error');
+  const submitBtn = document.getElementById('login-submit');
+  if (!password) { errEl.textContent = 'Enter a password.'; return; }
+
+  const probe = firstEncryptedValue();
+  if (!probe) {
+    // Nothing encrypted to verify against — accept and move on.
+    unlockKeyPassword = password;
+    closeLoginModal();
+    updateLoginButton();
+    return;
+  }
+
+  errEl.textContent = 'Checking…';
+  submitBtn.disabled = true;
+  try {
+    // Don't pollute the cache with a possibly-wrong attempt.
+    decryptCache.delete(probe);
+    const result = await decryptValue(probe, password);
+    if (result == null) {
+      decryptCache.delete(probe);
+      errEl.textContent = 'Invalid password.';
+      submitBtn.disabled = false;
+      return;
+    }
+    unlockKeyPassword = password;
+    closeLoginModal();
+    updateLoginButton();
+    if (selectedRecordDocket) renderRecordPanel(selectedRecordDocket);
+  } catch (e) {
+    errEl.textContent = 'Decryption error: ' + e.message;
+    submitBtn.disabled = false;
+  }
+}
+
+function logout() {
+  unlockKeyPassword = null;
+  decryptCache.clear();
+  updateLoginButton();
+  if (selectedRecordDocket) renderRecordPanel(selectedRecordDocket);
+}
+
+/* ───────────────────────── Update polling ─────────────────────────
+   Once per session we download the full cases.json. After that we hit
+   the GitHub commits API for cases.json every 5 minutes; if its sha
+   moved, we re-fetch and diff-merge. Unauthenticated calls are capped
+   at 60/hr per IP — 12/hr per session leaves comfortable headroom. */
+
+const CASES_COMMITS_API =
+  `https://api.github.com/repos/${CASES_REPO_OWNER}/${CASES_REPO_NAME}/commits` +
+  `?path=${encodeURIComponent(CASES_REPO_PATH)}&per_page=1`;
+
+async function fetchLatestCasesSha() {
+  const r = await fetch(CASES_COMMITS_API, { headers: { 'Accept': 'application/vnd.github+json' } });
+  if (!r.ok) throw new Error(`commits HTTP ${r.status}`);
+  const arr = await r.json();
+  return Array.isArray(arr) && arr.length ? arr[0].sha : null;
+}
+
+async function captureCasesSha() {
+  try {
+    casesSha = await fetchLatestCasesSha();
+    console.info('[eo] initial cases.json sha:', casesSha);
+  } catch (e) {
+    console.warn('[eo] initial sha capture failed:', e.message);
+  }
+}
+
+async function checkForCasesUpdate() {
+  let latest;
+  try {
+    latest = await fetchLatestCasesSha();
+  } catch (e) {
+    console.warn('[eo] update poll failed:', e.message);
+    return;
+  }
+  if (!latest) return;
+  if (!casesSha) { casesSha = latest; return; }
+  if (latest === casesSha) return;
+
+  bgStatus('Updates detected — fetching…', true);
+  try {
+    await applyCasesUpdate();
+    casesSha = latest;
+  } catch (e) {
+    console.warn('[eo] update apply failed:', e);
+    bgStatus(`Update fetch failed: ${e.message}`, false);
+    setTimeout(() => bgStatus(''), 5000);
+  }
+}
+
+async function applyCasesUpdate() {
+  const data = await loadCases();
+  const cases = data.cases || {};
+  const oldByDocket = Object.fromEntries(allRows.map(r => [r.docket, r]));
+  const newRows = Object.entries(cases).map(([docket, c]) => ({
+    docket,
+    ...c,
+  }));
+
+  let added = 0, changed = 0;
+  const newDockets = new Set();
+  for (const r of newRows) {
+    newDockets.add(r.docket);
+    const old = oldByDocket[r.docket];
+    if (!old) { added++; continue; }
+    if (JSON.stringify(old) !== JSON.stringify(r)) changed++;
+  }
+  let removed = 0;
+  for (const d in oldByDocket) if (!newDockets.has(d)) removed++;
+
+  allRows = newRows;
+  rebuildLocalAggregates();
+  if (princetonRows) rebuildPrincetonAggregates();
+
+  document.getElementById('updated').textContent = 'Updated ' + (data.updated_at || '—').split('T')[0];
+  updateSubtitle();
+  buildStats();
+  render();
+  // If the currently-open record still exists, refresh its panel content.
+  if (selectedRecordDocket && newDockets.has(selectedRecordDocket)) {
+    renderRecordPanel(selectedRecordDocket);
+  } else if (selectedRecordDocket) {
+    closeRecordPanel();
+  }
+
+  const parts = [];
+  if (added)   parts.push(`+${added} new`);
+  if (changed) parts.push(`~${changed} updated`);
+  if (removed) parts.push(`-${removed} removed`);
+  bgStatus(parts.length ? parts.join(' · ') : 'Refreshed (no record changes)', false);
+  setTimeout(() => bgStatus(''), 6000);
+}
+
+function startUpdatePolling() {
+  if (updatePollHandle) clearInterval(updatePollHandle);
+  updatePollHandle = setInterval(checkForCasesUpdate, POLL_INTERVAL_MS);
 }
 
 /* ───────────────────────── Districts view + profile ───────────────────────── */
@@ -1527,7 +2182,7 @@ function renderDistrictsView() {
   });
 
   if (!rows.length) {
-    root.innerHTML = `<div class="notice" style="padding:24px;text-align:center;color:var(--muted)">No council district data in current cases.</div>`;
+    root.innerHTML = `<div style="padding:24px;text-align:center;color:var(--muted)">No council district data in current cases.</div>`;
     return;
   }
 
@@ -1542,7 +2197,7 @@ function renderDistrictsView() {
   for (const a of rows) {
     html += `<tr onclick="showDistrictProfile('${a.district.replace(/'/g, "\\'")}')">`
       + `<td class="district-label">${shorten(a.district, 'Council District ')}</td>`
-      + `<td class="rep">${a.rep || '—'}</td>`
+      + `<td class="rep">${escapeHtmlSafe(a.rep) || '—'}</td>`
       + `<td class="num">${a.cases}</td>`
       + `<td class="num">${a.pending}</td>`
       + `<td class="num">${a.dismissed}</td>`
@@ -1554,6 +2209,12 @@ function renderDistrictsView() {
   root.innerHTML = html;
 }
 
+function escapeHtmlSafe(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+
 function showDistrictProfile(district) {
   const byD = aggregateDistricts();
   const a = byD[district];
@@ -1563,7 +2224,6 @@ function showDistrictProfile(district) {
   const topPlaintiffs = topList(a.plaintiffs, 5);
   const topAttorneys  = topList(a.attorneys, 5);
 
-  // Tracts: rank by case count within this district
   const tractCounts = {};
   for (const r of a.rows) {
     if (r.census_geoid) {
@@ -1573,32 +2233,66 @@ function showDistrictProfile(district) {
   }
   const topTracts = Object.entries(tractCounts).sort((x, y) => y[1] - x[1]);
 
-  // Recent cases — sort by file_date desc, take 10
   const parseDate = v => {
     const m = String(v || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
     return m ? new Date(+m[3], +m[1] - 1, +m[2]).getTime() : 0;
   };
   const recentCases = [...a.rows].sort((x, y) => parseDate(y.file_date) - parseDate(x.file_date)).slice(0, 10);
 
-  // Monthly trend over the union of all months this district has activity in
   const monthKeys = sortMonthsAsc(Object.keys(a.months));
   const maxMonth = Math.max(1, ...monthKeys.map(m => a.months[m]));
 
-  const escape = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
-    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
-  }[c]));
+  const esc = escapeHtmlSafe;
+
+  const race = aggregateDistrictRace(a.district);
+  let raceSection;
+  if (!race) {
+    const s = sources.acs.status;
+    const msg = s === 'pending' ? 'Fetching Census ACS data…'
+      : s === 'failed' ? `Census ACS fetch failed: ${esc(sources.acs.error || '')}`
+      : 'No tracts mapped to this district yet.';
+    raceSection = `<div class="profile-section"><h3>Race &amp; Ethnicity</h3><div class="profile-empty">${msg}</div></div>`;
+  } else {
+    const pct = (n, t) => t > 0 ? (n / t * 100).toFixed(1) : '0.0';
+    const bar = (n, t) => `<div style="width:${t > 0 ? (n/t*100).toFixed(2) : 0}%"></div>`;
+    const row = (label, n) => `<div class="race-row">
+      <div class="label-cell">${label}</div>
+      <div class="bar-cell">${bar(n, race.total)}</div>
+      <div class="num-cell">${n.toLocaleString()} · ${pct(n, race.total)}%</div>
+    </div>`;
+    raceSection = `<div class="profile-section">
+      <h3>Race &amp; Ethnicity (district population)</h3>
+      <div class="race-bars">
+        ${row('White alone', race.white)}
+        ${row('Black or African American alone', race.black)}
+        ${row('Asian alone', race.asian)}
+        ${row('American Indian / Alaska Native alone', race.native)}
+        ${row('Native Hawaiian / Pacific Islander alone', race.pacific)}
+        ${row('Some other race alone', race.other)}
+        ${row('Two or more races', race.multiple)}
+        <div class="race-overlap"></div>
+        ${row('Hispanic or Latino (any race)', race.hispanic)}
+      </div>
+      <div class="race-source-note">
+        Total population: <strong>${race.total.toLocaleString()}</strong> · ${race.tractsMatched} of ${race.tractsKnown} known tracts matched.
+        Aggregated from tracts in this district. Source:
+        <a href="${esc(sources.acs.url)}" target="_blank" rel="noopener">US Census ACS 5-year (${ACS_YEAR}), tables B02001 + B03003</a>.
+        Hispanic/Latino is an ethnicity that overlaps with the race categories above, so it is shown separately and is not part of the sum.
+      </div>
+    </div>`;
+  }
 
   const profileHtml = `
-    <div class="modal-backdrop" id="district-modal" onclick="if (event.target === this) closeDistrictProfile()">
-      <div class="modal">
-        <div class="modal-header">
+    <div class="dp-backdrop" id="district-modal" onclick="if (event.target === this) closeDistrictProfile()">
+      <div class="dp-modal">
+        <div class="dp-header">
           <div>
-            <h2>${escape(a.district)}</h2>
-            <div class="modal-sub">${a.rep ? 'Council Rep: ' + escape(a.rep) : 'No rep on file'} · ${a.tracts.size} census tract${a.tracts.size === 1 ? '' : 's'}</div>
+            <h2>${esc(a.district)}</h2>
+            <div class="dp-sub">${a.rep ? 'Council Rep: ' + esc(a.rep) : 'No rep on file'} · ${a.tracts.size} census tract${a.tracts.size === 1 ? '' : 's'}</div>
           </div>
-          <button class="modal-close" onclick="closeDistrictProfile()">×</button>
+          <button class="dp-close" onclick="closeDistrictProfile()">×</button>
         </div>
-        <div class="modal-body">
+        <div class="dp-body">
           <div class="profile-grid">
             <div class="profile-stat"><div class="label">Total Cases</div><div class="value">${a.cases}</div></div>
             <div class="profile-stat"><div class="label">Pending</div><div class="value pending">${a.pending}</div></div>
@@ -1624,13 +2318,13 @@ function showDistrictProfile(district) {
             <div class="profile-section">
               <h3>Top Plaintiffs</h3>
               ${topPlaintiffs.length ? `<ul class="profile-list">${topPlaintiffs.map(([n, c]) =>
-                `<li><span>${escape(n)}</span><span class="count">${c}</span></li>`).join('')}</ul>`
+                `<li><span>${esc(n)}</span><span class="count">${c}</span></li>`).join('')}</ul>`
                 : '<div class="profile-empty">No plaintiff data.</div>'}
             </div>
             <div class="profile-section">
               <h3>Top Attorneys</h3>
               ${topAttorneys.length ? `<ul class="profile-list">${topAttorneys.map(([n, c]) =>
-                `<li><span>${escape(n.split(',')[0])}</span><span class="count">${c}</span></li>`).join('')}</ul>`
+                `<li><span>${esc(n.split(',')[0])}</span><span class="count">${c}</span></li>`).join('')}</ul>`
                 : '<div class="profile-empty">No attorney data (all pro se).</div>'}
             </div>
           </div>
@@ -1641,64 +2335,26 @@ function showDistrictProfile(district) {
             <ul class="profile-list">${topTracts.map(([g, c]) => {
               const info = agg.tractInfo[g];
               const name = info && info.name ? info.name : `Tract ${g}`;
-              return `<li><span>${escape(name)}</span><span class="count">${c}</span></li>`;
+              return `<li><span>${esc(name)}</span><span class="count">${c}</span></li>`;
             }).join('')}</ul>
           </div>` : ''}
 
-          ${(() => {
-            const race = aggregateDistrictRace(a.district);
-            if (!race) {
-              const status = sources.acs.status;
-              const msg = status === 'pending' ? 'Fetching Census ACS data…'
-                : status === 'failed' ? `Census ACS fetch failed: ${escape(sources.acs.error || '')}`
-                : 'No tracts mapped to this district yet.';
-              return `<div class="profile-section"><h3>Race & Ethnicity</h3><div class="profile-empty">${msg}</div></div>`;
-            }
-            const pct = (n, t) => t > 0 ? (n / t * 100).toFixed(1) : '0.0';
-            const bar = (n, t) => `<div style="width:${t > 0 ? (n/t*100).toFixed(2) : 0}%"></div>`;
-            const row = (label, n) => `<div class="race-row">
-              <div class="label-cell">${label}</div>
-              <div class="bar-cell">${bar(n, race.total)}</div>
-              <div class="num-cell">${n.toLocaleString()} · ${pct(n, race.total)}%</div>
-            </div>`;
-            const coverage = race.tractsKnown
-              ? `${race.tractsMatched} of ${race.tractsKnown} known tracts matched`
-              : '';
-            return `<div class="profile-section">
-              <h3>Race &amp; Ethnicity (district population)</h3>
-              <div class="race-bars">
-                ${row('White alone', race.white)}
-                ${row('Black or African American alone', race.black)}
-                ${row('Asian alone', race.asian)}
-                ${row('American Indian / Alaska Native alone', race.native)}
-                ${row('Native Hawaiian / Pacific Islander alone', race.pacific)}
-                ${row('Some other race alone', race.other)}
-                ${row('Two or more races', race.multiple)}
-                <div class="race-overlap"></div>
-                ${row('Hispanic or Latino (any race)', race.hispanic)}
-              </div>
-              <div class="race-source-note">
-                Total population: <strong>${race.total.toLocaleString()}</strong> · ${coverage}.
-                Aggregated from tracts in this district. Source:
-                <a href="${escape(sources.acs.url)}" target="_blank" rel="noopener">US Census ACS 5-year (${ACS_YEAR}), tables B02001 + B03003</a>.
-                Hispanic/Latino is an ethnicity that overlaps with the race categories above, so it is shown separately and is not part of the sum.
-              </div>
-            </div>`;
-          })()}
+          ${raceSection}
 
           <div class="profile-section">
             <h3>Recent Cases</h3>
-            <table class="profile-cases"><tbody>
+            <table class="profile-cases" style="width:100%"><tbody>
               ${recentCases.map(r => {
-                const status = r.status || '';
-                const dotClass = status === 'PENDING' ? 'dot-pending'
-                  : (status === 'DISMISSED' || status === 'NONSUIT') ? 'dot-dismissed' : 'dot-other';
-                return `<tr>
-                  <td class="docket docket-clickable" onclick="closeDistrictProfile(); showCaseProfile('${String(r.docket || '').replace(/'/g, "\\'")}')">${escape(r.docket || '')}</td>
-                  <td>${escape(r.file_date || '')}</td>
-                  <td><span class="dot ${dotClass}"></span>${escape(status)}</td>
-                  <td>${escape(r.Plaintiff_1 || '')}</td>
-                  <td>${escape(r.address_formatted || '')}</td>
+                const st = r.status || '';
+                const dotClass = st === 'PENDING' ? 'dot-pending'
+                  : (st === 'DISMISSED' || st === 'NONSUIT') ? 'dot-dismissed' : 'dot-other';
+                const safeDocket = String(r.docket || '').replace(/'/g, "\\'");
+                return `<tr style="cursor:pointer" onclick="closeDistrictProfile(); openRecordPanel('${safeDocket}')">
+                  <td style="padding:5px 8px;font-size:11px;color:var(--gold)">${esc(r.docket || '')}</td>
+                  <td style="padding:5px 8px;font-size:11px">${esc(r.file_date || '')}</td>
+                  <td style="padding:5px 8px;font-size:11px"><span class="dot ${dotClass}"></span>${esc(st)}</td>
+                  <td style="padding:5px 8px;font-size:11px">${esc(r.Plaintiff_1 || '')}</td>
+                  <td style="padding:5px 8px;font-size:11px">${esc(r.address_formatted || '')}</td>
                 </tr>`;
               }).join('')}
             </tbody></table>
@@ -1715,16 +2371,16 @@ function showDistrictProfile(district) {
   const wrap = document.createElement('div');
   wrap.innerHTML = profileHtml;
   document.body.appendChild(wrap.firstElementChild);
-  document.addEventListener('keydown', escCloseProfile);
+  document.addEventListener('keydown', escCloseDistrictProfile);
 }
 
 function closeDistrictProfile() {
   const m = document.getElementById('district-modal');
   if (m) m.remove();
-  document.removeEventListener('keydown', escCloseProfile);
+  document.removeEventListener('keydown', escCloseDistrictProfile);
 }
 
-function escCloseProfile(e) {
+function escCloseDistrictProfile(e) {
   if (e.key === 'Escape') closeDistrictProfile();
 }
 
@@ -1738,122 +2394,6 @@ function filterCasesByDistrict(d) {
   render();
 }
 
-/* ───────────────────────── Case profile + pleadings ───────────────────────── */
-
-const escapeHtml = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
-  '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
-}[c]));
-
-// Render the PLEADINGS array as a vertical timeline. Pleadings are stored on
-// each case as objects of { date, code, description, detail, has_image }.
-// Sorted newest-first; an "IMG" badge is shown when a scanned image is on
-// file (we don't have a URL to link to, so it's a marker only).
-function formatPleadings(pleadings) {
-  if (!Array.isArray(pleadings) || !pleadings.length) {
-    return '<div class="profile-empty">No pleadings on record.</div>';
-  }
-  const parseDate = v => {
-    const m = String(v || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    return m ? new Date(+m[3], +m[1] - 1, +m[2]).getTime() : 0;
-  };
-  const sorted = [...pleadings].sort((a, b) => parseDate(b.date) - parseDate(a.date));
-  return `<div class="pleadings-list">${sorted.map(p => {
-    const code = String(p.code || '').toUpperCase();
-    return `<div class="pleading-row">
-      <div class="pleading-date">${escapeHtml(p.date || '')}</div>
-      <div class="pleading-code">${escapeHtml(code)}</div>
-      <div class="pleading-body">
-        <div class="pleading-desc">${escapeHtml(p.description || '')}</div>
-        ${p.detail ? `<div class="pleading-detail">${escapeHtml(p.detail)}</div>` : ''}
-      </div>
-      ${p.has_image ? '<div class="pleading-image-badge">IMG</div>' : '<div></div>'}
-    </div>`;
-  }).join('')}</div>`;
-}
-
-function showCaseProfile(docket) {
-  const r = allRows.find(x => x.docket === docket);
-  if (!r) return;
-  // If a district modal is open, close it so we don't stack.
-  closeDistrictProfile();
-
-  const status = r.status || '';
-  const dotClass = status === 'PENDING' ? 'dot-pending'
-    : (status === 'DISMISSED' || status === 'NONSUIT') ? 'dot-dismissed' : 'dot-other';
-  const attorney = r.Attorney === ', PRS' ? 'pro se' : r.Attorney;
-  const datePart = iso => iso ? String(iso).split('T')[0] : '';
-  const districtVal = (label, rep) => label
-    ? escapeHtml(label) + (rep ? ` <span class="rep">· ${escapeHtml(rep)}</span>` : '')
-    : '';
-  const field = (label, htmlValue) => htmlValue
-    ? `<div class="case-field"><div class="label">${escapeHtml(label)}</div><div class="value">${htmlValue}</div></div>`
-    : '';
-
-  const pleadings = Array.isArray(r.pleadings) ? r.pleadings : [];
-
-  const html = `
-    <div class="modal-backdrop" id="case-modal" onclick="if (event.target === this) closeCaseProfile()">
-      <div class="modal">
-        <div class="modal-header">
-          <div>
-            <h2 style="font-family:var(--mono); color:var(--gold); font-size:18px">${escapeHtml(r.docket || '')}</h2>
-            <div class="modal-sub">
-              <span class="dot ${dotClass}"></span>${escapeHtml(status || 'UNKNOWN')}
-              ${r.file_date ? ' · filed ' + escapeHtml(r.file_date) : ''}
-              ${r.last_checked ? ' · last checked ' + escapeHtml(datePart(r.last_checked)) : ''}
-            </div>
-          </div>
-          <button class="modal-close" onclick="closeCaseProfile()">×</button>
-        </div>
-        <div class="modal-body">
-          <div class="profile-section">
-            <h3>Parties</h3>
-            <div class="case-fields">
-              ${field('Plaintiff', escapeHtml(r.Plaintiff_1 || ''))}
-              ${field('Defendant', escapeHtml(r.Defendant_1 || ''))}
-              ${field('Attorney', escapeHtml(attorney || ''))}
-              ${field('Office', escapeHtml(r.office || ''))}
-            </div>
-          </div>
-
-          <div class="profile-section">
-            <h3>Location &amp; Districts</h3>
-            <div class="case-fields">
-              ${field('Address', escapeHtml(r.address_formatted || r.geocoded_address || ''))}
-              ${field('Census Tract', escapeHtml(r.census_name || (r.census_geoid ? 'GEOID ' + r.census_geoid : '')))}
-              ${field('Council', districtVal(r.council_district, r.council_rep))}
-              ${field('State House', districtVal(r.state_house_district, r.state_house_rep))}
-              ${field('State Senate', districtVal(r.state_senate_district, r.state_senate_rep))}
-              ${field('US Congressional', escapeHtml(r.us_congressional_district || ''))}
-              ${field('School Board', districtVal(r.school_board_district, r.school_board_rep))}
-            </div>
-          </div>
-
-          <div class="profile-section">
-            <h3>Pleadings (${pleadings.length})</h3>
-            ${formatPleadings(pleadings)}
-          </div>
-        </div>
-      </div>
-    </div>
-  `;
-
-  const wrap = document.createElement('div');
-  wrap.innerHTML = html;
-  document.body.appendChild(wrap.firstElementChild);
-  document.addEventListener('keydown', escCloseCaseProfile);
-}
-
-function closeCaseProfile() {
-  const m = document.getElementById('case-modal');
-  if (m) m.remove();
-  document.removeEventListener('keydown', escCloseCaseProfile);
-}
-
-function escCloseCaseProfile(e) {
-  if (e.key === 'Escape') closeCaseProfile();
-}
-
 /* ───────────────────────── Dispatch ───────────────────────── */
 
 function setVisibility() {
@@ -1861,14 +2401,15 @@ function setVisibility() {
   const isDistricts = viewMode === 'districts';
   const isCoverage  = viewMode === 'coverage';
   const isMap       = viewMode === 'map';
-  document.getElementById('local-toolbar').style.display       = isCases     ? '' : 'none';
-  document.getElementById('local-table-wrap').style.display    = isCases     ? '' : 'none';
-  document.getElementById('districts-view').style.display      = isDistricts ? '' : 'none';
-  document.getElementById('grid-view').style.display           = isCoverage  ? '' : 'none';
-  document.getElementById('map-view').style.display            = isMap       ? '' : 'none';
-  document.getElementById('coverage-mode-group').style.display = isCoverage  ? '' : 'none';
-  document.getElementById('map-source-group').style.display    = isMap       ? '' : 'none';
-  document.getElementById('map-mode-group').style.display      = isMap       ? '' : 'none';
+  document.getElementById('local-toolbar').style.display      = isCases     ? '' : 'none';
+  document.getElementById('local-table-wrap').style.display   = isCases     ? '' : 'none';
+  document.getElementById('districts-view').style.display     = isDistricts ? '' : 'none';
+  document.getElementById('grid-view').style.display          = isCoverage  ? '' : 'none';
+  document.getElementById('map-view').style.display           = isMap       ? '' : 'none';
+  document.getElementById('coverage-mode-group').style.display = isCoverage ? '' : 'none';
+  document.getElementById('coverage-dir-group').style.display  = isCoverage ? '' : 'none';
+  document.getElementById('map-source-group').style.display    = isMap      ? '' : 'none';
+  document.getElementById('map-mode-group').style.display      = isMap      ? '' : 'none';
 }
 
 function render() {
@@ -1885,6 +2426,14 @@ function render() {
   updateCoverageHeadline();
 }
 
+function bindRowClicks() {
+  document.getElementById('tbody').addEventListener('click', (e) => {
+    const tr = e.target.closest('tr');
+    if (!tr || !tr.dataset.docket) return;
+    openRecordPanel(tr.dataset.docket);
+  });
+}
+
 function bindViewControls() {
   document.querySelectorAll('#view-seg button').forEach(b => {
     b.addEventListener('click', () => {
@@ -1897,6 +2446,13 @@ function bindViewControls() {
     b.addEventListener('click', () => {
       coverageMode = b.dataset.val;
       document.querySelectorAll('#coverage-mode-seg button').forEach(x => x.classList.toggle('on', x === b));
+      if (viewMode === 'coverage') render();
+    });
+  });
+  document.querySelectorAll('#coverage-dir-seg button').forEach(b => {
+    b.addEventListener('click', () => {
+      coverageDir = b.dataset.val;
+      document.querySelectorAll('#coverage-dir-seg button').forEach(x => x.classList.toggle('on', x === b));
       if (viewMode === 'coverage') render();
     });
   });
@@ -2038,10 +2594,10 @@ function aggregateDistrictRace(district) {
   }
   if (!tractIds.length) return null;
   const sum = { total: 0, white: 0, black: 0, native: 0, asian: 0, pacific: 0, other: 0, multiple: 0, hispanic: 0 };
-  let matched = 0, missing = [];
+  let matched = 0;
   for (const g of tractIds) {
     const r = agg.tractRace[g];
-    if (!r) { missing.push(g); continue; }
+    if (!r) continue;
     matched++;
     sum.total    += r.total;
     sum.white    += r.white;
@@ -2053,7 +2609,7 @@ function aggregateDistrictRace(district) {
     sum.multiple += r.multiple;
     sum.hispanic += r.hispanic;
   }
-  return { ...sum, tractsMatched: matched, tractsKnown: tractIds.length, missing };
+  return { ...sum, tractsMatched: matched, tractsKnown: tractIds.length };
 }
 
 /* ───────────────────────── Boot ───────────────────────── */
@@ -2063,6 +2619,14 @@ document.addEventListener("click", e => {
     document.getElementById("dd-" + activeDropdown).style.display = "none";
     activeDropdown = null;
   }
+});
+
+document.addEventListener("keydown", e => {
+  if (e.key !== "Escape") return;
+  const modal = document.getElementById("login-modal");
+  if (modal && modal.style.display !== "none") { closeLoginModal(); return; }
+  if (selectedRecordDocket) { closeRecordPanel(); return; }
+  if (selectedTract) { closeTractPanel(); }
 });
 
 document.getElementById("search").addEventListener("input", render);
