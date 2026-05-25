@@ -230,6 +230,17 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 #grid-view td.cell-amber { background: rgba(232,167,53,0.10); }
 #grid-view td.cell-red   { background: rgba(232,93,58,0.12); }
 #grid-view td.cell-na    { color: var(--dim); }
+
+/* Coverage by district table: paired Princeton + Scraped rows per district */
+#grid-view .coverage-tbl td.src-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--muted);
+}
+#grid-view .coverage-tbl td.src-princeton { color: #9aa3b2; }
+#grid-view .coverage-tbl td.src-scraped { color: var(--gold); }
+#grid-view .coverage-tbl tr.dist-princeton td { border-bottom-color: transparent; }
+#grid-view .coverage-tbl tr.dist-scraped td { border-bottom: 2px solid var(--border); }
+#grid-view .coverage-tbl tr.dist-princeton td.num { color: var(--muted); }
 #grid-view .notice { padding: 24px; text-align: center; color: var(--muted); font-size: 12px; }
 #grid-view .legend { margin-top: 12px; font-size: 10px; color: var(--dim); display: flex; gap: 16px; align-items: center; }
 #grid-view .legend .sw { display: inline-block; width: 10px; height: 10px; margin-right: 4px; vertical-align: middle; border-radius: 2px; }
@@ -273,11 +284,10 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 
   <div class="view-bar">
     <div class="group">
-      <label>Source</label>
-      <div class="seg" id="src-seg">
-        <button data-val="local" class="on">Local Scrape</button>
-        <button data-val="princeton">Princeton</button>
-        <button data-val="delta">Delta</button>
+      <label>View</label>
+      <div class="seg" id="view-seg">
+        <button data-val="cases" class="on">Cases</button>
+        <button data-val="coverage">Coverage by District</button>
       </div>
     </div>
     <div class="coverage" id="coverage-headline"></div>
@@ -334,9 +344,7 @@ let filters = {};
 let activeDropdown = null;
 
 let snapshot = null;          // decoded eviction-lab-snapshot.json
-let viewSource = 'local';     // 'local' | 'princeton' | 'delta'
-let princetonSortKey = 'month';
-let princetonSortDir = -1;
+let viewMode = 'cases';       // 'cases' | 'coverage'
 
 function shorten(val, prefix) {
   return (val || "").replace(prefix, "D");
@@ -643,7 +651,7 @@ function median(arr) {
 function updateCoverageHeadline() {
   const el = document.getElementById('coverage-headline');
   // Coverage is only meaningful when comparing — keep Local view clean.
-  if (viewSource === 'local') { el.textContent = ''; return; }
+  if (viewMode === 'cases') { el.textContent = ''; return; }
   if (!snapshot) { el.innerHTML = '<span style="color:var(--dim)">Princeton snapshot not yet on GitHub</span>'; return; }
   const princeton = princetonByDistrictMonth();
   const local = localByDistrictMonth();
@@ -661,114 +669,9 @@ function updateCoverageHeadline() {
   el.innerHTML = `Coverage for <strong>${latest}</strong>: <strong>${(med * 100).toFixed(0)}%</strong> of Princeton (median across ${ratios.length} districts)`;
 }
 
-/* ───────────────────────── Princeton flat table ───────────────────────── */
+/* ───────────────────────── Coverage by District (Princeton vs Scraped) ───────────────────────── */
 
-const PRINCETON_COLS = [
-  { key: 'month',        label: 'Month',    cls: '' },
-  { key: 'type',         label: 'Type',     cls: '' },
-  { key: 'GEOID',        label: 'Tract',    cls: '' },
-  { key: 'racial_majority', label: 'Race',  cls: '' },
-  { key: 'filings',      label: 'Filings',  cls: 'num' },
-  { key: 'hist_avg',     label: 'Hist Avg', cls: 'num' },
-  { key: 'baseline',     label: 'Baseline', cls: 'num' },
-  { key: 'council_district', label: 'Council', cls: '' },
-  { key: 'last_updated', label: 'Updated',  cls: '' },
-];
-
-function flattenPrincetonRows() {
-  if (!snapshot || !snapshot.tracts) return [];
-  const out = [];
-  for (const geoid in snapshot.tracts) {
-    const t = snapshot.tracts[geoid];
-    for (const m of (t.monthly || [])) {
-      out.push({
-        GEOID: geoid,
-        racial_majority: t.racial_majority || '',
-        council_district: t.council_district || '',
-        month: m.month || '',
-        type: m.type || '',
-        filings: m.filings,
-        hist_avg: m.hist_avg,
-        baseline: m.baseline,
-        last_updated: m.last_updated || '',
-      });
-    }
-  }
-  return out;
-}
-
-function compareMonth(a, b) {
-  // "MM/YYYY" — compare YYYY then MM
-  const [am, ay] = String(a || '').split('/');
-  const [bm, by] = String(b || '').split('/');
-  return (ay + am).localeCompare(by + bm);
-}
-
-function renderPrincetonTable() {
-  const root = document.getElementById('grid-view');
-
-  if (!snapshot) {
-    root.innerHTML = `<div class="notice">Loading Princeton data… The snapshot is being built in the background on first load. Reload in a moment.</div>`;
-    return;
-  }
-
-  const rows = flattenPrincetonRows();
-  if (!rows.length) {
-    root.innerHTML = `<div class="notice">Princeton snapshot is empty.</div>`;
-    return;
-  }
-
-  rows.sort((a, b) => {
-    const av = a[princetonSortKey];
-    const bv = b[princetonSortKey];
-    let cmp;
-    if (princetonSortKey === 'month') cmp = compareMonth(av, bv);
-    else if (av == null && bv == null) cmp = 0;
-    else if (av == null) cmp = 1;
-    else if (bv == null) cmp = -1;
-    else if (typeof av === 'number' && typeof bv === 'number') cmp = av - bv;
-    else cmp = String(av).localeCompare(String(bv));
-    return princetonSortDir === 1 ? cmp : -cmp;
-  });
-
-  let html = `<table><thead><tr>`;
-  for (const c of PRINCETON_COLS) {
-    const arrow = c.key === princetonSortKey ? `<span class="arrow">${princetonSortDir === 1 ? '↑' : '↓'}</span>` : '';
-    html += `<th class="${c.cls}" data-key="${c.key}">${c.label}${arrow}</th>`;
-  }
-  html += `</tr></thead><tbody>`;
-
-  for (const r of rows) {
-    html += `<tr>`;
-    for (const c of PRINCETON_COLS) {
-      let v = r[c.key];
-      if (v == null || v === '') v = '—';
-      else if (typeof v === 'number') v = Number.isInteger(v) ? v : v.toFixed(2);
-      html += `<td class="${c.cls}">${v}</td>`;
-    }
-    html += `</tr>`;
-  }
-  html += `</tbody></table>`;
-
-  const enriched = Object.values(snapshot.tracts).filter(t => t.council_district).length;
-  const total = Object.keys(snapshot.tracts).length;
-  html += `<div class="legend"><span style="color:var(--dim)">${rows.length.toLocaleString()} rows · ${total} tracts (${enriched} mapped to council districts)</span></div>`;
-
-  root.innerHTML = html;
-
-  root.querySelectorAll('th[data-key]').forEach(th => {
-    th.addEventListener('click', () => {
-      const k = th.dataset.key;
-      if (princetonSortKey === k) princetonSortDir = -princetonSortDir;
-      else { princetonSortKey = k; princetonSortDir = -1; }
-      renderPrincetonTable();
-    });
-  });
-}
-
-/* ───────────────────────── Delta view (district aggregation) ───────────────────────── */
-
-function renderDeltaGrid() {
+function renderCoverageGrid() {
   const root = document.getElementById('grid-view');
 
   if (!snapshot) {
@@ -778,36 +681,44 @@ function renderDeltaGrid() {
 
   const princeton = princetonByDistrictMonth();
   const local     = localByDistrictMonth();
-  const months    = recentMonths(princeton, 6);
-  const rowKeys   = Object.keys(princeton).sort((a, b) => {
+  const months    = recentMonths(princeton, 12);
+  const districts = Object.keys(princeton).sort((a, b) => {
     const an = parseInt(a, 10), bn = parseInt(b, 10);
     if (!isNaN(an) && !isNaN(bn)) return an - bn;
     return a.localeCompare(b);
   });
 
-  if (!rowKeys.length || !months.length) {
+  if (!districts.length || !months.length) {
     const enriched = Object.values(snapshot.tracts).filter(t => t.council_district).length;
     const total = Object.keys(snapshot.tracts).length;
-    root.innerHTML = `<div class="notice">District rollup needs tracts mapped to council districts. Enriched ${enriched}/${total} so far — switch to <b>Princeton</b> to browse the raw CSV in the meantime.</div>`;
+    root.innerHTML = `<div class="notice">Districts are being assigned to the underlying Princeton areas — ${enriched}/${total} mapped so far. Reload in a few minutes once enrichment progresses.</div>`;
     return;
   }
 
-  let html = `<table><thead><tr><th>District</th>`;
+  let html = `<table class="coverage-tbl"><thead><tr><th>District</th><th>Source</th>`;
   for (const m of months) html += `<th class="num">${m}</th>`;
   html += `</tr></thead><tbody>`;
 
-  for (const k of rowKeys) {
-    html += `<tr><td class="row-label">D${k}</td>`;
+  for (const d of districts) {
+    // Row 1: Princeton (ground truth)
+    html += `<tr class="dist-princeton"><td class="row-label" rowspan="2">D${d}</td><td class="src-label src-princeton">Princeton</td>`;
     for (const m of months) {
-      const p = princeton[k][m];
-      const l = (local[k] && local[k][m]) || 0;
+      const p = princeton[d][m];
+      html += `<td class="num">${p != null ? p : '—'}</td>`;
+    }
+    html += `</tr>`;
+
+    // Row 2: Scraped (ours), color-coded by ratio
+    html += `<tr class="dist-scraped"><td class="src-label src-scraped">Scraped</td>`;
+    for (const m of months) {
+      const p = princeton[d][m];
+      const l = (local[d] && local[d][m]) || 0;
       if (p == null || p === 0) {
-        html += `<td class="num cell-na">—</td>`;
+        html += `<td class="num cell-na">${l || '—'}</td>`;
       } else {
         const ratio = l / p;
         const cls = ratioClass(ratio);
-        const delta = l - p;
-        html += `<td class="num ${cls}"><div class="cell-stack"><span>${delta > 0 ? '+' + delta : delta}</span><span class="ratio">${(ratio*100).toFixed(0)}%</span></div></td>`;
+        html += `<td class="num ${cls}"><div class="cell-stack"><span>${l}</span><span class="ratio">${(ratio*100).toFixed(0)}%</span></div></td>`;
       }
     }
     html += `</tr>`;
@@ -815,10 +726,10 @@ function renderDeltaGrid() {
   html += `</tbody></table>`;
 
   html += `<div class="legend">
-    <span><span class="sw green"></span> ≥85% of Princeton</span>
+    <span><span class="sw green"></span> Scraped ≥85% of Princeton</span>
     <span><span class="sw amber"></span> 50–85%</span>
     <span><span class="sw red"></span> &lt;50%</span>
-    <span style="color:var(--dim)">Each cell: scraped − Princeton (delta) / scraped÷Princeton (ratio)</span>
+    <span style="color:var(--dim)">Top row = Princeton Eviction Lab (ground truth) · Bottom row = our scrape</span>
   </div>`;
 
   root.innerHTML = html;
@@ -827,29 +738,27 @@ function renderDeltaGrid() {
 /* ───────────────────────── Dispatch ───────────────────────── */
 
 function setVisibility() {
-  const isLocal = viewSource === 'local';
-  document.getElementById('local-toolbar').style.display    = isLocal ? '' : 'none';
-  document.getElementById('local-table-wrap').style.display = isLocal ? '' : 'none';
-  document.getElementById('grid-view').style.display        = isLocal ? 'none' : '';
+  const isCases = viewMode === 'cases';
+  document.getElementById('local-toolbar').style.display    = isCases ? '' : 'none';
+  document.getElementById('local-table-wrap').style.display = isCases ? '' : 'none';
+  document.getElementById('grid-view').style.display        = isCases ? 'none' : '';
 }
 
 function render() {
   setVisibility();
-  if (viewSource === 'local') {
+  if (viewMode === 'cases') {
     renderLocalTable();
-  } else if (viewSource === 'princeton') {
-    renderPrincetonTable();
   } else {
-    renderDeltaGrid();
+    renderCoverageGrid();
   }
   updateCoverageHeadline();
 }
 
 function bindViewControls() {
-  document.querySelectorAll('#src-seg button').forEach(b => {
+  document.querySelectorAll('#view-seg button').forEach(b => {
     b.addEventListener('click', () => {
-      viewSource = b.dataset.val;
-      document.querySelectorAll('#src-seg button').forEach(x => x.classList.toggle('on', x === b));
+      viewMode = b.dataset.val;
+      document.querySelectorAll('#view-seg button').forEach(x => x.classList.toggle('on', x === b));
       render();
     });
   });
@@ -1066,7 +975,7 @@ async function publishSnapshot(snap, commitMsg) {
 function refreshSnapshotUi() {
   updateCoverageHeadline();
   updateSubtitle();
-  if (viewSource !== 'local') render();
+  if (viewMode !== 'cases') render();
 }
 
 // Phase 1 — fetch Princeton, write any new data to GitHub immediately.
