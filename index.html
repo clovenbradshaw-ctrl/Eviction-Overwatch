@@ -381,10 +381,13 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 #tract-panel .tp-title { font-family: var(--serif); font-size: 16px; color: #f5f0e0; }
 #tract-panel .tp-geoid { font-size: 10px; color: var(--dim); margin-top: 2px; letter-spacing: 0.06em; }
 #tract-panel .tp-close {
-  background: transparent; border: 1px solid var(--border); color: var(--muted);
-  font-family: var(--mono); font-size: 14px; padding: 2px 8px; border-radius: 3px; cursor: pointer;
+  background: transparent; border: none; color: var(--dim);
+  font-family: var(--mono); font-size: 16px; line-height: 1;
+  width: 22px; height: 22px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 3px; cursor: pointer;
 }
-#tract-panel .tp-close:hover { color: var(--gold); border-color: var(--gold-dim); }
+#tract-panel .tp-close:hover { color: var(--gold); background: rgba(196,164,74,0.10); }
 #tract-panel .tp-districts { padding: 12px 16px; border-bottom: 1px solid var(--border); }
 #tract-panel .tp-district-row {
   display: flex; justify-content: space-between; padding: 4px 0;
@@ -412,27 +415,48 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 
 .map-wrap { position: relative; }
 
-/* Case record detail panel — fixed to the right of the viewport so it floats
-   over whatever view is active (mostly the cases table, but also map/coverage). */
+/* Case record detail panel — pinned to the right edge of the table area.
+   Visually treated as a continuation of the table (same background, hairline
+   border, no heavy drop shadow) rather than a floating overlay. */
 #record-panel {
   position: fixed; top: 0; right: 0; bottom: 0;
   width: 380px; max-width: 95vw;
-  background: var(--surface); border-left: 1px solid var(--border);
+  background: var(--bg); border-left: 1px solid var(--border);
   z-index: 1000; overflow-y: auto;
-  box-shadow: -8px 0 24px rgba(0,0,0,0.55);
   display: none;
 }
 #record-panel.open { display: block; }
-#record-panel .tp-head { padding: 16px 18px 12px; }
-#record-panel .tp-title { font-family: var(--mono); font-size: 14px; color: var(--gold); }
-#record-panel .rp-fields { padding: 4px 0 24px; }
+#record-panel .tp-head {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 12px; padding: 9px 14px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+#record-panel .tp-title {
+  font-family: var(--mono); font-size: 12px; color: var(--gold);
+  font-weight: 500; letter-spacing: 0.02em;
+}
+#record-panel .tp-geoid {
+  font-size: 10px; color: var(--dim); margin-top: 2px; letter-spacing: 0.04em;
+}
+#record-panel .tp-close {
+  background: transparent; border: none; color: var(--dim);
+  font-family: var(--mono); font-size: 16px; line-height: 1;
+  width: 22px; height: 22px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 3px; cursor: pointer;
+  flex-shrink: 0;
+}
+#record-panel .tp-close:hover { color: var(--gold); background: rgba(196,164,74,0.10); }
+#record-panel .rp-fields { padding: 0 0 24px; }
 #record-panel .rp-row {
-  display: grid; grid-template-columns: 140px 1fr;
-  gap: 10px; padding: 7px 18px;
-  border-bottom: 1px solid #1f1d17;
+  display: grid; grid-template-columns: 130px 1fr;
+  gap: 10px; padding: 7px 14px;
+  border-bottom: 1px solid var(--surface);
   font-size: 11px;
 }
-#record-panel .rp-row:hover { background: rgba(255,255,255,0.02); }
+#record-panel .rp-row:hover { background: rgba(255,255,255,0.015); }
 #record-panel .rp-row .lbl {
   color: var(--dim); text-transform: uppercase;
   letter-spacing: 0.06em; font-size: 10px;
@@ -486,6 +510,188 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   background: var(--surface); color: var(--text); border-color: var(--border);
 }
 .leaflet-control-zoom a:hover { background: var(--bg); color: var(--gold); }
+
+/* Districts view */
+#districts-view { padding: 16px 24px; }
+#districts-view table { min-width: 900px; }
+#districts-view tbody tr { cursor: pointer; }
+#districts-view tbody tr:hover td { background: rgba(196,164,74,0.06); }
+#districts-view td.num { font-variant-numeric: tabular-nums; text-align: right; }
+#districts-view td.district-label { color: var(--gold); font-weight: 500; }
+#districts-view td.rep { color: var(--text); }
+#districts-view .spark { height: 18px; }
+#districts-view .spark span { background: var(--gold-dim); width: 3px; min-height: 1px; }
+
+/* District profile modal (separate from main's .modal-overlay system) */
+.dp-backdrop {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(10,9,7,0.78);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 40px 16px; overflow-y: auto;
+}
+.dp-modal {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; width: 100%; max-width: 880px;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+}
+.dp-header {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  padding: 20px 24px; border-bottom: 1px solid var(--border);
+}
+.dp-header h2 {
+  font-family: var(--serif); font-size: 22px; font-weight: 400;
+  color: #f5f0e0; letter-spacing: -0.02em;
+}
+.dp-header .dp-sub { margin-top: 4px; font-size: 11px; color: var(--muted); }
+.dp-close {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--muted); font-family: var(--mono); font-size: 14px;
+  width: 28px; height: 28px; border-radius: 4px; cursor: pointer;
+}
+.dp-close:hover { color: var(--text); border-color: var(--muted); }
+.dp-body { padding: 20px 24px 24px; }
+
+.profile-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: 12px; margin-bottom: 20px;
+}
+.profile-stat {
+  padding: 10px 12px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 4px;
+}
+.profile-stat .label {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--dim); margin-bottom: 4px;
+}
+.profile-stat .value {
+  font-size: 18px; font-variant-numeric: tabular-nums; color: var(--text);
+}
+.profile-stat .value.pending { color: var(--pending); }
+.profile-stat .value.dismissed { color: var(--dismissed); }
+
+.profile-section { margin-bottom: 20px; }
+.profile-section h3 {
+  font-family: var(--mono); font-size: 10px; font-weight: 500;
+  text-transform: uppercase; letter-spacing: 0.12em;
+  color: var(--dim); margin-bottom: 8px;
+  padding-bottom: 6px; border-bottom: 1px solid var(--border);
+}
+.profile-cols {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 24px;
+}
+.profile-list { list-style: none; }
+.profile-list li {
+  display: flex; justify-content: space-between;
+  padding: 4px 0; font-size: 12px;
+}
+.profile-list li span:first-child {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  margin-right: 12px;
+}
+.profile-list li .count { color: var(--dim); font-variant-numeric: tabular-nums; }
+.profile-empty { color: var(--dim); font-style: italic; font-size: 11px; }
+
+.profile-trend {
+  display: flex; gap: 2px; align-items: flex-end; height: 48px;
+  padding: 8px 0;
+}
+.profile-trend .bar {
+  flex: 1; min-width: 4px; background: var(--gold-dim);
+  border-radius: 1px; position: relative;
+}
+.profile-trend .bar:hover { background: var(--gold); }
+.trend-wrap { padding: 4px 0; }
+.trend-axis {
+  display: flex; justify-content: space-between;
+  font-size: 9px; color: var(--dim); margin-top: 4px;
+}
+
+/* Race / ethnicity breakdown in district profile */
+.race-bars { display: flex; flex-direction: column; gap: 4px; }
+.race-row {
+  display: grid; grid-template-columns: 200px 1fr 110px;
+  gap: 8px; align-items: center; font-size: 11px;
+}
+.race-row .label-cell { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.race-row .bar-cell {
+  height: 8px; background: rgba(255,255,255,0.04);
+  border-radius: 2px; overflow: hidden;
+}
+.race-row .bar-cell > div { height: 100%; background: var(--gold-dim); border-radius: 2px; }
+.race-row .num-cell {
+  font-variant-numeric: tabular-nums; color: var(--dim);
+  text-align: right; font-size: 11px;
+}
+.race-source-note {
+  font-size: 10px; color: var(--dim); margin-top: 10px;
+  padding-top: 8px; border-top: 1px solid var(--surface);
+}
+.race-source-note a { color: var(--gold-dim); text-decoration: none; }
+.race-source-note a:hover { text-decoration: underline; }
+.race-overlap { border-top: 1px dashed var(--border); margin-top: 6px; padding-top: 6px; }
+
+/* Pleadings timeline (used inside main's record-panel) */
+.pleadings-list { display: flex; flex-direction: column; margin-top: 4px; }
+.pleading-row {
+  display: grid; grid-template-columns: 88px 64px 1fr auto;
+  gap: 10px; align-items: start;
+  padding: 7px 0; border-bottom: 1px solid var(--border);
+}
+.pleading-row:last-child { border-bottom: none; }
+.pleading-date {
+  font-variant-numeric: tabular-nums; color: var(--muted);
+  font-size: 11px; padding-top: 2px;
+}
+.pleading-code {
+  font-size: 10px; padding: 2px 6px;
+  background: rgba(196,164,74,0.10); color: var(--gold);
+  border: 1px solid var(--gold-dim); border-radius: 3px;
+  text-align: center; letter-spacing: 0.06em; font-weight: 500;
+}
+.pleading-body { padding-top: 1px; min-width: 0; }
+.pleading-desc {
+  font-size: 12px; color: var(--text); line-height: 1.3;
+  word-break: break-word;
+}
+.pleading-detail { font-size: 10px; color: var(--dim); margin-top: 2px; }
+.pleading-image-badge {
+  font-size: 9px; letter-spacing: 0.1em;
+  color: var(--muted); border: 1px solid var(--border);
+  padding: 2px 6px; border-radius: 2px;
+  align-self: start; white-space: nowrap;
+}
+
+/* Provenance footer — every external source disclosed */
+#provenance-footer {
+  margin-top: 32px; padding: 20px 24px 32px;
+  border-top: 1px solid var(--border);
+  background: #100f0c;
+}
+#provenance-footer .prov-title {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em;
+  color: var(--muted); margin-bottom: 12px;
+}
+#provenance-list {
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+.prov-source {
+  padding: 10px 12px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 4px;
+  font-size: 11px;
+}
+.prov-source .prov-name { color: var(--gold); font-weight: 500; margin-bottom: 3px; }
+.prov-source .prov-url { word-break: break-all; margin-bottom: 6px; }
+.prov-source .prov-url a { color: var(--text); text-decoration: none; }
+.prov-source .prov-url a:hover { color: var(--gold); text-decoration: underline; }
+.prov-source .prov-meta {
+  font-size: 10px; color: var(--dim);
+  font-variant-numeric: tabular-nums; margin-bottom: 4px;
+}
+.prov-source .prov-meta.fresh { color: var(--green); }
+.prov-source .prov-meta.pending { color: var(--amber); }
+.prov-source .prov-meta.failed { color: var(--red); }
+.prov-source .prov-notes { color: var(--muted); font-size: 10px; line-height: 1.4; }
 </style>
 </head>
 <body>
@@ -536,6 +742,7 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
       <label>View</label>
       <div class="seg" id="view-seg">
         <button data-val="cases" class="on">Cases</button>
+        <button data-val="districts">Districts</button>
         <button data-val="coverage">Coverage</button>
         <button data-val="map">Map</button>
       </div>
@@ -560,6 +767,18 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
         <button data-val="princeton" class="on">Princeton data</button>
         <button data-val="scraped">Local scrape</button>
       </div>
+    </div>
+    <div class="group" id="map-mode-group" style="display:none">
+      <label>Mode</label>
+      <div class="seg" id="map-mode-seg">
+        <button data-val="alltime" class="on">All time</button>
+        <button data-val="year">By year</button>
+        <button data-val="trajectory">Trajectory</button>
+      </div>
+    </div>
+    <div class="group" id="map-year-group" style="display:none">
+      <label>Year</label>
+      <select id="map-year-select"></select>
     </div>
     <div class="coverage" id="coverage-headline"></div>
   </div>
@@ -586,6 +805,8 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 
   <aside id="record-panel" aria-hidden="true"></aside>
 
+  <div id="districts-view" style="display:none"></div>
+
   <div id="grid-view" style="display:none"></div>
 
   <div id="map-view" style="display:none">
@@ -602,12 +823,98 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
     </div>
     <div class="map-status" id="map-status">Loading map…</div>
   </div>
+
+  <footer id="provenance-footer">
+    <div class="prov-title">Data Sources · provenance</div>
+    <div id="provenance-list"></div>
+  </footer>
 </div>
 
 <div id="error" style="display:none"></div>
 
 <script>
 const CASES_URL = "https://raw.githubusercontent.com/clovenbradshaw-ctrl/plain-text/main/cases.json";
+
+/* ───────────────────────── Provenance registry ─────────────────────────
+   Every external HTTP source the page touches is registered here so the
+   footer can show exactly what was fetched, when, and how many rows came
+   back. Update via markSource(...) on each fetch. */
+
+const ACS_YEAR = 2022;  // ACS 5-year vintage we query (2018–2022 averages)
+const ACS_RACE_URL = `https://api.census.gov/data/${ACS_YEAR}/acs/acs5`
+  + `?get=NAME,B02001_001E,B02001_002E,B02001_003E,B02001_004E,B02001_005E,B02001_006E,B02001_007E,B02001_008E,B03003_003E`
+  + `&for=tract:*&in=state:47%20county:037`;
+const TIGER_TRACT_URL = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWMS_Current/MapServer/8/query?'
+  + 'where=' + encodeURIComponent("STATE='47' AND COUNTY='037'")
+  + '&outFields=GEOID&returnGeometry=true&f=geojson';
+
+const sources = {
+  cases: {
+    name: 'Nashville eviction cases',
+    url: CASES_URL,
+    notes: 'Court records compiled from circuitclerk.nashville.gov, gzipped + base64-wrapped in a GitHub-hosted JSON. Polled every 5 minutes for updates.',
+    status: 'pending', fetchedAt: null, rows: null, error: null,
+  },
+  princeton: {
+    name: 'Princeton Eviction Lab — Nashville monthly filings',
+    url: 'https://evictionlab.org/uploads/nashville_monthly_2020_2021.csv',
+    notes: 'Pre-pandemic / pandemic-era filings 2020–2021 by census tract. Fetched live each session via CORS proxy; never persisted.',
+    status: 'pending', fetchedAt: null, rows: null, error: null,
+  },
+  acs: {
+    name: `US Census ACS 5-year (${ACS_YEAR}) — race & ethnicity by tract`,
+    url: ACS_RACE_URL,
+    notes: 'Tables B02001 (race) and B03003 (Hispanic origin) for Davidson County (47/037). This is the upstream source the Eviction Lab itself uses for demographics.',
+    status: 'pending', fetchedAt: null, rows: null, error: null,
+  },
+  tiger: {
+    name: 'US Census TIGERweb — tract boundaries',
+    url: TIGER_TRACT_URL,
+    notes: 'Current census tract polygons for Davidson County. Fetched only when the Map view is opened.',
+    status: 'idle', fetchedAt: null, rows: null, error: null,
+  },
+};
+
+function markSource(key, patch) {
+  if (!sources[key]) return;
+  Object.assign(sources[key], patch);
+  if (patch.status === 'ok' || patch.status === 'failed') {
+    sources[key].fetchedAt = new Date().toISOString();
+  }
+  renderProvenance();
+}
+
+function fmtFetchedAt(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+}
+
+function renderProvenance() {
+  const root = document.getElementById('provenance-list');
+  if (!root) return;
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+  root.innerHTML = Object.values(sources).map(s => {
+    let statusLine;
+    if (s.status === 'ok') {
+      statusLine = `<div class="prov-meta fresh">✓ Fetched ${esc(fmtFetchedAt(s.fetchedAt))}${s.rows != null ? ` · ${s.rows.toLocaleString()} rows` : ''}</div>`;
+    } else if (s.status === 'failed') {
+      statusLine = `<div class="prov-meta failed">✗ Failed ${esc(fmtFetchedAt(s.fetchedAt))}${s.error ? ` · ${esc(s.error)}` : ''}</div>`;
+    } else if (s.status === 'pending') {
+      statusLine = `<div class="prov-meta pending">↻ Fetching…</div>`;
+    } else {
+      statusLine = `<div class="prov-meta">Not fetched yet</div>`;
+    }
+    return `<div class="prov-source">
+      <div class="prov-name">${esc(s.name)}</div>
+      <div class="prov-url"><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.url)}</a></div>
+      ${statusLine}
+      <div class="prov-notes">${esc(s.notes)}</div>
+    </div>`;
+  }).join('');
+}
 
 /* ───────────────────────── Existing case-table state ───────────────────────── */
 
@@ -666,13 +973,17 @@ let agg = {
   princetonDistrict: {},      // { "5":   { "MM/YYYY": filings } }
   localMonths:     [],        // sorted asc, derived from allRows
   princetonMonths: [],        // sorted asc, derived from princetonRows
+  tractRace:       {},        // { GEOID: { total, white, black, native, asian, pacific, other, multiple, hispanic, name } }
 };
 
 // Map view state
 let tractGeometries = null;   // GeoJSON FeatureCollection from TIGERweb (shared by both sources)
 let leafletMap = null;
 let tractLayer = null;
-let mapMonth = null;          // currently displayed "MM/YYYY"
+let mapMode = 'alltime';      // 'alltime' | 'year' | 'trajectory'
+let mapMonth = null;          // currently displayed "MM/YYYY" (trajectory mode)
+let mapYear = null;           // selected year (year mode)
+const TRAJECTORY_HALF_LIFE_MONTHS = 3;  // hotness fades to 50% after 3 months
 
 function shorten(val, prefix) {
   return (val || "").replace(prefix, "D");
@@ -703,6 +1014,7 @@ async function loadData() {
       ...c,
     }));
 
+    markSource('cases', { status: 'ok', rows: allRows.length });
     rebuildLocalAggregates();
 
     document.getElementById("loading").style.display = "none";
@@ -715,17 +1027,20 @@ async function loadData() {
     buildHeader();
     bindViewControls();
     bindRowClicks();
+    renderProvenance();
     render();
 
-    // Pull the Princeton CSV live from evictionlab.org in the background.
-    // Nothing is written back to GitHub — Princeton lives only in memory.
+    // Pull background datasets live (Princeton filings CSV + Census ACS race
+    // table). Nothing is written back to GitHub — both live only in memory.
     kickBackgroundSync();
+    kickCensusRaceSync();
 
     // Capture the current commit sha for cases.json, then start a 5-min
     // poll that re-fetches and diff-merges only when the sha changes.
     captureCasesSha();
     startUpdatePolling();
   } catch (e) {
+    markSource('cases', { status: 'failed', error: e.message });
     document.getElementById("loading").style.display = "none";
     document.getElementById("error").style.display = "block";
     document.getElementById("error").textContent = "Error: " + e.message;
@@ -1032,7 +1347,7 @@ function median(arr) {
 
 function updateCoverageHeadline() {
   const el = document.getElementById('coverage-headline');
-  if (viewMode === 'cases') { el.textContent = ''; return; }
+  if (viewMode === 'cases' || viewMode === 'districts') { el.textContent = ''; return; }
   if (!princetonRows) {
     el.innerHTML = '<span style="color:var(--dim)">Fetching Princeton CSV…</span>';
     return;
@@ -1145,23 +1460,26 @@ async function fetchTractGeometries() {
   // Correct service is tigerWMS_Current; tigerWL_Current returns 404. Layer
   // 8 = "Census Tracts (Current)". Try direct (TIGERweb sends permissive
   // CORS) then fall back to the n8n proxy if the browser blocks it.
-  const url = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWMS_Current/MapServer/8/query?'
-    + 'where=' + encodeURIComponent("STATE='47' AND COUNTY='037'")
-    + '&outFields=GEOID&returnGeometry=true&f=geojson';
-  const attempts = [url, pxProxy(url)];
+  markSource('tiger', { status: 'pending' });
+  const attempts = [TIGER_TRACT_URL, pxProxy(TIGER_TRACT_URL)];
   let lastErr = null;
   for (const u of attempts) {
     try {
       const r = await fetch(u);
       if (!r.ok) { lastErr = new Error(`HTTP ${r.status}`); continue; }
       const data = await r.json();
-      if (data.features && data.features.length) return data;
+      if (data.features && data.features.length) {
+        markSource('tiger', { status: 'ok', rows: data.features.length });
+        return data;
+      }
       lastErr = new Error('no features');
     } catch (e) {
       lastErr = e;
     }
   }
-  throw new Error(`TIGER geometry: ${lastErr ? lastErr.message : 'unknown'}`);
+  const msg = lastErr ? lastErr.message : 'unknown';
+  markSource('tiger', { status: 'failed', error: msg });
+  throw new Error(`TIGER geometry: ${msg}`);
 }
 
 // YlOrRd sequential palette
@@ -1190,36 +1508,139 @@ function colorForFilings(filings, max) {
   return `rgb(${ch(0)},${ch(1)},${ch(2)})`;
 }
 
-function updateMapColors() {
-  if (!tractLayer || !mapMonth) return;
-  const { data, max } = mapLayer();
-  tractLayer.eachLayer(layer => {
-    const geoid = String(layer.feature.properties.GEOID);
-    const filings = (data[geoid] && data[geoid][mapMonth]) || 0;
-    layer.setStyle({ fillColor: colorForFilings(filings, max) });
-  });
+// Unique years present in the active source's month list, newest first.
+function availableYears() {
+  const { months } = mapLayer();
+  const ys = new Set();
+  for (const m of months) {
+    const yr = m.split('/')[1];
+    if (yr) ys.add(yr);
+  }
+  return [...ys].sort((a, b) => +b - +a);
 }
 
-// Reset the slider's min/max/value to the active source's month range.
-// Called on first map init and whenever the source toggle changes.
-function syncMapSlider() {
-  const { months } = mapLayer();
-  const slider = document.getElementById('map-slider');
+/* Build the active heat frame for the current mapMode.
+   Returns:
+     { values: { geoid: number }, max, label, tooltipFmt(geoid) → string }
+   - alltime:    sum of every month in the source
+   - year:       sum within the selected year
+   - trajectory: exponentially decayed running total at mapMonth
+                 (half-life of TRAJECTORY_HALF_LIFE_MONTHS) */
+function mapHeatFrame() {
+  const { data, months } = mapLayer();
+  const sourceLabel = mapSource === 'scraped' ? 'cases' : 'filings';
+
   if (!months.length) {
-    mapMonth = null;
-    slider.min = 0; slider.max = 0; slider.value = 0;
-    document.getElementById('map-month-label').textContent = '—';
-    return;
+    return { values: {}, max: 0, label: '—', tooltipFmt: () => 'no data' };
   }
-  // Try to keep the same month across source toggles; fall back to latest.
-  let idx = months.indexOf(mapMonth);
-  if (idx < 0) idx = months.length - 1;
-  mapMonth = months[idx];
-  slider.min = 0;
-  slider.max = months.length - 1;
-  slider.value = idx;
-  document.getElementById('map-month-label').textContent = mapMonth;
+
+  if (mapMode === 'alltime') {
+    const values = {}; let max = 0;
+    for (const g in data) {
+      let s = 0;
+      for (const m in data[g]) s += data[g][m] || 0;
+      values[g] = s;
+      if (s > max) max = s;
+    }
+    const span = `${months[0]} – ${months[months.length - 1]}`;
+    return {
+      values, max, label: `All time · ${span}`,
+      tooltipFmt: g => `${(values[g] || 0).toLocaleString()} ${sourceLabel} (${span})`,
+    };
+  }
+
+  if (mapMode === 'year') {
+    const yr = mapYear;
+    const values = {}; let max = 0;
+    for (const g in data) {
+      let s = 0;
+      for (const m in data[g]) {
+        if (m.endsWith('/' + yr)) s += data[g][m] || 0;
+      }
+      values[g] = s;
+      if (s > max) max = s;
+    }
+    return {
+      values, max, label: `${yr}`,
+      tooltipFmt: g => `${(values[g] || 0).toLocaleString()} ${sourceLabel} in ${yr}`,
+    };
+  }
+
+  // trajectory: exponentially decayed running total up through mapMonth.
+  const k = months.indexOf(mapMonth);
+  if (k < 0) {
+    return { values: {}, max: 0, label: mapMonth || '—', tooltipFmt: () => 'no data' };
+  }
+  const decay = Math.pow(0.5, 1 / TRAJECTORY_HALF_LIFE_MONTHS);
+  const values = {}; const thisMonth = {}; let max = 0;
+  for (const g in data) {
+    let s = 0;
+    for (let i = 0; i <= k; i++) {
+      const m = months[i];
+      const v = data[g][m];
+      if (v) s += v * Math.pow(decay, k - i);
+    }
+    values[g] = s;
+    thisMonth[g] = data[g][months[k]] || 0;
+    if (s > max) max = s;
+  }
+  return {
+    values, max, label: `Trajectory → ${mapMonth} (½-life ${TRAJECTORY_HALF_LIFE_MONTHS} mo)`,
+    tooltipFmt: g => {
+      const cur = thisMonth[g] || 0;
+      const trail = values[g] || 0;
+      return `${mapMonth}: <strong>${cur}</strong> ${sourceLabel}<br>trajectory heat: ${trail.toFixed(1)}`;
+    },
+  };
 }
+
+function updateMapColors() {
+  if (!tractLayer) return;
+  const frame = mapHeatFrame();
+  tractLayer.eachLayer(layer => {
+    const geoid = String(layer.feature.properties.GEOID);
+    layer.setStyle({ fillColor: colorForFilings(frame.values[geoid] || 0, frame.max) });
+  });
+  const labelEl = document.getElementById('map-month-label');
+  if (labelEl) labelEl.textContent = frame.label;
+}
+
+// Show only the controls relevant to the current mode and seed default
+// values (year, month) from the source's available data.
+function syncMapControls() {
+  const { months } = mapLayer();
+  const yearGroup = document.getElementById('map-year-group');
+  const sliderEl  = document.getElementById('map-slider');
+  const isTrajectory = mapMode === 'trajectory';
+
+  sliderEl.style.display = isTrajectory ? '' : 'none';
+
+  if (isTrajectory) {
+    if (!months.length) {
+      mapMonth = null;
+      sliderEl.min = 0; sliderEl.max = 0; sliderEl.value = 0;
+    } else {
+      let idx = months.indexOf(mapMonth);
+      if (idx < 0) idx = months.length - 1;
+      mapMonth = months[idx];
+      sliderEl.min = 0;
+      sliderEl.max = months.length - 1;
+      sliderEl.value = idx;
+    }
+  }
+
+  const isYear = mapMode === 'year';
+  yearGroup.style.display = isYear ? '' : 'none';
+  if (isYear) {
+    const years = availableYears();
+    const sel = document.getElementById('map-year-select');
+    sel.innerHTML = years.map(y => `<option value="${y}">${y}</option>`).join('');
+    if (!years.includes(mapYear)) mapYear = years[0] || null;
+    if (mapYear) sel.value = mapYear;
+  }
+}
+// Back-compat alias: main called syncMapSlider() in places.
+const syncMapSlider = syncMapControls;
 
 async function renderMapView() {
   const status = document.getElementById('map-status');
@@ -1267,14 +1688,12 @@ async function renderMapView() {
       onEachFeature: (feature, layer) => {
         const geoid = String(feature.properties.GEOID);
         layer.on('mouseover', e => {
-          const { data } = mapLayer();
-          const filings = (data[geoid] && data[geoid][mapMonth]) || 0;
+          const frame = mapHeatFrame();
           const info = agg.tractInfo[geoid];
           const nameLine = info && info.name ? info.name : `Tract ${geoid}`;
           const districtLine = info && info.district ? `<br>${info.district}` : '';
-          const sourceLabel = mapSource === 'scraped' ? 'cases' : 'filings';
           layer.bindTooltip(
-            `<strong>${nameLine}</strong>${districtLine}<br>${mapMonth}: ${filings} ${sourceLabel}<br><span style="color:#c4a44a">click for detail</span>`,
+            `<strong>${nameLine}</strong>${districtLine}<br>${frame.tooltipFmt(geoid)}<br><span style="color:#c4a44a">click for detail</span>`,
             { sticky: true }
           ).openTooltip(e.latlng);
           layer.setStyle({ weight: 2, color: '#c4a44a' });
@@ -1293,12 +1712,16 @@ async function renderMapView() {
     slider.addEventListener('input', e => {
       const { months: ms } = mapLayer();
       mapMonth = ms[parseInt(e.target.value, 10)];
-      document.getElementById('map-month-label').textContent = mapMonth;
+      updateMapColors();
+    });
+
+    document.getElementById('map-year-select').addEventListener('change', e => {
+      mapYear = e.target.value;
       updateMapColors();
     });
   }
 
-  syncMapSlider();
+  syncMapControls();
   status.style.display = 'none';
   controls.style.display = '';
   updateMapColors();
@@ -1314,6 +1737,33 @@ function escapeHtml(s) {
 function escapeAttr(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
+// Render the PLEADINGS array as a vertical timeline. Pleadings are stored on
+// each case as objects of { date, code, description, detail, has_image },
+// sorted newest-first; an "IMG" badge marks pleadings that have a scanned
+// image on file (no URL to link to — marker only).
+function formatPleadings(pleadings) {
+  if (!Array.isArray(pleadings) || !pleadings.length) {
+    return '<span class="empty">— no pleadings —</span>';
+  }
+  const parseDate = v => {
+    const m = String(v || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    return m ? new Date(+m[3], +m[1] - 1, +m[2]).getTime() : 0;
+  };
+  const sorted = [...pleadings].sort((a, b) => parseDate(b.date) - parseDate(a.date));
+  return `<div class="pleadings-list">${sorted.map(p => {
+    const code = String(p.code || '').toUpperCase();
+    return `<div class="pleading-row">
+      <div class="pleading-date">${escapeHtml(p.date || '')}</div>
+      <div class="pleading-code">${escapeHtml(code)}</div>
+      <div class="pleading-body">
+        <div class="pleading-desc">${escapeHtml(p.description || '')}</div>
+        ${p.detail ? `<div class="pleading-detail">${escapeHtml(p.detail)}</div>` : ''}
+      </div>
+      ${p.has_image ? '<div class="pleading-image-badge">IMG</div>' : '<div></div>'}
+    </div>`;
+  }).join('')}</div>`;
 }
 
 function openTractPanel(geoid) {
@@ -1446,6 +1896,13 @@ function renderRecordPanel(docket) {
     let cls = 'val';
     let display;
     let encAttr = '';
+    // Pleadings get a formatted timeline instead of raw JSON.
+    if (k === 'pleadings' && Array.isArray(v)) {
+      return `<div class="rp-row">
+        <span class="lbl">${escapeHtml(k)}</span>
+        <span class="val">${formatPleadings(v)}</span>
+      </div>`;
+    }
     if (v == null || v === '') { display = '—'; cls += ' empty'; }
     else if (isEncrypted(v)) {
       encAttr = ` data-enc="${escapeAttr(v)}"`;
@@ -1739,26 +2196,297 @@ function startUpdatePolling() {
   updatePollHandle = setInterval(checkForCasesUpdate, POLL_INTERVAL_MS);
 }
 
+/* ───────────────────────── Districts view + profile ───────────────────────── */
+
+// Aggregate everything we want to show per council district from allRows.
+// Done on every render so it picks up new cases without a separate cache.
+function aggregateDistricts() {
+  const out = {};
+  for (const r of allRows) {
+    const d = r.council_district;
+    if (!d) continue;
+    if (!out[d]) {
+      out[d] = {
+        district: d,
+        key: normalizeDistrict(d),
+        rep: r.council_rep || '',
+        cases: 0, pending: 0, dismissed: 0, other: 0,
+        tracts: new Set(),
+        plaintiffs: {}, attorneys: {},
+        rows: [],
+        months: {},
+      };
+    }
+    const a = out[d];
+    a.cases++;
+    if (r.status === 'PENDING') a.pending++;
+    else if (r.status === 'DISMISSED' || r.status === 'NONSUIT') a.dismissed++;
+    else a.other++;
+    if (r.census_geoid) a.tracts.add(String(r.census_geoid));
+    if (r.Plaintiff_1) a.plaintiffs[r.Plaintiff_1] = (a.plaintiffs[r.Plaintiff_1] || 0) + 1;
+    if (r.Attorney && r.Attorney !== ', PRS') a.attorneys[r.Attorney] = (a.attorneys[r.Attorney] || 0) + 1;
+    a.rows.push(r);
+    const m = caseFileDateToMonth(r.file_date);
+    if (m) a.months[m] = (a.months[m] || 0) + 1;
+  }
+  return out;
+}
+
+function sparklineHtml(monthsMap, recentMonths) {
+  const counts = recentMonths.map(m => monthsMap[m] || 0);
+  const max = Math.max(1, ...counts);
+  return `<span class="spark">` + counts.map(c =>
+    `<span style="height:${Math.max(1, (c / max) * 16)}px"></span>`
+  ).join('') + `</span>`;
+}
+
+function renderDistrictsView() {
+  const root = document.getElementById('districts-view');
+  const byD = aggregateDistricts();
+  const rows = Object.values(byD).sort((a, b) => {
+    const an = parseInt(a.key, 10), bn = parseInt(b.key, 10);
+    if (!isNaN(an) && !isNaN(bn)) return an - bn;
+    return a.district.localeCompare(b.district);
+  });
+
+  if (!rows.length) {
+    root.innerHTML = `<div style="padding:24px;text-align:center;color:var(--muted)">No council district data in current cases.</div>`;
+    return;
+  }
+
+  const recent = agg.localMonths.slice(-12);
+
+  let html = `<table><thead><tr>
+    <th>District</th><th>Council Rep</th>
+    <th class="num">Cases</th><th class="num">Pending</th>
+    <th class="num">Dismissed</th><th class="num">Tracts</th>
+    <th>Last 12 months</th>
+  </tr></thead><tbody>`;
+  for (const a of rows) {
+    html += `<tr onclick="showDistrictProfile('${a.district.replace(/'/g, "\\'")}')">`
+      + `<td class="district-label">${shorten(a.district, 'Council District ')}</td>`
+      + `<td class="rep">${escapeHtmlSafe(a.rep) || '—'}</td>`
+      + `<td class="num">${a.cases}</td>`
+      + `<td class="num">${a.pending}</td>`
+      + `<td class="num">${a.dismissed}</td>`
+      + `<td class="num">${a.tracts.size}</td>`
+      + `<td>${recent.length ? sparklineHtml(a.months, recent) : '—'}</td>`
+      + `</tr>`;
+  }
+  html += `</tbody></table>`;
+  root.innerHTML = html;
+}
+
+function escapeHtmlSafe(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+
+function showDistrictProfile(district) {
+  const byD = aggregateDistricts();
+  const a = byD[district];
+  if (!a) return;
+
+  const topList = (obj, n) => Object.entries(obj).sort((x, y) => y[1] - x[1]).slice(0, n);
+  const topPlaintiffs = topList(a.plaintiffs, 5);
+  const topAttorneys  = topList(a.attorneys, 5);
+
+  const tractCounts = {};
+  for (const r of a.rows) {
+    if (r.census_geoid) {
+      const g = String(r.census_geoid);
+      tractCounts[g] = (tractCounts[g] || 0) + 1;
+    }
+  }
+  const topTracts = Object.entries(tractCounts).sort((x, y) => y[1] - x[1]);
+
+  const parseDate = v => {
+    const m = String(v || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    return m ? new Date(+m[3], +m[1] - 1, +m[2]).getTime() : 0;
+  };
+  const recentCases = [...a.rows].sort((x, y) => parseDate(y.file_date) - parseDate(x.file_date)).slice(0, 10);
+
+  const monthKeys = sortMonthsAsc(Object.keys(a.months));
+  const maxMonth = Math.max(1, ...monthKeys.map(m => a.months[m]));
+
+  const esc = escapeHtmlSafe;
+
+  const race = aggregateDistrictRace(a.district);
+  let raceSection;
+  if (!race) {
+    const s = sources.acs.status;
+    const msg = s === 'pending' ? 'Fetching Census ACS data…'
+      : s === 'failed' ? `Census ACS fetch failed: ${esc(sources.acs.error || '')}`
+      : 'No tracts mapped to this district yet.';
+    raceSection = `<div class="profile-section"><h3>Race &amp; Ethnicity</h3><div class="profile-empty">${msg}</div></div>`;
+  } else {
+    const pct = (n, t) => t > 0 ? (n / t * 100).toFixed(1) : '0.0';
+    const bar = (n, t) => `<div style="width:${t > 0 ? (n/t*100).toFixed(2) : 0}%"></div>`;
+    const row = (label, n) => `<div class="race-row">
+      <div class="label-cell">${label}</div>
+      <div class="bar-cell">${bar(n, race.total)}</div>
+      <div class="num-cell">${n.toLocaleString()} · ${pct(n, race.total)}%</div>
+    </div>`;
+    raceSection = `<div class="profile-section">
+      <h3>Race &amp; Ethnicity (district population)</h3>
+      <div class="race-bars">
+        ${row('White alone', race.white)}
+        ${row('Black or African American alone', race.black)}
+        ${row('Asian alone', race.asian)}
+        ${row('American Indian / Alaska Native alone', race.native)}
+        ${row('Native Hawaiian / Pacific Islander alone', race.pacific)}
+        ${row('Some other race alone', race.other)}
+        ${row('Two or more races', race.multiple)}
+        <div class="race-overlap"></div>
+        ${row('Hispanic or Latino (any race)', race.hispanic)}
+      </div>
+      <div class="race-source-note">
+        Total population: <strong>${race.total.toLocaleString()}</strong> · ${race.tractsMatched} of ${race.tractsKnown} known tracts matched.
+        Aggregated from tracts in this district. Source:
+        <a href="${esc(sources.acs.url)}" target="_blank" rel="noopener">US Census ACS 5-year (${ACS_YEAR}), tables B02001 + B03003</a>.
+        Hispanic/Latino is an ethnicity that overlaps with the race categories above, so it is shown separately and is not part of the sum.
+      </div>
+    </div>`;
+  }
+
+  const profileHtml = `
+    <div class="dp-backdrop" id="district-modal" onclick="if (event.target === this) closeDistrictProfile()">
+      <div class="dp-modal">
+        <div class="dp-header">
+          <div>
+            <h2>${esc(a.district)}</h2>
+            <div class="dp-sub">${a.rep ? 'Council Rep: ' + esc(a.rep) : 'No rep on file'} · ${a.tracts.size} census tract${a.tracts.size === 1 ? '' : 's'}</div>
+          </div>
+          <button class="dp-close" onclick="closeDistrictProfile()">×</button>
+        </div>
+        <div class="dp-body">
+          <div class="profile-grid">
+            <div class="profile-stat"><div class="label">Total Cases</div><div class="value">${a.cases}</div></div>
+            <div class="profile-stat"><div class="label">Pending</div><div class="value pending">${a.pending}</div></div>
+            <div class="profile-stat"><div class="label">Dismissed</div><div class="value dismissed">${a.dismissed}</div></div>
+            <div class="profile-stat"><div class="label">Other</div><div class="value">${a.other}</div></div>
+          </div>
+
+          ${monthKeys.length ? `
+          <div class="profile-section">
+            <h3>Monthly Filings</h3>
+            <div class="trend-wrap">
+              <div class="profile-trend">
+                ${monthKeys.map(m => `<div class="bar" style="height:${Math.max(2, (a.months[m] / maxMonth) * 44)}px" title="${m}: ${a.months[m]}"></div>`).join('')}
+              </div>
+              <div class="trend-axis">
+                <span>${monthKeys[0]}</span>
+                <span>${monthKeys[monthKeys.length - 1]}</span>
+              </div>
+            </div>
+          </div>` : ''}
+
+          <div class="profile-cols">
+            <div class="profile-section">
+              <h3>Top Plaintiffs</h3>
+              ${topPlaintiffs.length ? `<ul class="profile-list">${topPlaintiffs.map(([n, c]) =>
+                `<li><span>${esc(n)}</span><span class="count">${c}</span></li>`).join('')}</ul>`
+                : '<div class="profile-empty">No plaintiff data.</div>'}
+            </div>
+            <div class="profile-section">
+              <h3>Top Attorneys</h3>
+              ${topAttorneys.length ? `<ul class="profile-list">${topAttorneys.map(([n, c]) =>
+                `<li><span>${esc(n.split(',')[0])}</span><span class="count">${c}</span></li>`).join('')}</ul>`
+                : '<div class="profile-empty">No attorney data (all pro se).</div>'}
+            </div>
+          </div>
+
+          ${topTracts.length ? `
+          <div class="profile-section">
+            <h3>Census Tracts</h3>
+            <ul class="profile-list">${topTracts.map(([g, c]) => {
+              const info = agg.tractInfo[g];
+              const name = info && info.name ? info.name : `Tract ${g}`;
+              return `<li><span>${esc(name)}</span><span class="count">${c}</span></li>`;
+            }).join('')}</ul>
+          </div>` : ''}
+
+          ${raceSection}
+
+          <div class="profile-section">
+            <h3>Recent Cases</h3>
+            <table class="profile-cases" style="width:100%"><tbody>
+              ${recentCases.map(r => {
+                const st = r.status || '';
+                const dotClass = st === 'PENDING' ? 'dot-pending'
+                  : (st === 'DISMISSED' || st === 'NONSUIT') ? 'dot-dismissed' : 'dot-other';
+                const safeDocket = String(r.docket || '').replace(/'/g, "\\'");
+                return `<tr style="cursor:pointer" onclick="closeDistrictProfile(); openRecordPanel('${safeDocket}')">
+                  <td style="padding:5px 8px;font-size:11px;color:var(--gold)">${esc(r.docket || '')}</td>
+                  <td style="padding:5px 8px;font-size:11px">${esc(r.file_date || '')}</td>
+                  <td style="padding:5px 8px;font-size:11px"><span class="dot ${dotClass}"></span>${esc(st)}</td>
+                  <td style="padding:5px 8px;font-size:11px">${esc(r.Plaintiff_1 || '')}</td>
+                  <td style="padding:5px 8px;font-size:11px">${esc(r.address_formatted || '')}</td>
+                </tr>`;
+              }).join('')}
+            </tbody></table>
+          </div>
+
+          <div class="profile-section" style="margin-bottom:0">
+            <button class="filter-btn" style="cursor:pointer" onclick="filterCasesByDistrict('${a.district.replace(/'/g, "\\'")}')">View all ${a.cases} cases in Cases tab →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const wrap = document.createElement('div');
+  wrap.innerHTML = profileHtml;
+  document.body.appendChild(wrap.firstElementChild);
+  document.addEventListener('keydown', escCloseDistrictProfile);
+}
+
+function closeDistrictProfile() {
+  const m = document.getElementById('district-modal');
+  if (m) m.remove();
+  document.removeEventListener('keydown', escCloseDistrictProfile);
+}
+
+function escCloseDistrictProfile(e) {
+  if (e.key === 'Escape') closeDistrictProfile();
+}
+
+function filterCasesByDistrict(d) {
+  closeDistrictProfile();
+  filters.council_district = d;
+  viewMode = 'cases';
+  document.querySelectorAll('#view-seg button').forEach(b =>
+    b.classList.toggle('on', b.dataset.val === 'cases'));
+  updateFilterBtns();
+  render();
+}
+
 /* ───────────────────────── Dispatch ───────────────────────── */
 
 function setVisibility() {
-  const isCases    = viewMode === 'cases';
-  const isCoverage = viewMode === 'coverage';
-  const isMap      = viewMode === 'map';
-  document.getElementById('local-toolbar').style.display      = isCases    ? '' : 'none';
-  document.getElementById('table-header').style.display       = isCases    ? '' : 'none';
-  document.getElementById('local-table-wrap').style.display   = isCases    ? '' : 'none';
-  document.getElementById('grid-view').style.display          = isCoverage ? '' : 'none';
-  document.getElementById('map-view').style.display           = isMap      ? '' : 'none';
+  const isCases     = viewMode === 'cases';
+  const isDistricts = viewMode === 'districts';
+  const isCoverage  = viewMode === 'coverage';
+  const isMap       = viewMode === 'map';
+  document.getElementById('local-toolbar').style.display      = isCases     ? '' : 'none';
+  document.getElementById('table-header').style.display       = isCases     ? '' : 'none';
+  document.getElementById('local-table-wrap').style.display   = isCases     ? '' : 'none';
+  document.getElementById('districts-view').style.display     = isDistricts ? '' : 'none';
+  document.getElementById('grid-view').style.display          = isCoverage  ? '' : 'none';
+  document.getElementById('map-view').style.display           = isMap       ? '' : 'none';
   document.getElementById('coverage-mode-group').style.display = isCoverage ? '' : 'none';
   document.getElementById('coverage-dir-group').style.display  = isCoverage ? '' : 'none';
   document.getElementById('map-source-group').style.display    = isMap      ? '' : 'none';
+  document.getElementById('map-mode-group').style.display      = isMap      ? '' : 'none';
 }
 
 function render() {
   setVisibility();
   if (viewMode === 'cases') {
     renderLocalTable();
+  } else if (viewMode === 'districts') {
+    renderDistrictsView();
   } else if (viewMode === 'coverage') {
     renderCoverageGrid();
   } else if (viewMode === 'map') {
@@ -1802,7 +2530,17 @@ function bindViewControls() {
       mapSource = b.dataset.val;
       document.querySelectorAll('#map-source-seg button').forEach(x => x.classList.toggle('on', x === b));
       if (viewMode === 'map') {
-        syncMapSlider();
+        syncMapControls();
+        updateMapColors();
+      }
+    });
+  });
+  document.querySelectorAll('#map-mode-seg button').forEach(b => {
+    b.addEventListener('click', () => {
+      mapMode = b.dataset.val;
+      document.querySelectorAll('#map-mode-seg button').forEach(x => x.classList.toggle('on', x === b));
+      if (viewMode === 'map') {
+        syncMapControls();
         updateMapColors();
       }
     });
@@ -1845,12 +2583,14 @@ async function kickBackgroundSync() {
     bgStatus('Fetching Princeton CSV…', true);
     princetonRows = await fetchPrincetonCsvRows();
     rebuildPrincetonAggregates();
+    markSource('princeton', { status: 'ok', rows: princetonRows.length });
     console.info(`[eo] princeton csv: ${princetonRows.length} rows · ${agg.princetonMonths.length} months`);
     refreshSnapshotUi();
     bgStatus(`Princeton: ${princetonRows.length} rows loaded (live)`, false);
     setTimeout(() => bgStatus(''), 3000);
   } catch (e) {
     console.warn('Princeton CSV fetch failed:', e);
+    markSource('princeton', { status: 'failed', error: e.message });
     bgStatus(`Princeton fetch failed: ${e.message}`, false);
     setTimeout(() => bgStatus(''), 5000);
   }
@@ -1971,6 +2711,91 @@ function downloadCsv(text, filename) {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+/* ───────────────────────── Census ACS race data ─────────────────────────
+   Fetched once per session direct from api.census.gov through the n8n CORS
+   proxy. We pull tables B02001 (race) and B03003 (Hispanic origin) for every
+   tract in Davidson County, then aggregate up to council districts using the
+   tract→district mapping that's already in agg.tractToDistrict.
+   Nothing is persisted; the data lives only in memory. */
+
+async function fetchCensusRaceRows() {
+  const r = await fetch(pxProxy(ACS_RACE_URL));
+  if (!r.ok) throw new Error(`ACS HTTP ${r.status}`);
+  const data = await r.json();
+  if (!Array.isArray(data) || !data.length) throw new Error('ACS: empty response');
+  const headers = data[0];
+  const idx = {};
+  headers.forEach((h, i) => { idx[h] = i; });
+  const need = ['NAME','B02001_001E','B02001_002E','B02001_003E','B02001_004E','B02001_005E','B02001_006E','B02001_007E','B02001_008E','B03003_003E','state','county','tract'];
+  for (const k of need) if (idx[k] == null) throw new Error(`ACS: missing column ${k}`);
+  const out = {};
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    const geoid = String(row[idx.state]) + String(row[idx.county]) + String(row[idx.tract]);
+    const num = v => { const n = +v; return Number.isFinite(n) && n >= 0 ? n : 0; };
+    out[geoid] = {
+      name:     row[idx.NAME],
+      total:    num(row[idx['B02001_001E']]),
+      white:    num(row[idx['B02001_002E']]),
+      black:    num(row[idx['B02001_003E']]),
+      native:   num(row[idx['B02001_004E']]),
+      asian:    num(row[idx['B02001_005E']]),
+      pacific:  num(row[idx['B02001_006E']]),
+      other:    num(row[idx['B02001_007E']]),
+      multiple: num(row[idx['B02001_008E']]),
+      hispanic: num(row[idx['B03003_003E']]),
+    };
+  }
+  return out;
+}
+
+async function kickCensusRaceSync() {
+  try {
+    bgStatus('Fetching Census ACS race data…', true);
+    agg.tractRace = await fetchCensusRaceRows();
+    const n = Object.keys(agg.tractRace).length;
+    markSource('acs', { status: 'ok', rows: n });
+    console.info(`[eo] ACS ${ACS_YEAR}: ${n} tracts loaded`);
+    bgStatus(`ACS: ${n} tracts loaded (live)`, false);
+    setTimeout(() => bgStatus(''), 3000);
+  } catch (e) {
+    console.warn('Census ACS fetch failed:', e);
+    markSource('acs', { status: 'failed', error: e.message });
+    bgStatus(`ACS fetch failed: ${e.message}`, false);
+    setTimeout(() => bgStatus(''), 5000);
+  }
+}
+
+/* Sum up race counts across every tract mapped to a given council district.
+   Returns null if the data isn't loaded yet, or if no tracts in our cases
+   ever appeared in this district. The aggregate is by population, not by
+   case count — this describes the district's demographic profile. */
+function aggregateDistrictRace(district) {
+  if (!agg.tractRace || !Object.keys(agg.tractRace).length) return null;
+  const tractIds = [];
+  for (const g in agg.tractToDistrict) {
+    if (agg.tractToDistrict[g].council_district === district) tractIds.push(g);
+  }
+  if (!tractIds.length) return null;
+  const sum = { total: 0, white: 0, black: 0, native: 0, asian: 0, pacific: 0, other: 0, multiple: 0, hispanic: 0 };
+  let matched = 0;
+  for (const g of tractIds) {
+    const r = agg.tractRace[g];
+    if (!r) continue;
+    matched++;
+    sum.total    += r.total;
+    sum.white    += r.white;
+    sum.black    += r.black;
+    sum.native   += r.native;
+    sum.asian    += r.asian;
+    sum.pacific  += r.pacific;
+    sum.other    += r.other;
+    sum.multiple += r.multiple;
+    sum.hispanic += r.hispanic;
+  }
+  return { ...sum, tractsMatched: matched, tractsKnown: tractIds.length };
 }
 
 /* ───────────────────────── Boot ───────────────────────── */
