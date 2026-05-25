@@ -677,6 +677,11 @@ async function loadData() {
     // Nothing is written back to GitHub — Princeton lives only in memory.
     kickBackgroundSync();
 
+    // Poll authoritative sources for the current officeholders in each
+    // district that touches our tracts. Replaces the (possibly stale)
+    // rep names baked into cases.json. Runs once per browser session.
+    kickRepresentationSync();
+
     // Capture the current commit sha for cases.json, then start a 5-min
     // poll that re-fetches and diff-merges only when the sha changes.
     captureCasesSha();
@@ -921,6 +926,12 @@ function rebuildLocalAggregates() {
   agg.localTract      = byTract;
   agg.localDistrict   = byDistrict;
   agg.localMonths     = sortMonthsAsc([...months]);
+
+  // Re-apply the live representation overlay so a fresh cases.json
+  // rebuild doesn't revert to the snapshot rep names.
+  if (typeof mergeRepresentationIntoTractInfo === 'function') {
+    mergeRepresentationIntoTractInfo();
+  }
 }
 
 /* Build agg.princetonTract / princetonDistrict from princetonRows × tractToDistrict.
@@ -1307,12 +1318,23 @@ function renderTractPanel(geoid) {
   const monthSet = new Set([...Object.keys(p), ...Object.keys(l)]);
   let months = sortMonthsAsc([...monthSet]).reverse(); // newest first, top→bottom
 
+  // Each rep cell shows the (possibly live) officeholder; when the value
+  // came from a live poll, the source domain is appended in dim text. The
+  // raw district number is kept on its own row so it's still legible when
+  // the rep lookup didn't return anything.
+  const repCell = (name, source) => {
+    if (!name) return '—';
+    if (!source) return escapeHtml(name);
+    return `${escapeHtml(name)} <span style="color:var(--dim);font-size:10px">· ${escapeHtml(source)}</span>`;
+  };
   const districtRows = [
-    ['Census tract', info.name || `Tract ${geoid}`],
-    ['Council district', info.district || '—'],
-    ['Council rep', info.rep || '—'],
-    ['State house', info.state_house || '—'],
-    ['US congressional', info.us_congressional || '—'],
+    ['Census tract',     escapeHtml(info.name || `Tract ${geoid}`)],
+    ['Council district', escapeHtml(info.district || '—')],
+    ['Council rep',      repCell(info.rep, info.repSource)],
+    ['State house',      escapeHtml(info.state_house || '—')],
+    ['State house rep',  repCell(info.state_house_rep, info.state_house_rep_source)],
+    ['US congressional', escapeHtml(info.us_congressional || '—')],
+    ['US cong. rep',     repCell(info.us_congressional_rep, info.us_congressional_rep_source)],
   ];
 
   let html = `
@@ -1327,7 +1349,7 @@ function renderTractPanel(geoid) {
       ${districtRows.map(([k, v]) => `
         <div class="tp-district-row">
           <span class="lbl">${escapeHtml(k)}</span>
-          <span class="val">${escapeHtml(v)}</span>
+          <span class="val">${v}</span>
         </div>`).join('')}
     </div>
     <div class="tp-section-label">Monthly filings (Princeton vs scraped)</div>
@@ -1807,6 +1829,217 @@ async function kickBackgroundSync() {
   } catch (e) {
     console.warn('Princeton CSV fetch failed:', e);
     bgStatus(`Princeton fetch failed: ${e.message}`, false);
+    setTimeout(() => bgStatus(''), 5000);
+  }
+}
+
+/* ───────────────────────── Representation table ─────────────────────
+   Source of truth for who currently holds each seat that touches a
+   Davidson County tract. Built fresh once per browser session by
+   polling authoritative endpoints, cached in sessionStorage so view
+   toggles don't re-hit the network, and overlaid onto agg.tractInfo
+   so the tract panel shows the live officeholder.
+
+   The council_rep / state_house_rep / us_congressional_rep names that
+   ship in cases.json are treated as a stale snapshot — they're only
+   accurate as of the scraper's last run. Whenever a live fetch
+   succeeds, the snapshot value is overwritten in agg.tractInfo. When
+   a fetch fails (CORS, rate limit, network), the snapshot stays so
+   the UI still has something to show.
+
+   Schema:
+     representation = {
+       fetchedAt: ISO timestamp of the last completed poll,
+       council:    { "<district>": { name, source, fetchedAt, ... } },
+       stateHouse: { "<district>": { name, party, source, fetchedAt } },
+       usCongress: { "<district>": { name, party, source, fetchedAt } },
+       sources:    per-fetcher status — { ok, count } or { ok:false, error },
+     }
+*/
+
+const REP_CACHE_KEY = 'eo:representation:v1';
+
+let representation = {
+  fetchedAt: null,
+  council:    {},
+  stateHouse: {},
+  usCongress: {},
+  sources:    { council: null, stateHouse: null, usCongress: null },
+};
+
+function loadRepresentationFromCache() {
+  try {
+    const raw = sessionStorage.getItem(REP_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && parsed.fetchedAt ? parsed : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function saveRepresentationToCache(rep) {
+  try { sessionStorage.setItem(REP_CACHE_KEY, JSON.stringify(rep)); }
+  catch (e) { /* sessionStorage may be unavailable; refetch next session */ }
+}
+
+// US House — current members served as JSON by the unitedstates project.
+// Permissive CORS, no auth required. Filter to TN reps.
+async function fetchUsCongressReps() {
+  const url = 'https://unitedstates.github.io/congress-legislators/legislators-current.json';
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`congress HTTP ${r.status}`);
+  const all = await r.json();
+  const result = {};
+  const fetchedAt = new Date().toISOString();
+  for (const p of all) {
+    const t = p.terms && p.terms[p.terms.length - 1];
+    if (!t || t.state !== 'TN' || t.type !== 'rep') continue;
+    const name = [p.name && p.name.first, p.name && p.name.last].filter(Boolean).join(' ');
+    result[String(t.district)] = {
+      name,
+      party: t.party || null,
+      url: t.url || null,
+      source: 'unitedstates.github.io/congress-legislators',
+      fetchedAt,
+    };
+  }
+  return result;
+}
+
+// TN state House — openstates serves a public people search. Their
+// anonymous quota is small but enough for one fetch per session. If
+// rate-limited or auth-required, we fall back to the snapshot data.
+async function fetchTnStateHouseReps() {
+  const url = 'https://v3.openstates.org/people?'
+    + 'jurisdiction=tn&org_classification=lower&per_page=100';
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`openstates HTTP ${r.status}`);
+  const json = await r.json();
+  const result = {};
+  const fetchedAt = new Date().toISOString();
+  for (const p of (json.results || [])) {
+    const role = p.current_role || {};
+    const d = role.district != null ? String(role.district) : null;
+    if (!d) continue;
+    result[d] = {
+      name: p.name,
+      party: p.party || null,
+      url: p.openstates_url || null,
+      source: 'openstates.org',
+      fetchedAt,
+    };
+  }
+  return result;
+}
+
+// Nashville Metro Council — no clean public API for the member directory.
+// We pull the official member-list HTML through the n8n proxy (same one
+// Princeton uses) and parse "District N — Name" pairs out of the rendered
+// text. This is brittle by design: if the page restructures we'll log a
+// zero-count result and fall back to the snapshot.
+async function fetchNashvilleCouncilReps() {
+  const url = 'https://www.nashville.gov/departments/metropolitan-council/members';
+  const r = await fetch(pxProxy(url));
+  if (!r.ok) throw new Error(`council HTTP ${r.status}`);
+  const html = await r.text();
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const text = (doc.body && (doc.body.innerText || doc.body.textContent)) || '';
+  const result = {};
+  const fetchedAt = new Date().toISOString();
+  // "District 5  Sean Parker" or "District 5 — Sean Parker" etc.
+  const re = /District\s+(\d{1,2})\b[^\n]*?\b([A-Z][a-zA-Z'’.-]+(?:\s+[A-Z][a-zA-Z'’.-]+){1,3})/g;
+  let m;
+  while ((m = re.exec(text)) != null) {
+    const d = m[1];
+    if (result[d]) continue;
+    result[d] = { name: m[2].trim(), source: 'nashville.gov', fetchedAt };
+  }
+  return result;
+}
+
+async function pollRepresentation() {
+  const fetchedAt = new Date().toISOString();
+  const next = {
+    fetchedAt,
+    council:    {},
+    stateHouse: {},
+    usCongress: {},
+    sources:    { council: null, stateHouse: null, usCongress: null },
+  };
+  const settled = await Promise.allSettled([
+    fetchUsCongressReps(),
+    fetchTnStateHouseReps(),
+    fetchNashvilleCouncilReps(),
+  ]);
+  const labels = ['usCongress', 'stateHouse', 'council'];
+  settled.forEach((res, i) => {
+    const k = labels[i];
+    if (res.status === 'fulfilled') {
+      next[k] = res.value;
+      next.sources[k] = { ok: true, count: Object.keys(res.value).length };
+    } else {
+      console.warn(`[eo] ${k} fetch failed:`, res.reason);
+      next.sources[k] = { ok: false, error: String(res.reason && res.reason.message || res.reason) };
+    }
+  });
+  return next;
+}
+
+// Overlay the live representation table onto agg.tractInfo. Whenever we
+// have a live name for a district we overwrite the snapshot value and
+// record the source. Called after every successful poll and after
+// rebuildLocalAggregates rebuilds tractInfo from new case data.
+function mergeRepresentationIntoTractInfo() {
+  for (const geoid in agg.tractInfo) {
+    const info = agg.tractInfo[geoid];
+    const cd = normalizeDistrict(info.district);
+    if (cd && representation.council[cd]) {
+      info.rep = representation.council[cd].name;
+      info.repSource = representation.council[cd].source;
+    }
+    const sh = normalizeDistrict(info.state_house);
+    if (sh && representation.stateHouse[sh]) {
+      info.state_house_rep = representation.stateHouse[sh].name;
+      info.state_house_rep_source = representation.stateHouse[sh].source;
+    }
+    const uc = normalizeDistrict(info.us_congressional);
+    if (uc && representation.usCongress[uc]) {
+      info.us_congressional_rep = representation.usCongress[uc].name;
+      info.us_congressional_rep_source = representation.usCongress[uc].source;
+    }
+  }
+}
+
+async function kickRepresentationSync() {
+  // Hydrate instantly from cache so a re-render of an already-open
+  // session has the data, then refresh in the background.
+  const cached = loadRepresentationFromCache();
+  if (cached) {
+    representation = cached;
+    mergeRepresentationIntoTractInfo();
+    if (selectedTract) renderTractPanel(selectedTract);
+  }
+
+  bgStatus('Polling current representatives…', true);
+  try {
+    const fresh = await pollRepresentation();
+    representation = fresh;
+    saveRepresentationToCache(fresh);
+    mergeRepresentationIntoTractInfo();
+
+    const parts = [];
+    const s = fresh.sources;
+    if (s.usCongress && s.usCongress.ok) parts.push(`${s.usCongress.count} US`);
+    if (s.stateHouse && s.stateHouse.ok) parts.push(`${s.stateHouse.count} state`);
+    if (s.council    && s.council.ok)    parts.push(`${s.council.count} council`);
+    bgStatus(parts.length ? `Reps polled: ${parts.join(' · ')}` : 'Rep polling failed', false);
+    setTimeout(() => bgStatus(''), 4000);
+
+    if (selectedTract) renderTractPanel(selectedTract);
+  } catch (e) {
+    console.warn('representation poll failed:', e);
+    bgStatus(`Rep polling failed: ${e.message}`, false);
     setTimeout(() => bgStatus(''), 5000);
   }
 }
