@@ -221,6 +221,43 @@ h1 {
   margin-left: 6px; cursor: pointer; font-weight: bold;
 }
 
+.table-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 24px;
+  background: #181712;
+  border-bottom: 1px solid var(--border);
+}
+.table-header .result-count { margin-top: 0; }
+
+.export-wrap { position: relative; }
+.export-btn {
+  padding: 5px 14px; font-size: 11px;
+  font-family: var(--mono); color: var(--gold);
+  background: transparent; border: 1px solid var(--gold-dim);
+  border-radius: 3px; cursor: pointer; letter-spacing: 0.04em;
+}
+.export-btn:hover { background: rgba(196,164,74,0.10); }
+.export-btn[disabled] { opacity: 0.6; cursor: wait; }
+.export-menu {
+  position: absolute; top: 100%; right: 0; z-index: 50;
+  min-width: 240px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 4px; margin-top: 4px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+}
+.export-menu .item {
+  padding: 8px 12px; cursor: pointer;
+  border-bottom: 1px solid #1f1d17;
+  display: flex; justify-content: space-between; gap: 12px;
+}
+.export-menu .item:last-child { border-bottom: none; }
+.export-menu .item:hover { background: rgba(196,164,74,0.08); }
+.export-menu .item .count { color: var(--dim); font-size: 11px; }
+.export-menu .note {
+  padding: 8px 12px; font-size: 10px; color: var(--dim);
+  border-top: 1px solid #1f1d17; line-height: 1.4;
+}
+
 .dropdown {
   position: absolute; top: 100%; left: 0; z-index: 50;
   min-width: 300px; max-height: 320px; overflow-y: auto;
@@ -416,6 +453,21 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   flex-shrink: 0;
 }
 #record-panel .tp-close:hover { color: var(--gold); background: rgba(196,164,74,0.10); }
+#record-panel .rp-actions {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  padding: 4px 18px 12px;
+  border-bottom: 1px solid var(--border);
+}
+#record-panel .rp-actions button {
+  font-family: var(--mono); font-size: 11px;
+  padding: 4px 10px;
+  color: var(--gold); background: transparent;
+  border: 1px solid var(--gold-dim); border-radius: 3px;
+  cursor: pointer; letter-spacing: 0.04em;
+}
+#record-panel .rp-actions button:hover { background: rgba(196,164,74,0.10); }
+#record-panel .rp-actions button:disabled { opacity: 0.5; cursor: wait; }
+#record-panel .rp-actions button.copied { color: var(--green); border-color: var(--green); }
 #record-panel .rp-fields { padding: 0 0 24px; }
 #record-panel .rp-row {
   display: grid; grid-template-columns: 130px 1fr;
@@ -597,6 +649,45 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 .race-source-note a:hover { text-decoration: underline; }
 .race-overlap { border-top: 1px dashed var(--border); margin-top: 6px; padding-top: 6px; }
 
+/* District demographics (MSS) — income, poverty, housing context */
+.demo-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: 10px; margin-bottom: 14px;
+}
+.demo-cell {
+  padding: 10px 12px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 4px;
+}
+.demo-cell .label {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--dim); margin-bottom: 4px;
+}
+.demo-cell .value {
+  font-size: 15px; font-variant-numeric: tabular-nums; color: var(--text);
+}
+.demo-cell .compare {
+  font-size: 10px; color: var(--dim); margin-top: 3px;
+  font-variant-numeric: tabular-nums;
+}
+.demo-cell .compare.worse { color: var(--red); }
+.demo-cell .compare.better { color: var(--green); }
+.demo-bars { display: flex; flex-direction: column; gap: 5px; margin-top: 4px; }
+.demo-bar-row {
+  display: grid; grid-template-columns: 180px 1fr 90px;
+  gap: 8px; align-items: center; font-size: 11px;
+}
+.demo-bar-row .label-cell { color: var(--text); }
+.demo-bar-row .bar-cell {
+  height: 8px; background: rgba(255,255,255,0.04);
+  border-radius: 2px; overflow: hidden;
+}
+.demo-bar-row .bar-cell > div { height: 100%; background: var(--gold-dim); border-radius: 2px; }
+.demo-bar-row .bar-cell > div.high { background: var(--red); }
+.demo-bar-row .num-cell {
+  font-variant-numeric: tabular-nums; color: var(--dim);
+  text-align: right;
+}
+
 /* Pleadings timeline (used inside main's record-panel) */
 .pleadings-list { display: flex; flex-direction: column; margin-top: 4px; }
 .pleading-row {
@@ -753,7 +844,14 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   <div class="toolbar" id="local-toolbar">
     <input id="search" placeholder="Search docket, plaintiff, attorney, address...">
     <div class="filter-row" id="filters"></div>
+  </div>
+
+  <div class="table-header" id="table-header">
     <div class="result-count" id="result-count"></div>
+    <div class="export-wrap">
+      <button class="export-btn" id="export-btn" type="button" onclick="toggleExportMenu()">Export ▾</button>
+      <div class="export-menu" id="export-menu" style="display:none"></div>
+    </div>
   </div>
 
   <div class="table-wrap" id="local-table-wrap">
@@ -910,6 +1008,8 @@ const ACS_RACE_URL = `https://api.census.gov/data/${ACS_YEAR}/acs/acs5`
 const TIGER_TRACT_URL = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWMS_Current/MapServer/8/query?'
   + 'where=' + encodeURIComponent("STATE='47' AND COUNTY='037'")
   + '&outFields=GEOID&returnGeometry=true&f=geojson';
+const MSS_DEMOGRAPHICS_URL =
+  'https://raw.githubusercontent.com/clovenbradshaw-ctrl/plain-text/main/nashville_council_district_demographics.json';
 
 const sources = {
   cases: {
@@ -924,10 +1024,16 @@ const sources = {
     notes: 'Pre-pandemic / pandemic-era filings 2020–2021 by census tract. Fetched live each session via CORS proxy; never persisted.',
     status: 'pending', fetchedAt: null, rows: null, error: null,
   },
+  mss: {
+    name: 'Metro Social Services — Council district demographics',
+    url: MSS_DEMOGRAPHICS_URL,
+    notes: 'Per-district population, age, race/ethnicity, education, income, poverty, employment, and housing cost-burden. Pre-aggregated to the post-2021 districts by MSS Strategic Planning, Dec 2023, sourcing ACS 2017–2021 5-year estimates.',
+    status: 'pending', fetchedAt: null, rows: null, error: null,
+  },
   acs: {
     name: `US Census ACS 5-year (${ACS_YEAR}) — race & ethnicity by tract`,
     url: ACS_RACE_URL,
-    notes: 'Tables B02001 (race) and B03003 (Hispanic origin) for Davidson County (47/037). This is the upstream source the Eviction Lab itself uses for demographics.',
+    notes: 'Tables B02001 (race) and B03003 (Hispanic origin) for Davidson County (47/037). Used as a tract-level fallback when the MSS district file is unavailable.',
     status: 'pending', fetchedAt: null, rows: null, error: null,
   },
   tiger: {
@@ -1040,6 +1146,8 @@ let agg = {
   localMonths:     [],        // sorted asc, derived from allRows
   princetonMonths: [],        // sorted asc, derived from princetonRows
   tractRace:       {},        // { GEOID: { total, white, black, native, asian, pacific, other, multiple, hispanic, name } }
+  districtDemographics: {},   // { "5": { population, median_age, age, race_ethnicity, education, income, poverty, employment, housing } }  (MSS)
+  countyTotals:    null,      // Davidson Co. comparison values from the MSS file
 };
 
 // Map view state
@@ -1117,6 +1225,7 @@ async function loadData() {
     markSource('cases', { status: 'ok', rows: allRows.length });
 
     kickBackgroundSync();
+    kickMssDemographicsSync();
     kickCensusRaceSync();
     // Persist + sha capture after first paint so we don't block render.
     whenIdle(async () => {
@@ -2051,6 +2160,7 @@ function renderRecordPanel(docket) {
     </div>`;
   }).join('');
 
+  const safeDocket = escapeAttr(r.docket);
   panel.innerHTML = `
     <div class="tp-head">
       <div>
@@ -2058,6 +2168,11 @@ function renderRecordPanel(docket) {
         <div class="tp-geoid">${escapeHtml(r.status || '—')} · filed ${escapeHtml(r.file_date || '—')}</div>
       </div>
       <button class="tp-close" onclick="closeRecordPanel()" title="Close">×</button>
+    </div>
+    <div class="rp-actions">
+      <button type="button" onclick="copyRecord('${safeDocket}', this)" title="Copy as text">Copy</button>
+      <button type="button" onclick="exportRecord('${safeDocket}', this)" title="Download as CSV">Export CSV</button>
+      <button type="button" onclick="printRecord('${safeDocket}', this)" title="Open print view">Print</button>
     </div>
     <div class="rp-fields">${rowHtml}</div>`;
   panel.classList.add('open');
@@ -2082,6 +2197,168 @@ function renderRecordPanel(docket) {
         valEl.className = 'val empty';
       }
     });
+  }
+}
+
+/* ───────────────────────── Record actions (copy / export / print) ─────
+   Each action resolves the record's fields with the same redaction rules as
+   the table export: ENC: fields decrypted when unlocked, blanked otherwise.
+   Pleadings collapse to a readable text timeline. */
+
+async function resolveRecordFields(docket) {
+  const r = allRows.find(x => x.docket === docket);
+  if (!r) return null;
+  const unlocked = isUnlocked();
+  const PRIORITY = [
+    'docket', 'status', 'file_date', 'Plaintiff_1', 'Attorney',
+    'address_formatted', 'council_district', 'council_rep',
+    'state_house_district', 'us_congressional_district',
+    'census_geoid', 'census_name',
+  ];
+  const seen = new Set();
+  const keys = [];
+  for (const k of PRIORITY) if (k in r) { keys.push(k); seen.add(k); }
+  for (const k of Object.keys(r).sort()) if (!seen.has(k)) keys.push(k);
+
+  const fields = [];
+  for (const k of keys) {
+    const v = r[k];
+    if (!unlocked && /^defendant/i.test(k)) { fields.push([k, '']); continue; }
+    if (v == null || v === '') { fields.push([k, '']); continue; }
+    if (isEncrypted(v)) {
+      if (unlocked) {
+        const plain = await decryptValue(v, unlockKeyPassword);
+        fields.push([k, plain == null ? '' : plain]);
+      } else {
+        fields.push([k, '']);
+      }
+      continue;
+    }
+    if (k === 'pleadings' && Array.isArray(v)) {
+      const parseDate = s => {
+        const m = String(s || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+        return m ? new Date(+m[3], +m[1] - 1, +m[2]).getTime() : 0;
+      };
+      const sorted = [...v].sort((a, b) => parseDate(b.date) - parseDate(a.date));
+      const lines = sorted.map(p => {
+        const parts = [p.date || '', (p.code || '').toUpperCase(), p.description || ''].filter(Boolean);
+        let line = parts.join(' · ');
+        if (p.detail) line += '\n    ' + p.detail;
+        return line;
+      });
+      fields.push([k, lines.join('\n')]);
+      continue;
+    }
+    if (typeof v === 'object') { fields.push([k, JSON.stringify(v)]); continue; }
+    fields.push([k, String(v)]);
+  }
+  return { record: r, fields, unlocked };
+}
+
+function flashButton(btn, label, cls='copied', ms=1200) {
+  if (!btn) return;
+  const orig = btn.textContent;
+  const wasDisabled = btn.disabled;
+  btn.textContent = label;
+  btn.classList.add(cls);
+  setTimeout(() => {
+    btn.textContent = orig;
+    btn.classList.remove(cls);
+    btn.disabled = wasDisabled;
+  }, ms);
+}
+
+async function copyRecord(docket, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const resolved = await resolveRecordFields(docket);
+    if (!resolved) return;
+    const labelW = Math.max(...resolved.fields.map(([k]) => k.length));
+    const text = resolved.fields
+      .map(([k, v]) => `${k.padEnd(labelW, ' ')} : ${v}`)
+      .join('\n');
+    await navigator.clipboard.writeText(text);
+    flashButton(btn, 'Copied ✓');
+  } catch (e) {
+    console.warn('[eo] copy failed:', e);
+    flashButton(btn, 'Copy failed', 'copied');
+  }
+}
+
+async function exportRecord(docket, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const resolved = await resolveRecordFields(docket);
+    if (!resolved) return;
+    const row = {};
+    const cols = [];
+    for (const [k, v] of resolved.fields) { cols.push(k); row[k] = v; }
+    const csv = Papa.unparse([row], { columns: cols });
+    const stamp = new Date().toISOString().slice(0, 10);
+    const safe = String(docket).replace(/[^A-Za-z0-9._-]+/g, '_');
+    const suffix = resolved.unlocked ? '' : '-redacted';
+    downloadCsv(csv, `case-${safe}-${stamp}${suffix}.csv`);
+    flashButton(btn, 'Exported ✓');
+  } catch (e) {
+    console.warn('[eo] record export failed:', e);
+    flashButton(btn, 'Export failed', 'copied');
+  }
+}
+
+async function printRecord(docket, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const resolved = await resolveRecordFields(docket);
+    if (!resolved) return;
+    const win = window.open('', '_blank', 'width=820,height=900');
+    if (!win) {
+      flashButton(btn, 'Pop-up blocked', 'copied', 2000);
+      return;
+    }
+    const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+    const r = resolved.record;
+    const rowsHtml = resolved.fields.map(([k, v]) => `
+      <tr>
+        <th>${esc(k)}</th>
+        <td>${v ? esc(v).replace(/\n/g, '<br>') : '<span class="empty">—</span>'}</td>
+      </tr>`).join('');
+    const note = resolved.unlocked
+      ? ''
+      : '<div class="note">Defendant fields are blank because no login was active when this record was printed.</div>';
+    win.document.open();
+    win.document.write(`<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<title>Case ${esc(r.docket)}</title>
+<style>
+  body { font-family: Georgia, serif; color: #1a1810; padding: 32px 36px; max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .meta { color: #555; font-size: 12px; margin-bottom: 18px; }
+  .note { background: #fdf6e3; border: 1px solid #d9c97a; padding: 8px 12px; border-radius: 4px; font-size: 12px; margin-bottom: 14px; color: #5a4a10; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 6px 10px; vertical-align: top; border-bottom: 1px solid #e6e2d8; }
+  th { width: 180px; color: #555; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; font-size: 11px; }
+  td { color: #1a1810; white-space: pre-wrap; word-break: break-word; }
+  .empty { color: #aaa; font-style: italic; }
+  footer { margin-top: 24px; padding-top: 12px; border-top: 1px solid #ccc; font-size: 11px; color: #666; }
+  @media print { body { padding: 16px; } .no-print { display: none; } }
+</style></head><body>
+<h1>${esc(r.docket)}</h1>
+<div class="meta">${esc(r.status || '')} · filed ${esc(r.file_date || '—')}${r.Plaintiff_1 ? ' · ' + esc(r.Plaintiff_1) : ''}</div>
+${note}
+<table>${rowsHtml}</table>
+<footer>
+  Source: Nashville Eviction Tracker · case data from circuitclerk.nashville.gov ·
+  printed ${new Date().toISOString().slice(0, 19).replace('T', ' ')} UTC.
+</footer>
+<script>window.addEventListener('load', () => setTimeout(() => window.print(), 200));<\/script>
+</body></html>`);
+    win.document.close();
+    flashButton(btn, 'Opened ✓');
+  } catch (e) {
+    console.warn('[eo] print failed:', e);
+    flashButton(btn, 'Print failed', 'copied');
   }
 }
 
@@ -2440,42 +2717,164 @@ function showDistrictProfile(district) {
 
   const esc = escapeHtmlSafe;
 
-  const race = aggregateDistrictRace(a.district);
+  const districtKey = normalizeDistrict(a.district);
+  const mss = districtKey ? agg.districtDemographics[districtKey] : null;
+  const county = agg.countyTotals;
+
+  // MSS-derived district context: income, poverty, housing cost burden,
+  // employment. None of this is in the ACS tract aggregation we already
+  // compute, so this is purely additive.
+  let demoSection = '';
+  if (mss) {
+    const fmtUsd = n => n != null ? '$' + Math.round(n).toLocaleString() : '—';
+    const fmtPct = n => n != null ? n.toFixed(1) + '%' : '—';
+    const fmtNum = n => n != null ? n.toLocaleString() : '—';
+    const cmpUsd = d => (d >= 0 ? '+$' : '−$') + Math.abs(Math.round(d)).toLocaleString();
+    const cmpPct = d => (d >= 0 ? '+' : '−') + Math.abs(d).toFixed(1) + ' pp';
+    const cmp = (val, ref, fmtCmp, higherIsWorse=true) => {
+      if (val == null || ref == null) return '';
+      const diff = val - ref;
+      const cls = (diff === 0) ? '' : ((diff > 0) === higherIsWorse ? 'worse' : 'better');
+      return `<div class="compare ${cls}">${fmtCmp(diff)} vs county</div>`;
+    };
+    const rb = mss.housing && mss.housing.pct_renter_cost_burdened_35plus;
+    const ob = mss.housing && mss.housing.pct_owner_cost_burdened_35plus;
+    const rbCls = rb != null && rb >= 40 ? ' class="high"' : '';
+    const obCls = ob != null && ob >= 40 ? ' class="high"' : '';
+
+    demoSection = `
+      <div class="profile-section">
+        <h3>District Demographics</h3>
+        <div class="demo-grid">
+          <div class="demo-cell">
+            <div class="label">Population</div>
+            <div class="value">${fmtNum(mss.population)}</div>
+          </div>
+          <div class="demo-cell">
+            <div class="label">Median HH income</div>
+            <div class="value">${fmtUsd(mss.income && mss.income.median_household_income)}</div>
+            ${county ? cmp(mss.income && mss.income.median_household_income, county.median_household_income, cmpUsd, false) : ''}
+          </div>
+          <div class="demo-cell">
+            <div class="label">Median monthly rent</div>
+            <div class="value">${fmtUsd(mss.housing && mss.housing.median_monthly_rent)}</div>
+            ${county ? cmp(mss.housing && mss.housing.median_monthly_rent, county.median_monthly_rent, cmpUsd, true) : ''}
+          </div>
+          <div class="demo-cell">
+            <div class="label">Housing units</div>
+            <div class="value">${fmtNum(mss.housing && mss.housing.total_housing_units)}</div>
+            <div class="compare">${fmtPct(mss.housing && mss.housing.pct_occupied)} occupied</div>
+          </div>
+          <div class="demo-cell">
+            <div class="label">Poverty rate</div>
+            <div class="value">${fmtPct(mss.poverty && mss.poverty.pct_total_poverty)}</div>
+            ${county ? cmp(mss.poverty && mss.poverty.pct_total_poverty, county.poverty_rate_percent, cmpPct, true) : ''}
+          </div>
+          <div class="demo-cell">
+            <div class="label">Child poverty</div>
+            <div class="value">${fmtPct(mss.poverty && mss.poverty.pct_child_poverty)}</div>
+          </div>
+          <div class="demo-cell">
+            <div class="label">Unemployment</div>
+            <div class="value">${fmtPct(mss.employment && mss.employment.unemployment_rate)}</div>
+            ${county ? cmp(mss.employment && mss.employment.unemployment_rate, county.unemployment_rate_percent, cmpPct, true) : ''}
+          </div>
+          <div class="demo-cell">
+            <div class="label">Median age</div>
+            <div class="value">${mss.median_age != null ? mss.median_age.toFixed(1) : '—'}</div>
+          </div>
+        </div>
+        <div class="demo-bars">
+          <div class="demo-bar-row">
+            <div class="label-cell">Renters paying 35%+ of income</div>
+            <div class="bar-cell"><div${rbCls} style="width:${rb != null ? Math.min(100, rb) : 0}%"></div></div>
+            <div class="num-cell">${fmtPct(rb)}</div>
+          </div>
+          <div class="demo-bar-row">
+            <div class="label-cell">Owners paying 35%+ of income</div>
+            <div class="bar-cell"><div${obCls} style="width:${ob != null ? Math.min(100, ob) : 0}%"></div></div>
+            <div class="num-cell">${fmtPct(ob)}</div>
+          </div>
+        </div>
+        <div class="race-source-note">
+          Source: <a href="${esc(sources.mss.url)}" target="_blank" rel="noopener">Metro Social Services, Know Your Community 2023</a>
+          (ACS 2017–2021 5-year estimates, post-2021 council boundaries).
+          County comparison shown where available — red means worse-than-county on this measure.
+        </div>
+      </div>`;
+  } else if (sources.mss.status === 'pending') {
+    demoSection = `<div class="profile-section"><h3>District Demographics</h3><div class="profile-empty">Fetching MSS district demographics…</div></div>`;
+  } else if (sources.mss.status === 'failed') {
+    demoSection = `<div class="profile-section"><h3>District Demographics</h3><div class="profile-empty">MSS demographics fetch failed: ${esc(sources.mss.error || '')}</div></div>`;
+  }
+
+  // Race & ethnicity: prefer MSS percentages (district-level, exact) and
+  // only fall back to the ACS tract aggregation if MSS isn't loaded.
   let raceSection;
-  if (!race) {
-    const s = sources.acs.status;
-    const msg = s === 'pending' ? 'Fetching Census ACS data…'
-      : s === 'failed' ? `Census ACS fetch failed: ${esc(sources.acs.error || '')}`
-      : 'No tracts mapped to this district yet.';
-    raceSection = `<div class="profile-section"><h3>Race &amp; Ethnicity</h3><div class="profile-empty">${msg}</div></div>`;
-  } else {
-    const pct = (n, t) => t > 0 ? (n / t * 100).toFixed(1) : '0.0';
-    const bar = (n, t) => `<div style="width:${t > 0 ? (n/t*100).toFixed(2) : 0}%"></div>`;
-    const row = (label, n) => `<div class="race-row">
+  if (mss && mss.race_ethnicity) {
+    const re = mss.race_ethnicity;
+    const pop = mss.population || 0;
+    const pctNum = p => p != null ? p.toFixed(1) + '%' : '—';
+    const approxCount = p => p != null && pop ? Math.round(pop * p / 100).toLocaleString() : '—';
+    const bar = p => `<div style="width:${p != null ? Math.min(100, p).toFixed(2) : 0}%"></div>`;
+    const row = (label, p) => `<div class="race-row">
       <div class="label-cell">${label}</div>
-      <div class="bar-cell">${bar(n, race.total)}</div>
-      <div class="num-cell">${n.toLocaleString()} · ${pct(n, race.total)}%</div>
+      <div class="bar-cell">${bar(p)}</div>
+      <div class="num-cell">~${approxCount(p)} · ${pctNum(p)}</div>
     </div>`;
     raceSection = `<div class="profile-section">
       <h3>Race &amp; Ethnicity (district population)</h3>
       <div class="race-bars">
-        ${row('White alone', race.white)}
-        ${row('Black or African American alone', race.black)}
-        ${row('Asian alone', race.asian)}
-        ${row('American Indian / Alaska Native alone', race.native)}
-        ${row('Native Hawaiian / Pacific Islander alone', race.pacific)}
-        ${row('Some other race alone', race.other)}
-        ${row('Two or more races', race.multiple)}
+        ${row('White', re.pct_white)}
+        ${row('Black or African American', re.pct_black)}
+        ${row('Asian', re.pct_asian)}
+        ${row('Two or more races', re.pct_two_or_more)}
         <div class="race-overlap"></div>
-        ${row('Hispanic or Latino (any race)', race.hispanic)}
+        ${row('Hispanic or Latino (any race)', re.pct_hispanic)}
       </div>
       <div class="race-source-note">
-        Total population: <strong>${race.total.toLocaleString()}</strong> · ${race.tractsMatched} of ${race.tractsKnown} known tracts matched.
-        Aggregated from tracts in this district. Source:
-        <a href="${esc(sources.acs.url)}" target="_blank" rel="noopener">US Census ACS 5-year (${ACS_YEAR}), tables B02001 + B03003</a>.
-        Hispanic/Latino is an ethnicity that overlaps with the race categories above, so it is shown separately and is not part of the sum.
+        Total population: <strong>${pop.toLocaleString()}</strong>. Counts approximated as population × percentage.
+        Source: <a href="${esc(sources.mss.url)}" target="_blank" rel="noopener">Metro Social Services 2023</a> (ACS 2017–2021).
+        Hispanic/Latino is an ethnicity that overlaps the race categories above, shown separately.
       </div>
     </div>`;
+  } else {
+    const race = aggregateDistrictRace(a.district);
+    if (!race) {
+      const s = sources.acs.status;
+      const msg = s === 'pending' ? 'Fetching Census ACS data…'
+        : s === 'failed' ? `Census ACS fetch failed: ${esc(sources.acs.error || '')}`
+        : 'No tracts mapped to this district yet.';
+      raceSection = `<div class="profile-section"><h3>Race &amp; Ethnicity</h3><div class="profile-empty">${msg}</div></div>`;
+    } else {
+      const pct = (n, t) => t > 0 ? (n / t * 100).toFixed(1) : '0.0';
+      const bar = (n, t) => `<div style="width:${t > 0 ? (n/t*100).toFixed(2) : 0}%"></div>`;
+      const row = (label, n) => `<div class="race-row">
+        <div class="label-cell">${label}</div>
+        <div class="bar-cell">${bar(n, race.total)}</div>
+        <div class="num-cell">${n.toLocaleString()} · ${pct(n, race.total)}%</div>
+      </div>`;
+      raceSection = `<div class="profile-section">
+        <h3>Race &amp; Ethnicity (district population, tract-aggregated)</h3>
+        <div class="race-bars">
+          ${row('White alone', race.white)}
+          ${row('Black or African American alone', race.black)}
+          ${row('Asian alone', race.asian)}
+          ${row('American Indian / Alaska Native alone', race.native)}
+          ${row('Native Hawaiian / Pacific Islander alone', race.pacific)}
+          ${row('Some other race alone', race.other)}
+          ${row('Two or more races', race.multiple)}
+          <div class="race-overlap"></div>
+          ${row('Hispanic or Latino (any race)', race.hispanic)}
+        </div>
+        <div class="race-source-note">
+          Total population: <strong>${race.total.toLocaleString()}</strong> · ${race.tractsMatched} of ${race.tractsKnown} known tracts matched.
+          Aggregated from tracts in this district. Source:
+          <a href="${esc(sources.acs.url)}" target="_blank" rel="noopener">US Census ACS 5-year (${ACS_YEAR}), tables B02001 + B03003</a>.
+          Hispanic/Latino is an ethnicity that overlaps with the race categories above, so it is shown separately and is not part of the sum.
+        </div>
+      </div>`;
+    }
   }
 
   const profileHtml = `
@@ -2495,6 +2894,8 @@ function showDistrictProfile(district) {
             <div class="profile-stat"><div class="label">Dismissed</div><div class="value dismissed">${a.dismissed}</div></div>
             <div class="profile-stat"><div class="label">Other</div><div class="value">${a.other}</div></div>
           </div>
+
+          ${demoSection}
 
           ${monthKeys.length ? `
           <div class="profile-section">
@@ -2598,6 +2999,7 @@ function setVisibility() {
   const isCoverage  = viewMode === 'coverage';
   const isMap       = viewMode === 'map';
   document.getElementById('local-toolbar').style.display      = isCases     ? '' : 'none';
+  document.getElementById('table-header').style.display       = isCases     ? '' : 'none';
   document.getElementById('local-table-wrap').style.display   = isCases     ? '' : 'none';
   document.getElementById('districts-view').style.display     = isDistricts ? '' : 'none';
   document.getElementById('grid-view').style.display          = isCoverage  ? '' : 'none';
@@ -2740,6 +3142,123 @@ async function kickBackgroundSync() {
   }
 }
 
+/* ───────────────────────── CSV export ─────────────────────────
+   Two scopes: 'filtered' (current search + filters) and 'all'.
+   ENC: fields are decrypted when unlocked, otherwise emitted as empty.
+   Decryption runs concurrently across all rows for one cell key at a time. */
+
+let exportInFlight = false;
+
+function toggleExportMenu() {
+  const menu = document.getElementById('export-menu');
+  if (menu.style.display !== 'none') { menu.style.display = 'none'; return; }
+  const filtered = getFiltered().length;
+  const total = allRows.length;
+  const redactedNote = isUnlocked()
+    ? 'Logged in — encrypted fields will be decrypted.'
+    : 'Not logged in — encrypted fields will be blank.';
+  menu.innerHTML = `
+    <div class="item" onclick="runExport('filtered')">
+      <span>Filtered cases</span><span class="count">${filtered}</span>
+    </div>
+    <div class="item" onclick="runExport('all')">
+      <span>All cases</span><span class="count">${total}</span>
+    </div>
+    <div class="note">${redactedNote}</div>`;
+  menu.style.display = 'block';
+}
+
+function closeExportMenu() {
+  document.getElementById('export-menu').style.display = 'none';
+}
+
+async function runExport(scope) {
+  if (exportInFlight) return;
+  closeExportMenu();
+  const btn = document.getElementById('export-btn');
+  exportInFlight = true;
+  btn.disabled = true;
+  btn.textContent = 'Exporting…';
+  try {
+    const rows = scope === 'filtered' ? getFiltered() : allRows;
+    const csv = await buildCsv(rows);
+    const stamp = new Date().toISOString().slice(0, 10);
+    const suffix = isUnlocked() ? '' : '-redacted';
+    downloadCsv(csv, `eviction-cases-${scope}-${stamp}${suffix}.csv`);
+  } catch (e) {
+    console.warn('[eo] export failed:', e);
+    alert('Export failed: ' + e.message);
+  } finally {
+    exportInFlight = false;
+    btn.disabled = false;
+    btn.textContent = 'Export ▾';
+  }
+}
+
+async function buildCsv(rows) {
+  // Union of all keys across rows. 'docket' first, then the priority fields
+  // that already drive the record panel, then everything else alphabetically.
+  const keySet = new Set();
+  for (const r of rows) for (const k of Object.keys(r)) keySet.add(k);
+  const PRIORITY = [
+    'docket', 'status', 'file_date', 'Plaintiff_1', 'Attorney',
+    'address_formatted', 'council_district', 'council_rep',
+    'state_house_district', 'us_congressional_district',
+    'census_geoid', 'census_name',
+  ];
+  const cols = [];
+  const seen = new Set();
+  for (const k of PRIORITY) if (keySet.has(k)) { cols.push(k); seen.add(k); }
+  for (const k of [...keySet].sort()) if (!seen.has(k)) cols.push(k);
+
+  const unlocked = isUnlocked();
+  const out = new Array(rows.length);
+  for (let i = 0; i < rows.length; i++) out[i] = {};
+
+  // Resolve cell values per column. ENC: cells in the same column get
+  // decrypted in parallel; plain cells fill in synchronously.
+  for (const k of cols) {
+    // Belt-and-suspenders: defendant fields are already encrypted in the
+    // source, but if a plaintext defendant column ever shows up we still
+    // refuse to leak it without a login.
+    const forceBlank = !unlocked && /^defendant/i.test(k);
+    const encJobs = [];
+    for (let i = 0; i < rows.length; i++) {
+      const v = rows[i][k];
+      if (forceBlank) { out[i][k] = ''; continue; }
+      if (v == null || v === '') { out[i][k] = ''; continue; }
+      if (isEncrypted(v)) {
+        if (unlocked) {
+          encJobs.push(decryptValue(v, unlockKeyPassword).then(p => {
+            out[i][k] = p == null ? '' : p;
+          }));
+        } else {
+          out[i][k] = '';
+        }
+      } else if (typeof v === 'object') {
+        out[i][k] = JSON.stringify(v);
+      } else {
+        out[i][k] = String(v);
+      }
+    }
+    if (encJobs.length) await Promise.all(encJobs);
+  }
+
+  return Papa.unparse(out, { columns: cols });
+}
+
+function downloadCsv(text, filename) {
+  const blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 /* ───────────────────────── Census ACS race data ─────────────────────────
    Fetched once per session direct from api.census.gov through the n8n CORS
    proxy. We pull tables B02001 (race) and B03003 (Hispanic origin) for every
@@ -2776,6 +3295,30 @@ async function fetchCensusRaceRows() {
     };
   }
   return out;
+}
+
+/* Metro Social Services district demographics — pre-aggregated by district,
+   so much cheaper and more accurate than summing tract data ourselves. Lives
+   on the same plain-text repo as cases.json so no CORS proxy needed. */
+async function kickMssDemographicsSync() {
+  try {
+    bgStatus('Fetching MSS district demographics…', true);
+    const r = await fetch(MSS_DEMOGRAPHICS_URL);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    agg.districtDemographics = data.districts || {};
+    agg.countyTotals = data.county_totals || null;
+    const n = Object.keys(agg.districtDemographics).length;
+    markSource('mss', { status: 'ok', rows: n });
+    console.info(`[eo] MSS demographics: ${n} districts loaded`);
+    bgStatus(`MSS: ${n} districts loaded`, false);
+    setTimeout(() => bgStatus(''), 3000);
+  } catch (e) {
+    console.warn('MSS demographics fetch failed:', e);
+    markSource('mss', { status: 'failed', error: e.message });
+    bgStatus(`MSS fetch failed: ${e.message}`, false);
+    setTimeout(() => bgStatus(''), 5000);
+  }
 }
 
 // ACS 5-year tables move once a year. Revalidate at most weekly.
@@ -2847,6 +3390,7 @@ document.addEventListener("click", e => {
     document.getElementById("dd-" + activeDropdown).style.display = "none";
     activeDropdown = null;
   }
+  if (!e.target.closest(".export-wrap")) closeExportMenu();
 });
 
 document.addEventListener("keydown", e => {
