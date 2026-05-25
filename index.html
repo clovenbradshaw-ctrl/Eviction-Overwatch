@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Nashville Eviction Tracker</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%231a1810'/%3E%3Ctext x='50%25' y='54%25' font-family='Georgia,serif' font-size='44' font-weight='700' text-anchor='middle' dominant-baseline='middle' fill='%23c9a961'%3E%E2%9A%96%3C/text%3E%3C/svg%3E">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:wght@400;600&display=swap');
@@ -341,10 +342,11 @@ function toggleDropdown(field) {
   const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
 
   const dd = document.getElementById("dd-" + field);
-  dd.innerHTML = sorted.map(([v, c]) =>
-    `<div class="dropdown-item" onclick="setFilter('${field}','${v.replace(/'/g, "\\'")}')">`
-    + `<span>${v}</span><span class="dropdown-count">${c}</span></div>`
-  ).join("");
+  dd.innerHTML = sorted.map(([v, c]) => {
+    const label = (field === "Attorney" && v === ", PRS") ? "pro se" : v;
+    return `<div class="dropdown-item" onclick="setFilter('${field}','${v.replace(/'/g, "\\'")}')">`
+      + `<span>${label}</span><span class="dropdown-count">${c}</span></div>`;
+  }).join("");
   dd.style.display = "block";
 }
 
@@ -370,7 +372,8 @@ function updateFilterBtns() {
     const btn = document.getElementById("fbtn-" + f.key);
     const val = filters[f.key];
     if (val) {
-      let display = val.replace(/Council District |State House District |US Congressional District /g, "D");
+      let display = (f.key === "Attorney" && val === ", PRS") ? "pro se"
+        : val.replace(/Council District |State House District |US Congressional District /g, "D");
       if (display.length > 20) display = display.substring(0, 18) + "…";
       btn.className = "filter-btn active";
       btn.innerHTML = f.label + ": " + display
@@ -418,7 +421,7 @@ function render() {
   rows.sort((a, b) => {
     const av = a[sortCol] || "";
     const bv = b[sortCol] || "";
-    return av < bv ? sortDir : av > bv ? -sortDir : 0;
+    return av < bv ? -sortDir : av > bv ? sortDir : 0;
   });
 
   // Update sort arrows
@@ -440,6 +443,7 @@ function render() {
       : "dot-other";
     return "<tr>" + COLUMNS.map(c => {
       let v = r[c.key] || "";
+      if (c.key === "Attorney" && v === ", PRS") v = "pro se";
       if (c.key === "docket") return `<td><span class="docket">${v}</span></td>`;
       if (c.key === "status") return `<td><span class="dot ${dotClass}"></span>${v}</td>`;
       if (c.key === "council_district") v = shorten(v, "Council District ");
