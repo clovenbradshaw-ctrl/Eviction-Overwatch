@@ -624,7 +624,21 @@ function getFiltered() {
 
 function renderLocalTable() {
   const rows = getFiltered();
+  const isDateCol = sortCol === "file_date";
+  const parseDate = v => {
+    const m = String(v || "").match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    return m ? new Date(+m[3], +m[1] - 1, +m[2]).getTime() : NaN;
+  };
   rows.sort((a, b) => {
+    if (isDateCol) {
+      const at = parseDate(a[sortCol]);
+      const bt = parseDate(b[sortCol]);
+      const aBad = Number.isNaN(at), bBad = Number.isNaN(bt);
+      if (aBad && bBad) return 0;
+      if (aBad) return 1;
+      if (bBad) return -1;
+      return at < bt ? -sortDir : at > bt ? sortDir : 0;
+    }
     const av = a[sortCol] || "";
     const bv = b[sortCol] || "";
     return av < bv ? -sortDir : av > bv ? sortDir : 0;
