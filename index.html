@@ -228,10 +228,13 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 #grid-view td.row-label { font-weight: 500; color: var(--gold); }
 #grid-view .cell-stack { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.2; }
 #grid-view .cell-stack .ratio { font-size: 10px; color: var(--dim); }
-#grid-view td.cell-green { background: rgba(74,186,138,0.10); }
-#grid-view td.cell-amber { background: rgba(232,167,53,0.10); }
-#grid-view td.cell-red   { background: rgba(232,93,58,0.12); }
+#grid-view td.cell-green { background: rgba(74,186,138,0.45); color: #eafff3; }
+#grid-view td.cell-amber { background: rgba(232,167,53,0.50); color: #1a1410; }
+#grid-view td.cell-red   { background: rgba(232,93,58,0.55); color: #fff3ee; }
 #grid-view td.cell-na    { color: var(--dim); }
+#grid-view td.cell-green .ratio,
+#grid-view td.cell-red   .ratio { color: rgba(255,255,255,0.85); }
+#grid-view td.cell-amber .ratio { color: rgba(0,0,0,0.7); }
 
 /* Coverage by district table: paired Princeton + Scraped rows per district */
 #grid-view .coverage-tbl td.src-label {
@@ -249,6 +252,67 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 #grid-view .legend .sw.green { background: rgba(74,186,138,0.4); }
 #grid-view .legend .sw.amber { background: rgba(232,167,53,0.4); }
 #grid-view .legend .sw.red   { background: rgba(232,93,58,0.4); }
+
+/* Coverage table scroll: many months can blow past viewport width */
+#grid-view .coverage-tbl-wrap { overflow-x: auto; }
+#grid-view .coverage-tbl th:nth-child(1),
+#grid-view .coverage-tbl th:nth-child(2),
+#grid-view .coverage-tbl td:nth-child(1),
+#grid-view .coverage-tbl td:nth-child(2) {
+  position: sticky; background: var(--bg); z-index: 2;
+}
+#grid-view .coverage-tbl th:nth-child(1),
+#grid-view .coverage-tbl td:nth-child(1) { left: 0; }
+#grid-view .coverage-tbl th:nth-child(2),
+#grid-view .coverage-tbl td:nth-child(2) { left: 120px; }
+
+/* Tract detail panel (map view) */
+#tract-panel {
+  position: absolute; top: 0; right: 0; bottom: 0;
+  width: 340px; max-width: 90vw;
+  background: var(--surface); border-left: 1px solid var(--border);
+  z-index: 500; overflow-y: auto;
+  box-shadow: -8px 0 24px rgba(0,0,0,0.4);
+  display: none;
+}
+#tract-panel.open { display: block; }
+#tract-panel .tp-head {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  padding: 14px 16px 10px; border-bottom: 1px solid var(--border); gap: 8px;
+}
+#tract-panel .tp-title { font-family: var(--serif); font-size: 16px; color: #f5f0e0; }
+#tract-panel .tp-geoid { font-size: 10px; color: var(--dim); margin-top: 2px; letter-spacing: 0.06em; }
+#tract-panel .tp-close {
+  background: transparent; border: 1px solid var(--border); color: var(--muted);
+  font-family: var(--mono); font-size: 14px; padding: 2px 8px; border-radius: 3px; cursor: pointer;
+}
+#tract-panel .tp-close:hover { color: var(--gold); border-color: var(--gold-dim); }
+#tract-panel .tp-districts { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+#tract-panel .tp-district-row {
+  display: flex; justify-content: space-between; padding: 4px 0;
+  font-size: 11px;
+}
+#tract-panel .tp-district-row .lbl { color: var(--dim); text-transform: uppercase; letter-spacing: 0.08em; font-size: 10px; }
+#tract-panel .tp-district-row .val { color: var(--text); font-weight: 500; text-align: right; }
+#tract-panel .tp-section-label {
+  padding: 12px 16px 6px; font-size: 10px; text-transform: uppercase;
+  letter-spacing: 0.1em; color: var(--dim);
+}
+#tract-panel .tp-months { padding: 0 16px 16px; display: flex; flex-direction: column; gap: 4px; }
+#tract-panel .tp-month {
+  display: grid; grid-template-columns: 64px 1fr 1fr;
+  gap: 8px; padding: 6px 8px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 3px;
+  font-variant-numeric: tabular-nums; font-size: 11px;
+}
+#tract-panel .tp-month .m { color: var(--gold); font-weight: 500; }
+#tract-panel .tp-month .src { display: flex; flex-direction: column; }
+#tract-panel .tp-month .src .label { font-size: 9px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; }
+#tract-panel .tp-month .src .val { color: var(--text); }
+#tract-panel .tp-month.has-both { border-color: var(--gold-dim); }
+#tract-panel .tp-empty { padding: 16px; color: var(--muted); font-size: 11px; text-align: center; }
+
+.map-wrap { position: relative; }
 
 .spark { display: inline-flex; gap: 1px; align-items: flex-end; height: 16px; }
 .spark span { display: inline-block; width: 4px; background: var(--gold-dim); border-radius: 1px; }
@@ -339,6 +403,13 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
         <button data-val="tract">Tract</button>
       </div>
     </div>
+    <div class="group" id="coverage-dir-group" style="display:none">
+      <label>Order</label>
+      <div class="seg" id="coverage-dir-seg">
+        <button data-val="desc" class="on">Newest left</button>
+        <button data-val="asc">Oldest left</button>
+      </div>
+    </div>
     <div class="group" id="map-source-group" style="display:none">
       <label>Source</label>
       <div class="seg" id="map-source-seg">
@@ -372,7 +443,10 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
         <span>fewer</span><span class="scale-bar"></span><span>more</span>
       </div>
     </div>
-    <div id="map"></div>
+    <div class="map-wrap" id="map-wrap">
+      <div id="map"></div>
+      <aside id="tract-panel" aria-hidden="true"></aside>
+    </div>
     <div class="map-status" id="map-status">Loading map…</div>
   </div>
 </div>
@@ -412,7 +486,9 @@ let activeDropdown = null;
 
 let viewMode = 'cases';       // 'cases' | 'coverage' | 'map'
 let coverageMode = 'district';// 'district' | 'tract'
+let coverageDir  = 'desc';    // 'desc' = newest on left, 'asc' = oldest on left
 let mapSource = 'princeton';  // 'princeton' | 'scraped'
+let selectedTract = null;     // GEOID of currently-open tract panel
 
 // Princeton CSV — fetched live from evictionlab.org each session, never persisted.
 let princetonRows = null;     // raw rows: [{ GEOID, month, filings_2020, ... }]
@@ -693,7 +769,15 @@ function rebuildLocalAggregates() {
     const m = caseFileDateToMonth(r.file_date);
 
     if (g && d && !t2d[g]) t2d[g] = { council_district: r.council_district, council_rep: r.council_rep || '' };
-    if (g && !info[g]) info[g] = { name: r.census_name || '', district: r.council_district || '', rep: r.council_rep || '' };
+    if (g) {
+      const cur = info[g] || { name: '', district: '', rep: '', state_house: '', us_congressional: '' };
+      if (!cur.name && r.census_name) cur.name = r.census_name;
+      if (!cur.district && r.council_district) cur.district = r.council_district;
+      if (!cur.rep && r.council_rep) cur.rep = r.council_rep;
+      if (!cur.state_house && r.state_house_district) cur.state_house = r.state_house_district;
+      if (!cur.us_congressional && r.us_congressional_district) cur.us_congressional = r.us_congressional_district;
+      info[g] = cur;
+    }
 
     if (g && m) {
       if (!byTract[g]) byTract[g] = {};
@@ -748,13 +832,17 @@ function sortMonthsAsc(arr) {
   });
 }
 
-// Most recent N months from the union of both sources (oldest→newest in the returned array).
-// Showing the union (not just Princeton's months) lets recent scrape months
-// appear even though Princeton's CSV stops in 2021.
-function recentMonthsUnion(n=12) {
+// Full union of months across both sources (oldest→newest). Showing every
+// month lets Princeton's 2020-2021 history sit next to the recent scrape
+// even though they don't overlap.
+function allMonthsUnion() {
   const set = new Set([...agg.princetonMonths, ...agg.localMonths]);
-  const sorted = sortMonthsAsc([...set]);
-  return sorted.slice(-n);
+  return sortMonthsAsc([...set]);
+}
+
+// Used by the coverage headline: scan recent months for the first overlap.
+function recentMonthsUnion(n=24) {
+  return allMonthsUnion().slice(-n);
 }
 
 function ratioClass(ratio) {
@@ -810,11 +898,12 @@ function renderCoverageGrid() {
     return;
   }
 
-  const months = recentMonthsUnion(12);
+  let months = allMonthsUnion();
   if (!months.length) {
     root.innerHTML = `<div class="notice">No monthly data on either side yet.</div>`;
     return;
   }
+  if (coverageDir === 'desc') months = months.slice().reverse();
 
   const isTract = coverageMode === 'tract';
   const princeton = isTract ? agg.princetonTract    : agg.princetonDistrict;
@@ -832,7 +921,7 @@ function renderCoverageGrid() {
     ? (k => { const info = agg.tractInfo[k]; return info && info.name ? info.name : `Tract ${k}`; })
     : (k => `D${k}`);
 
-  let html = `<table class="coverage-tbl"><thead><tr><th>${isTract ? 'Tract' : 'District'}</th><th>Source</th>`;
+  let html = `<div class="coverage-tbl-wrap"><table class="coverage-tbl"><thead><tr><th>${isTract ? 'Tract' : 'District'}</th><th>Source</th>`;
   for (const m of months) html += `<th class="num">${m}</th>`;
   html += `</tr></thead><tbody>`;
 
@@ -857,13 +946,13 @@ function renderCoverageGrid() {
     }
     html += `</tr>`;
   }
-  html += `</tbody></table>`;
+  html += `</tbody></table></div>`;
 
   html += `<div class="legend">
     <span><span class="sw green"></span> Scraped ≥85% of Princeton</span>
     <span><span class="sw amber"></span> 50–85%</span>
     <span><span class="sw red"></span> &lt;50%</span>
-    <span style="color:var(--dim)">Princeton CSV is live from evictionlab.org · only months where Princeton > 0 get a ratio</span>
+    <span style="color:var(--dim)">Princeton CSV is live from evictionlab.org · only months where Princeton > 0 get a ratio · showing ${months.length} months</span>
   </div>`;
 
   root.innerHTML = html;
@@ -882,14 +971,26 @@ function mapLayer() {
 }
 
 async function fetchTractGeometries() {
-  const url = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWL_Current/MapServer/8/query?'
+  // Correct service is tigerWMS_Current; tigerWL_Current returns 404. Layer
+  // 8 = "Census Tracts (Current)". Try direct (TIGERweb sends permissive
+  // CORS) then fall back to the n8n proxy if the browser blocks it.
+  const url = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWMS_Current/MapServer/8/query?'
     + 'where=' + encodeURIComponent("STATE='47' AND COUNTY='037'")
     + '&outFields=GEOID&returnGeometry=true&f=geojson';
-  const r = await fetch(pxProxy(url));
-  if (!r.ok) throw new Error(`TIGER geometry HTTP ${r.status}`);
-  const data = await r.json();
-  if (!data.features) throw new Error('TIGER geometry: no features');
-  return data;
+  const attempts = [url, pxProxy(url)];
+  let lastErr = null;
+  for (const u of attempts) {
+    try {
+      const r = await fetch(u);
+      if (!r.ok) { lastErr = new Error(`HTTP ${r.status}`); continue; }
+      const data = await r.json();
+      if (data.features && data.features.length) return data;
+      lastErr = new Error('no features');
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw new Error(`TIGER geometry: ${lastErr ? lastErr.message : 'unknown'}`);
 }
 
 // YlOrRd sequential palette
@@ -1002,11 +1103,16 @@ async function renderMapView() {
           const districtLine = info && info.district ? `<br>${info.district}` : '';
           const sourceLabel = mapSource === 'scraped' ? 'cases' : 'filings';
           layer.bindTooltip(
-            `<strong>${nameLine}</strong>${districtLine}<br>${mapMonth}: ${filings} ${sourceLabel}`,
+            `<strong>${nameLine}</strong>${districtLine}<br>${mapMonth}: ${filings} ${sourceLabel}<br><span style="color:#c4a44a">click for detail</span>`,
             { sticky: true }
           ).openTooltip(e.latlng);
+          layer.setStyle({ weight: 2, color: '#c4a44a' });
         });
-        layer.on('mouseout', () => layer.closeTooltip());
+        layer.on('mouseout', () => {
+          layer.closeTooltip();
+          if (geoid !== selectedTract) layer.setStyle({ weight: 1, color: '#2a2820' });
+        });
+        layer.on('click', () => openTractPanel(geoid));
       },
     }).addTo(leafletMap);
 
@@ -1028,6 +1134,97 @@ async function renderMapView() {
   setTimeout(() => leafletMap && leafletMap.invalidateSize(), 50);
 }
 
+/* ───────────────────────── Tract detail panel ───────────────────────── */
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function openTractPanel(geoid) {
+  selectedTract = geoid;
+  // Visually distinguish the selected tract on the map.
+  if (tractLayer) {
+    tractLayer.eachLayer(l => {
+      const g = String(l.feature.properties.GEOID);
+      l.setStyle({
+        weight: g === geoid ? 2.5 : 1,
+        color:  g === geoid ? '#c4a44a' : '#2a2820',
+      });
+    });
+  }
+  renderTractPanel(geoid);
+}
+
+function closeTractPanel() {
+  selectedTract = null;
+  const panel = document.getElementById('tract-panel');
+  panel.classList.remove('open');
+  panel.setAttribute('aria-hidden', 'true');
+  if (tractLayer) {
+    tractLayer.eachLayer(l => l.setStyle({ weight: 1, color: '#2a2820' }));
+  }
+}
+
+function renderTractPanel(geoid) {
+  const panel = document.getElementById('tract-panel');
+  const info = agg.tractInfo[geoid] || {};
+  const p = agg.princetonTract[geoid] || {};
+  const l = agg.localTract[geoid]     || {};
+
+  // Months: every month where either source has data for this tract.
+  const monthSet = new Set([...Object.keys(p), ...Object.keys(l)]);
+  let months = sortMonthsAsc([...monthSet]).reverse(); // newest first, top→bottom
+
+  const districtRows = [
+    ['Census tract', info.name || `Tract ${geoid}`],
+    ['Council district', info.district || '—'],
+    ['Council rep', info.rep || '—'],
+    ['State house', info.state_house || '—'],
+    ['US congressional', info.us_congressional || '—'],
+  ];
+
+  let html = `
+    <div class="tp-head">
+      <div>
+        <div class="tp-title">${escapeHtml(info.name || `Tract ${geoid}`)}</div>
+        <div class="tp-geoid">GEOID ${escapeHtml(geoid)}</div>
+      </div>
+      <button class="tp-close" onclick="closeTractPanel()" title="Close">×</button>
+    </div>
+    <div class="tp-districts">
+      ${districtRows.map(([k, v]) => `
+        <div class="tp-district-row">
+          <span class="lbl">${escapeHtml(k)}</span>
+          <span class="val">${escapeHtml(v)}</span>
+        </div>`).join('')}
+    </div>
+    <div class="tp-section-label">Monthly filings (Princeton vs scraped)</div>
+  `;
+
+  if (!months.length) {
+    html += `<div class="tp-empty">No monthly data for this tract on either side.</div>`;
+  } else {
+    html += `<div class="tp-months">`;
+    for (const m of months) {
+      const pv = p[m];
+      const lv = l[m];
+      const both = (pv != null && pv > 0) && (lv != null && lv > 0);
+      html += `
+        <div class="tp-month${both ? ' has-both' : ''}">
+          <span class="m">${escapeHtml(m)}</span>
+          <span class="src"><span class="label">Princeton</span><span class="val">${pv != null ? pv : '—'}</span></span>
+          <span class="src"><span class="label">Scraped</span><span class="val">${lv != null ? lv : '—'}</span></span>
+        </div>`;
+    }
+    html += `</div>`;
+  }
+
+  panel.innerHTML = html;
+  panel.classList.add('open');
+  panel.setAttribute('aria-hidden', 'false');
+}
+
 /* ───────────────────────── Dispatch ───────────────────────── */
 
 function setVisibility() {
@@ -1039,6 +1236,7 @@ function setVisibility() {
   document.getElementById('grid-view').style.display          = isCoverage ? '' : 'none';
   document.getElementById('map-view').style.display           = isMap      ? '' : 'none';
   document.getElementById('coverage-mode-group').style.display = isCoverage ? '' : 'none';
+  document.getElementById('coverage-dir-group').style.display  = isCoverage ? '' : 'none';
   document.getElementById('map-source-group').style.display    = isMap      ? '' : 'none';
 }
 
@@ -1066,6 +1264,13 @@ function bindViewControls() {
     b.addEventListener('click', () => {
       coverageMode = b.dataset.val;
       document.querySelectorAll('#coverage-mode-seg button').forEach(x => x.classList.toggle('on', x === b));
+      if (viewMode === 'coverage') render();
+    });
+  });
+  document.querySelectorAll('#coverage-dir-seg button').forEach(b => {
+    b.addEventListener('click', () => {
+      coverageDir = b.dataset.val;
+      document.querySelectorAll('#coverage-dir-seg button').forEach(x => x.classList.toggle('on', x === b));
       if (viewMode === 'coverage') render();
     });
   });
