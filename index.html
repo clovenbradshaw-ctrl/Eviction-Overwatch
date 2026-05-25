@@ -1132,6 +1132,10 @@ const COLUMNS = [
   { key: "judgment_amount", label: "Judgment $", numeric: true, align: "right" },
 ];
 
+// Declared before FILTER_FIELDS so the order: reference below resolves.
+// Keep in sync with bucketJudgmentAmount() further down.
+const JUDGMENT_BUCKETS = ['(no $)', '<$1k', '$1k–3k', '$3k–5k', '$5k–10k', '$10k+'];
+
 const FILTER_FIELDS = [
   { key: "status", label: "Status" },
   { key: "council_district", label: "Council District" },
@@ -1139,8 +1143,6 @@ const FILTER_FIELDS = [
   { key: "Plaintiff_1", label: "Plaintiff" },
   { key: "judgment_bucket", label: "Judgment $", order: JUDGMENT_BUCKETS },
 ];
-
-let allRows = [];
 let sortCol = "file_date";
 let sortDir = -1;
 let filters = {};
@@ -2060,7 +2062,6 @@ function extractJudgmentAmount(row) {
   return found ? Math.round(total * 100) / 100 : null;
 }
 
-const JUDGMENT_BUCKETS = ['(no $)', '<$1k', '$1k–3k', '$3k–5k', '$5k–10k', '$10k+'];
 function bucketJudgmentAmount(amt) {
   if (amt == null) return '(no $)';
   if (amt < 1000) return '<$1k';
