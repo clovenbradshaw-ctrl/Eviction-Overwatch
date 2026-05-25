@@ -7,6 +7,8 @@
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%231a1810'/%3E%3Ctext x='50%25' y='54%25' font-family='Georgia,serif' font-size='44' font-weight='700' text-anchor='middle' dominant-baseline='middle' fill='%23c9a961'%3E%E2%9A%96%3C/text%3E%3C/svg%3E">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:wght@400;600&display=swap');
 
@@ -250,6 +252,45 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 
 .spark { display: inline-flex; gap: 1px; align-items: flex-end; height: 16px; }
 .spark span { display: inline-block; width: 4px; background: var(--gold-dim); border-radius: 1px; }
+
+/* Map view */
+#map-view { padding: 0; }
+#map { width: 100%; height: 65vh; background: #1a1814; }
+.map-controls {
+  padding: 12px 24px; background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+}
+.map-controls .month-label {
+  font-size: 13px; font-weight: 500; min-width: 110px;
+  color: var(--gold); font-variant-numeric: tabular-nums;
+}
+.map-controls input[type=range] {
+  flex: 1; min-width: 200px; accent-color: var(--gold);
+}
+.map-controls .scale-legend {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 10px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.08em;
+}
+.map-controls .scale-bar {
+  display: inline-block; width: 120px; height: 8px;
+  background: linear-gradient(to right, #ffffb2, #fed976, #feb24c, #fd8d3c, #fc4e2a, #e31a1c, #b10026);
+  border-radius: 2px;
+}
+.map-status {
+  padding: 40px 24px; text-align: center;
+  color: var(--muted); font-size: 12px;
+}
+.leaflet-tooltip {
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); font-family: var(--mono); font-size: 11px;
+  padding: 6px 10px; border-radius: 3px; box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+}
+.leaflet-tooltip::before { border-top-color: var(--border); }
+.leaflet-control-zoom a {
+  background: var(--surface); color: var(--text); border-color: var(--border);
+}
+.leaflet-control-zoom a:hover { background: var(--bg); color: var(--gold); }
 </style>
 </head>
 <body>
@@ -288,6 +329,7 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
       <div class="seg" id="view-seg">
         <button data-val="cases" class="on">Cases</button>
         <button data-val="coverage">Coverage by District</button>
+        <button data-val="map">Map</button>
       </div>
     </div>
     <div class="coverage" id="coverage-headline"></div>
@@ -307,6 +349,18 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   </div>
 
   <div id="grid-view" style="display:none"></div>
+
+  <div id="map-view" style="display:none">
+    <div class="map-controls" id="map-controls" style="display:none">
+      <span class="month-label" id="map-month-label"></span>
+      <input type="range" id="map-slider" min="0" max="0" value="0">
+      <div class="scale-legend">
+        <span>fewer</span><span class="scale-bar"></span><span>more</span>
+      </div>
+    </div>
+    <div id="map"></div>
+    <div class="map-status" id="map-status">Loading map…</div>
+  </div>
 </div>
 
 <div id="error" style="display:none"></div>
@@ -344,7 +398,16 @@ let filters = {};
 let activeDropdown = null;
 
 let snapshot = null;          // decoded eviction-lab-snapshot.json
-let viewMode = 'cases';       // 'cases' | 'coverage'
+let viewMode = 'cases';       // 'cases' | 'coverage' | 'map'
+
+// Map view state
+let tractMonthlyData = null;  // { GEOID: { "MM/YYYY": filings } }
+let mapMonths = [];           // sorted ascending: ["01/2024", "02/2024", ...]
+let maxFilings = 0;           // max single-tract single-month value across CSV
+let tractGeometries = null;   // GeoJSON FeatureCollection from TIGERweb
+let leafletMap = null;
+let tractLayer = null;
+let mapMonth = null;          // currently displayed "MM/YYYY"
 
 function shorten(val, prefix) {
   return (val || "").replace(prefix, "D");
@@ -382,9 +445,10 @@ async function loadSnapshot() {
 
 async function loadData() {
   try {
-    // Kick both loads in parallel — snapshot fetch is independent of cases.json
-    const casesPromise = loadCases();
+    // Kick all three loads in parallel — snapshot + library are independent of cases.json
+    const casesPromise    = loadCases();
     const snapshotPromise = loadSnapshot();
+    const libraryPromise  = loadLibrary();
 
     const data = await casesPromise;
 
@@ -406,8 +470,18 @@ async function loadData() {
     bindViewControls();
     render();
 
-    snapshotPromise.then(s => {
+    Promise.all([snapshotPromise, libraryPromise]).then(([s, lib]) => {
       snapshot = s;
+      // Use an empty sentinel rather than null when the file doesn't exist on
+      // GitHub yet — that way kickBackgroundSync's `library ?` guard correctly
+      // skips re-fetching the same 404.
+      library = lib || { built_at: null, tracts: {} };
+      const tractCount = Object.keys(library.tracts).length;
+      const mappedCount = Object.values(library.tracts).filter(t => t.council_district).length;
+      console.info(
+        `[eo] library: ${lib ? 'loaded' : 'absent (404)'}` +
+        ` · ${tractCount} tracts · ${mappedCount} mapped to districts`
+      );
       refreshSnapshotUi();
       kickBackgroundSync();
     });
@@ -689,9 +763,11 @@ function renderCoverageGrid() {
   });
 
   if (!districts.length || !months.length) {
-    const enriched = Object.values(snapshot.tracts).filter(t => t.council_district).length;
-    const total = Object.keys(snapshot.tracts).length;
-    root.innerHTML = `<div class="notice">Districts are being assigned to the underlying Princeton areas — ${enriched}/${total} mapped so far. Reload in a few minutes once enrichment progresses.</div>`;
+    const libTracts = (library && library.tracts) || {};
+    const total = Object.keys(libTracts).length;
+    const mapped = Object.values(libTracts).filter(t => t.council_district).length;
+    const unmappedNote = snapshot && snapshot.unmapped_tracts ? ` · ${snapshot.unmapped_tracts.length} tracts still unmapped from the CSV` : '';
+    root.innerHTML = `<div class="notice">Building the tract→district library (${mapped}/${total} tracts mapped so far${unmappedNote}). Reload in a few minutes.</div>`;
     return;
   }
 
@@ -735,21 +811,175 @@ function renderCoverageGrid() {
   root.innerHTML = html;
 }
 
+/* ───────────────────────── Map view (heat map + time slider) ───────────────────────── */
+
+function buildTractMonthlyData(csvRows) {
+  const data = {};
+  const months = new Set();
+  let max = 0;
+  for (const r of csvRows) {
+    const g = String(r.GEOID);
+    const m = String(r.month);
+    const f = r.filings_2020 || 0;
+    if (!data[g]) data[g] = {};
+    data[g][m] = f;
+    months.add(m);
+    if (f > max) max = f;
+  }
+  const sorted = [...months].sort((a, b) => {
+    const [am, ay] = a.split('/'); const [bm, by] = b.split('/');
+    return (ay + am).localeCompare(by + bm);
+  });
+  return { data, months: sorted, max };
+}
+
+async function fetchTractGeometries() {
+  const url = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWL_Current/MapServer/8/query?'
+    + 'where=' + encodeURIComponent("STATE='47' AND COUNTY='037'")
+    + '&outFields=GEOID&returnGeometry=true&f=geojson';
+  const r = await fetch(pxProxy(url));
+  if (!r.ok) throw new Error(`TIGER geometry HTTP ${r.status}`);
+  const data = await r.json();
+  if (!data.features) throw new Error('TIGER geometry: no features');
+  return data;
+}
+
+// YlOrRd sequential palette
+const HEAT_STOPS = [
+  [0.00, [255, 255, 178]],
+  [0.20, [254, 217, 118]],
+  [0.40, [254, 178, 76]],
+  [0.60, [253, 141, 60]],
+  [0.75, [252, 78, 42]],
+  [0.90, [227, 26, 28]],
+  [1.00, [177, 0, 38]],
+];
+
+function colorForFilings(filings, max) {
+  if (filings == null || filings <= 0) return '#1a1814';
+  const t = Math.min(1, filings / Math.max(1, max));
+  let prev = HEAT_STOPS[0], next = HEAT_STOPS[HEAT_STOPS.length - 1];
+  for (let i = 0; i < HEAT_STOPS.length - 1; i++) {
+    if (t >= HEAT_STOPS[i][0] && t <= HEAT_STOPS[i+1][0]) {
+      prev = HEAT_STOPS[i]; next = HEAT_STOPS[i+1]; break;
+    }
+  }
+  const span = next[0] - prev[0] || 1;
+  const f = (t - prev[0]) / span;
+  const ch = i => Math.round(prev[1][i] + (next[1][i] - prev[1][i]) * f);
+  return `rgb(${ch(0)},${ch(1)},${ch(2)})`;
+}
+
+function updateMapColors() {
+  if (!tractLayer || !tractMonthlyData || !mapMonth) return;
+  tractLayer.eachLayer(layer => {
+    const geoid = String(layer.feature.properties.GEOID);
+    const filings = (tractMonthlyData[geoid] && tractMonthlyData[geoid][mapMonth]) || 0;
+    layer.setStyle({ fillColor: colorForFilings(filings, maxFilings) });
+  });
+}
+
+async function renderMapView() {
+  const status = document.getElementById('map-status');
+  const controls = document.getElementById('map-controls');
+
+  // Waiting on the CSV parse (kicked by kickBackgroundSync)
+  if (!tractMonthlyData || mapMonths.length === 0) {
+    status.textContent = 'Waiting for Princeton CSV…';
+    status.style.display = '';
+    controls.style.display = 'none';
+    return;
+  }
+
+  if (!mapMonth) mapMonth = mapMonths[mapMonths.length - 1];
+
+  // Fetch tract polygons once per session
+  if (!tractGeometries) {
+    status.textContent = 'Fetching Davidson County tract boundaries from TIGERweb…';
+    status.style.display = '';
+    controls.style.display = 'none';
+    try {
+      tractGeometries = await fetchTractGeometries();
+    } catch (e) {
+      console.warn('tract geometry fetch failed:', e);
+      status.textContent = 'Failed to load tract boundaries: ' + e.message;
+      return;
+    }
+  }
+
+  // Init Leaflet once
+  if (!leafletMap) {
+    leafletMap = L.map('map', { zoomControl: true, attributionControl: false });
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+    }).addTo(leafletMap);
+    L.control.attribution({ prefix: false })
+      .addAttribution('Tiles © OpenStreetMap, CartoDB · Tracts © US Census')
+      .addTo(leafletMap);
+
+    tractLayer = L.geoJSON(tractGeometries, {
+      style: () => ({
+        fillColor: '#1a1814', fillOpacity: 0.75,
+        color: '#2a2820', weight: 1, opacity: 0.6,
+      }),
+      onEachFeature: (feature, layer) => {
+        const geoid = String(feature.properties.GEOID);
+        layer.on('mouseover', e => {
+          const filings = (tractMonthlyData[geoid] && tractMonthlyData[geoid][mapMonth]) || 0;
+          const districtInfo = library && library.tracts && library.tracts[geoid];
+          const districtLine = districtInfo && districtInfo.council_district
+            ? `<br>${districtInfo.council_district}` : '';
+          layer.bindTooltip(
+            `<strong>Tract ${geoid}</strong>${districtLine}<br>${mapMonth}: ${filings} filings`,
+            { sticky: true }
+          ).openTooltip(e.latlng);
+        });
+        layer.on('mouseout', () => layer.closeTooltip());
+      },
+    }).addTo(leafletMap);
+
+    leafletMap.fitBounds(tractLayer.getBounds(), { padding: [20, 20] });
+
+    // Slider
+    const slider = document.getElementById('map-slider');
+    slider.min = 0;
+    slider.max = mapMonths.length - 1;
+    slider.value = mapMonths.length - 1;
+    slider.addEventListener('input', e => {
+      mapMonth = mapMonths[parseInt(e.target.value, 10)];
+      document.getElementById('map-month-label').textContent = mapMonth;
+      updateMapColors();
+    });
+    document.getElementById('map-month-label').textContent = mapMonth;
+  }
+
+  status.style.display = 'none';
+  controls.style.display = '';
+  updateMapColors();
+  // Leaflet needs a kick to recompute size after its container becomes visible
+  setTimeout(() => leafletMap && leafletMap.invalidateSize(), 50);
+}
+
 /* ───────────────────────── Dispatch ───────────────────────── */
 
 function setVisibility() {
-  const isCases = viewMode === 'cases';
-  document.getElementById('local-toolbar').style.display    = isCases ? '' : 'none';
-  document.getElementById('local-table-wrap').style.display = isCases ? '' : 'none';
-  document.getElementById('grid-view').style.display        = isCases ? 'none' : '';
+  const isCases    = viewMode === 'cases';
+  const isCoverage = viewMode === 'coverage';
+  const isMap      = viewMode === 'map';
+  document.getElementById('local-toolbar').style.display    = isCases    ? '' : 'none';
+  document.getElementById('local-table-wrap').style.display = isCases    ? '' : 'none';
+  document.getElementById('grid-view').style.display        = isCoverage ? '' : 'none';
+  document.getElementById('map-view').style.display         = isMap      ? '' : 'none';
 }
 
 function render() {
   setVisibility();
   if (viewMode === 'cases') {
     renderLocalTable();
-  } else {
+  } else if (viewMode === 'coverage') {
     renderCoverageGrid();
+  } else if (viewMode === 'map') {
+    renderMapView();
   }
   updateCoverageHeadline();
 }
@@ -776,15 +1006,17 @@ const N8N_PUBLISH = 'https://n8n.intelechia.com/webhook/site/publish';
 const N8N_PROXY   = 'https://n8n.intelechia.com/webhook/feed';
 const N8N_AUTH    = 'Bearer Provoking0-Cranium7-Penpal4-Childlike0-Uranium9';
 const SNAPSHOT_FILE = 'eviction-lab-snapshot.json';
+const LIBRARY_FILE  = 'tract-district-map.json';
+const LIBRARY_URL   = 'https://raw.githubusercontent.com/clovenbradshaw-ctrl/plain-text/main/tract-district-map.json';
 const PRINCETON_CSV = 'https://evictionlab.org/uploads/nashville_monthly_2020_2021.csv';
 const TIGER_URL = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWL_Current/MapServer/8/query';
 const NASH_GIS_BASE = 'https://maps.nashville.gov/arcgis/rest/services/Elections/Precincts/MapServer/1/query';
 const GEOCODE_DELAY_MS = 1100;
-const ENRICH_BATCH_SIZE = 25;          // republish every N tracts
-const LAST_DATA_CHECK_KEY = 'eo-last-data-check';
-const LAST_ENRICH_KEY     = 'eo-last-enrich-start';
-const DATA_CHECK_THROTTLE_MS   = 5  * 60 * 1000;  // 5 min between data checks
-const ENRICH_RESTART_THROTTLE_MS = 60 * 1000;     // 1 min before another tab restarts enrichment
+const LIBRARY_BATCH_SIZE = 25;                 // republish library every N tracts mapped
+const LAST_LIBRARY_RUN_KEY = 'eo-last-library-run';
+const LIBRARY_RESTART_THROTTLE_MS = 60 * 1000; // 1 min before another tab joins library build
+
+let library = null;  // { built_at, tracts: { GEOID: {lat, lon, council_district, council_rep, racial_majority} } }
 
 function bgStatus(msg, active=false) {
   const el = document.getElementById('bg-sync');
@@ -812,27 +1044,21 @@ async function fetchPrincetonCsvRows() {
   return parsed.data.filter(r => r.GEOID && r.month);
 }
 
-function diffSnapshot(csvRows, existingSnap) {
-  const newTracts = new Set();
-  const changedPairs = [];
-  const existingPairFilings = {};
-  const tracts = (existingSnap && existingSnap.tracts) || {};
-  for (const geoid in tracts) {
-    for (const m of (tracts[geoid].monthly || [])) {
-      existingPairFilings[`${geoid}|${m.month}`] = m.filings;
+async function loadLibrary() {
+  try {
+    const r = await fetch(LIBRARY_URL, { cache: "no-store" });
+    if (!r.ok) return null;
+    let data = await r.json();
+    if (data.format === "gzip+base64" && data.data) {
+      const bin = Uint8Array.from(atob(data.data), c => c.charCodeAt(0));
+      const raw = pako.inflate(bin, { to: "string" });
+      data = JSON.parse(raw);
     }
+    return data;
+  } catch (e) {
+    console.warn("library load failed:", e);
+    return null;
   }
-  for (const r of csvRows) {
-    const geoid = String(r.GEOID);
-    const month = String(r.month);
-    const filings = r.filings_2020 || 0;
-    if (!tracts[geoid]) newTracts.add(geoid);
-    const k = `${geoid}|${month}`;
-    if (!(k in existingPairFilings) || existingPairFilings[k] !== filings) {
-      changedPairs.push({ geoid, month, filings, row: r });
-    }
-  }
-  return { newTracts: [...newTracts], changedPairs };
 }
 
 async function bgGetCentroid(geoid) {
@@ -862,112 +1088,23 @@ async function bgGetCouncilDistrict(lat, lon) {
   return null;
 }
 
-// Build raw (un-enriched) tract entries from CSV samples
-function buildRawTractEntries(geoids, csvRows) {
-  const sampleByGeoid = {};
-  for (const r of csvRows) {
-    const g = String(r.GEOID);
-    if (!sampleByGeoid[g]) sampleByGeoid[g] = r;
-  }
-  const out = {};
-  for (const geoid of geoids) {
-    const sample = sampleByGeoid[geoid] || {};
-    out[geoid] = {
-      lat: null, lon: null,
-      council_district: '', council_rep: '',
-      racial_majority: sample.racial_majority || '',
-      monthly: [],
-      enriched_at: null,
-    };
-  }
-  return out;
-}
-
-function mergeAndRecompute(existing, newTractsData, changedPairs) {
-  const tracts = { ...(existing && existing.tracts || {}) };
-  for (const g in newTractsData) tracts[g] = newTractsData[g];
-
-  const monthlyByTract = {};
-  for (const g in tracts) {
-    monthlyByTract[g] = {};
-    for (const m of (tracts[g].monthly || [])) monthlyByTract[g][m.month] = m;
-  }
-  for (const p of changedPairs) {
-    if (!monthlyByTract[p.geoid]) monthlyByTract[p.geoid] = {};
-    monthlyByTract[p.geoid][p.month] = {
-      month: p.month,
-      type: p.row.type || '',
-      filings: p.row.filings_2020 || 0,
-      hist_avg: p.row.filings_avg || 0,
-      baseline: p.row.filings_avg_prepandemic_baseline || 0,
-      last_updated: p.row.last_updated || '',
-    };
-  }
-  for (const g in tracts) {
-    tracts[g].monthly = Object.values(monthlyByTract[g] || {})
-      .sort((a, b) => {
-        const [am, ay] = a.month.split('/'); const [bm, by] = b.month.split('/');
-        return (ay + am).localeCompare(by + bm);
-      });
-  }
-
-  const byDistrictMonth = {};
-  for (const g in tracts) {
-    const t = tracts[g];
-    const d = t.council_district;
-    if (!d) continue;
-    if (!byDistrictMonth[d]) byDistrictMonth[d] = {};
-    for (const m of t.monthly) {
-      byDistrictMonth[d][m.month] = (byDistrictMonth[d][m.month] || 0) + m.filings;
-    }
-  }
-  return {
-    updated_at: new Date().toISOString(),
-    source_url: PRINCETON_CSV,
-    tracts,
-    by_district_month: byDistrictMonth,
-  };
-}
-
-function recomputeDistrictRollup(snap) {
-  const byDistrictMonth = {};
-  for (const g in snap.tracts) {
-    const t = snap.tracts[g];
-    if (!t.council_district) continue;
-    if (!byDistrictMonth[t.council_district]) byDistrictMonth[t.council_district] = {};
-    for (const m of (t.monthly || [])) {
-      byDistrictMonth[t.council_district][m.month] =
-        (byDistrictMonth[t.council_district][m.month] || 0) + m.filings;
-    }
-  }
-  snap.by_district_month = byDistrictMonth;
-  snap.updated_at = new Date().toISOString();
-  return snap;
-}
-
-async function publishSnapshot(snap, commitMsg) {
-  const raw = JSON.stringify(snap);
+async function publishGzippedJson(filename, payload, commitMsg) {
+  const raw = JSON.stringify(payload);
   const compressed = pako.gzip(raw);
   let bin = '';
   for (let i = 0; i < compressed.length; i++) bin += String.fromCharCode(compressed[i]);
   const wrapper = {
     format: 'gzip+base64',
-    tract_count: Object.keys(snap.tracts).length,
     raw_bytes: raw.length,
     compressed_bytes: compressed.length,
     data: btoa(bin),
   };
-  const enrichedCount = Object.values(snap.tracts).filter(t => t.council_district).length;
-  const payload = {
-    filename: SNAPSHOT_FILE,
-    mode: 'overwrite',
-    content: wrapper,
-    commit_message: commitMsg || `eviction-lab: ${Object.keys(snap.tracts).length} tracts, ${enrichedCount} enriched`,
-  };
   const r = await fetch(N8N_PUBLISH, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': N8N_AUTH },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      filename, mode: 'overwrite', content: wrapper, commit_message: commitMsg,
+    }),
   });
   if (!r.ok) throw new Error(`publish HTTP ${r.status}`);
 }
@@ -978,57 +1115,62 @@ function refreshSnapshotUi() {
   if (viewMode !== 'cases') render();
 }
 
-// Phase 1 — fetch Princeton, write any new data to GitHub immediately.
-// Returns the CSV rows so Phase 2 can keep using them.
-async function syncPrincetonData() {
-  bgStatus('Fetching Princeton CSV…', true);
-  const csvRows = await fetchPrincetonCsvRows();
-  const { newTracts, changedPairs } = diffSnapshot(csvRows, snapshot);
-
-  if (newTracts.length === 0 && changedPairs.length === 0) {
-    return csvRows;
+// Build the district-month rollup from the CSV using the library for tract→district.
+// Cheap, deterministic, ~5000 row loop.
+function buildSnapshotFromCsv(csvRows, lib) {
+  const tracts = (lib && lib.tracts) || {};
+  const byDistrictMonth = {};
+  const unmappedGeoids = new Set();
+  for (const r of csvRows) {
+    const geoid = String(r.GEOID);
+    const month = String(r.month);
+    const filings = r.filings_2020 || 0;
+    const t = tracts[geoid];
+    if (!t || !t.council_district) {
+      unmappedGeoids.add(geoid);
+      continue;
+    }
+    const d = t.council_district;
+    if (!byDistrictMonth[d]) byDistrictMonth[d] = {};
+    byDistrictMonth[d][month] = (byDistrictMonth[d][month] || 0) + filings;
   }
-
-  // Merge in memory and surface the data IMMEDIATELY — visitor sees Princeton
-  // numbers the moment we have them, without waiting for the GitHub publish.
-  const rawEntries = buildRawTractEntries(newTracts, csvRows);
-  snapshot = mergeAndRecompute(snapshot, rawEntries, changedPairs);
-  refreshSnapshotUi();
-
-  bgStatus(`Princeton: ${newTracts.length} new tracts, ${changedPairs.length} new cells — persisting…`, true);
-  // Persist to GitHub in the background; don't block enrichment on it.
-  publishSnapshot(
-    snapshot,
-    `eviction-lab: +${newTracts.length} tracts, +${changedPairs.length} cells (raw)`
-  ).catch(e => console.warn('phase-1 publish failed:', e));
-  return csvRows;
+  return {
+    updated_at: new Date().toISOString(),
+    source_url: PRINCETON_CSV,
+    by_district_month: byDistrictMonth,
+    unmapped_tracts: [...unmappedGeoids].sort(),
+    csv_row_count: csvRows.length,
+  };
 }
 
-// Phase 2 — enrich any tract that's missing council_district, batched publish.
-async function enrichMissingTracts(csvRows) {
-  const todo = Object.keys(snapshot.tracts)
-    .filter(g => !snapshot.tracts[g].council_district);
+function snapshotsEqual(a, b) {
+  if (!a || !b) return false;
+  return JSON.stringify(a.by_district_month || {}) === JSON.stringify(b.by_district_month || {});
+}
 
-  if (todo.length === 0) {
-    bgStatus('Princeton snapshot fully enriched', false);
-    setTimeout(() => bgStatus(''), 4000);
-    return;
-  }
-
-  // Soft cross-tab lock: if another browser started enrichment recently,
-  // back off so we don't all hammer Nashville GIS in parallel.
-  if (recentlyRan(LAST_ENRICH_KEY, ENRICH_RESTART_THROTTLE_MS)) {
-    bgStatus(`${todo.length} tracts need enrichment — another tab is working on it`, false);
+// Walk missing tracts, enrich each one with TIGER + Nashville GIS, append to
+// the library, and batch-publish so the next visitor inherits the progress.
+// This is the slow path — runs only when the library has gaps. Most visitors
+// after the first round will skip it entirely.
+async function extendLibrary(missingGeoids, csvRows) {
+  if (recentlyRan(LAST_LIBRARY_RUN_KEY, LIBRARY_RESTART_THROTTLE_MS)) {
+    bgStatus(`${missingGeoids.length} tracts need mapping — another tab is on it`, false);
     setTimeout(() => bgStatus(''), 5000);
-    return;
+    return false;
   }
 
-  let done = 0;
-  let sinceLastPublish = 0;
+  const sampleByGeoid = {};
+  for (const r of csvRows) {
+    const g = String(r.GEOID);
+    if (!sampleByGeoid[g]) sampleByGeoid[g] = r;
+  }
 
-  for (const geoid of todo) {
-    markRan(LAST_ENRICH_KEY);
-    bgStatus(`Enriching ${done+1}/${todo.length}: tract ${geoid}`, true);
+  if (!library) library = { built_at: null, tracts: {} };
+
+  let mapped = 0, done = 0, sinceLastPublish = 0;
+  for (const geoid of missingGeoids) {
+    markRan(LAST_LIBRARY_RUN_KEY);
+    bgStatus(`Mapping tract ${done+1}/${missingGeoids.length}: ${geoid}`, true);
     try {
       const centroid = await bgGetCentroid(geoid);
       if (centroid) {
@@ -1037,26 +1179,28 @@ async function enrichMissingTracts(csvRows) {
           const dist = await bgGetCouncilDistrict(centroid.lat, centroid.lon);
           if (dist) { council = dist.district; rep = dist.rep; }
         } catch {}
-        const t = snapshot.tracts[geoid];
-        t.lat = centroid.lat;
-        t.lon = centroid.lon;
-        t.council_district = council;
-        t.council_rep = rep;
-        t.enriched_at = new Date().toISOString();
-        sinceLastPublish++;
+        const sample = sampleByGeoid[geoid] || {};
+        library.tracts[geoid] = {
+          lat: centroid.lat, lon: centroid.lon,
+          council_district: council, council_rep: rep,
+          racial_majority: sample.racial_majority || '',
+        };
+        if (council) { mapped++; sinceLastPublish++; }
       }
     } catch (e) {
-      console.warn('enrich error', geoid, e);
+      console.warn('library entry failed for', geoid, e);
     }
     done++;
 
-    if (sinceLastPublish >= ENRICH_BATCH_SIZE) {
-      recomputeDistrictRollup(snapshot);
+    if (sinceLastPublish >= LIBRARY_BATCH_SIZE) {
+      library.built_at = new Date().toISOString();
       try {
-        await publishSnapshot(snapshot, `eviction-lab: +${sinceLastPublish} tracts enriched (${done}/${todo.length})`);
-        refreshSnapshotUi();
+        await publishGzippedJson(
+          LIBRARY_FILE, library,
+          `tract-district-map: +${sinceLastPublish} mapped (${Object.keys(library.tracts).length} total)`
+        );
       } catch (e) {
-        console.warn('mid-enrichment publish failed:', e);
+        console.warn('mid-library publish failed:', e);
       }
       sinceLastPublish = 0;
     }
@@ -1065,40 +1209,81 @@ async function enrichMissingTracts(csvRows) {
   }
 
   if (sinceLastPublish > 0) {
-    recomputeDistrictRollup(snapshot);
+    library.built_at = new Date().toISOString();
     try {
-      await publishSnapshot(snapshot, `eviction-lab: enrichment complete (${done} tracts this session)`);
-      refreshSnapshotUi();
+      await publishGzippedJson(
+        LIBRARY_FILE, library,
+        `tract-district-map: ${Object.keys(library.tracts).length} tracts (build complete)`
+      );
     } catch (e) {
-      console.warn('final publish failed:', e);
+      console.warn('final library publish failed:', e);
     }
   }
 
-  bgStatus(`Enrichment done — ${done} tracts processed`, false);
+  bgStatus(`Mapped ${mapped} new tracts to council districts`, false);
   setTimeout(() => bgStatus(''), 5000);
+  return mapped > 0;
 }
 
+// One unified flow:
+//   1. Fetch Princeton CSV + load tract-district library
+//   2. Build the snapshot in memory from CSV × library (instant)
+//   3. Publish snapshot if it differs from what's on GitHub
+//   4. Only if the library is missing tracts the CSV mentions — extend it
+//      (slow, one-time work), then rebuild + republish the snapshot
 async function kickBackgroundSync() {
   try {
-    // Phase 1: data check. Skip the throttle if we have no snapshot yet —
-    // we always want to build the first one ASAP.
-    const haveSnapshot = snapshot && Object.keys(snapshot.tracts || {}).length > 0;
-    let csvRows = null;
-    if (!haveSnapshot || !recentlyRan(LAST_DATA_CHECK_KEY, DATA_CHECK_THROTTLE_MS)) {
-      markRan(LAST_DATA_CHECK_KEY);
-      try {
-        csvRows = await syncPrincetonData();
-      } catch (e) {
-        console.warn('princeton sync failed:', e);
-        bgStatus(`Princeton sync failed: ${e.message}`, false);
-        setTimeout(() => bgStatus(''), 5000);
+    bgStatus('Fetching Princeton CSV…', true);
+    // library was populated (possibly as an empty sentinel) in loadData;
+    // don't re-fetch it here.
+    const csvRows = await fetchPrincetonCsvRows();
+    console.info(`[eo] princeton csv: ${csvRows.length} rows · library has ${Object.keys(library.tracts).length} tracts`);
+
+    // Per-tract monthly data powers the Map view; build it once per session.
+    const tmd = buildTractMonthlyData(csvRows);
+    tractMonthlyData = tmd.data;
+    mapMonths = tmd.months;
+    maxFilings = tmd.max;
+    if (viewMode === 'map') renderMapView();
+
+    const newSnapshot = buildSnapshotFromCsv(csvRows, library);
+    const changed = !snapshot || !snapshotsEqual(snapshot, newSnapshot);
+
+    if (changed) {
+      snapshot = newSnapshot;
+      refreshSnapshotUi();
+      if (Object.keys(newSnapshot.by_district_month).length > 0) {
+        publishGzippedJson(
+          SNAPSHOT_FILE, newSnapshot,
+          `eviction-lab: rebuild from CSV+library (${Object.keys(newSnapshot.by_district_month).length} districts, ${csvRows.length} rows)`
+        ).catch(e => console.warn('snapshot publish failed:', e));
       }
     }
 
-    // Phase 2: enrichment (always attempt — there may be leftover work
-    // from a previous visitor who closed the tab mid-run)
-    if (snapshot && Object.keys(snapshot.tracts).length > 0) {
-      await enrichMissingTracts(csvRows);
+    // Library check: any tract Princeton mentions that we haven't mapped yet?
+    const csvTracts = [...new Set(csvRows.map(r => String(r.GEOID)))];
+    const missing = csvTracts.filter(g => !library.tracts[g] || !library.tracts[g].council_district);
+
+    if (missing.length === 0) {
+      console.info(`[eo] library is complete (${csvTracts.length}/${csvTracts.length} CSV tracts mapped) — skipping enrichment`);
+      bgStatus(`Up to date · library covers ${csvTracts.length} tracts`, false);
+      setTimeout(() => bgStatus(''), 3000);
+      return;
+    }
+
+    console.info(`[eo] library has ${missing.length} unmapped tracts — extending`);
+    const extended = await extendLibrary(missing, csvRows);
+    if (extended) {
+      // Rebuild snapshot with the new mappings now folded in
+      const finalSnapshot = buildSnapshotFromCsv(csvRows, library);
+      if (!snapshotsEqual(snapshot, finalSnapshot)) {
+        snapshot = finalSnapshot;
+        refreshSnapshotUi();
+        publishGzippedJson(
+          SNAPSHOT_FILE, finalSnapshot,
+          `eviction-lab: rebuild after library extension`
+        ).catch(e => console.warn('snapshot publish failed:', e));
+      }
     }
   } catch (e) {
     console.warn('bg sync failed:', e);
