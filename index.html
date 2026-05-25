@@ -382,9 +382,10 @@ async function loadSnapshot() {
 
 async function loadData() {
   try {
-    // Kick both loads in parallel — snapshot fetch is independent of cases.json
-    const casesPromise = loadCases();
+    // Kick all three loads in parallel — snapshot + library are independent of cases.json
+    const casesPromise    = loadCases();
     const snapshotPromise = loadSnapshot();
+    const libraryPromise  = loadLibrary();
 
     const data = await casesPromise;
 
@@ -406,8 +407,9 @@ async function loadData() {
     bindViewControls();
     render();
 
-    snapshotPromise.then(s => {
+    Promise.all([snapshotPromise, libraryPromise]).then(([s, lib]) => {
       snapshot = s;
+      library = lib;
       refreshSnapshotUi();
       kickBackgroundSync();
     });
@@ -689,9 +691,11 @@ function renderCoverageGrid() {
   });
 
   if (!districts.length || !months.length) {
-    const enriched = Object.values(snapshot.tracts).filter(t => t.council_district).length;
-    const total = Object.keys(snapshot.tracts).length;
-    root.innerHTML = `<div class="notice">Districts are being assigned to the underlying Princeton areas — ${enriched}/${total} mapped so far. Reload in a few minutes once enrichment progresses.</div>`;
+    const libTracts = (library && library.tracts) || {};
+    const total = Object.keys(libTracts).length;
+    const mapped = Object.values(libTracts).filter(t => t.council_district).length;
+    const unmappedNote = snapshot && snapshot.unmapped_tracts ? ` · ${snapshot.unmapped_tracts.length} tracts still unmapped from the CSV` : '';
+    root.innerHTML = `<div class="notice">Building the tract→district library (${mapped}/${total} tracts mapped so far${unmappedNote}). Reload in a few minutes.</div>`;
     return;
   }
 
@@ -776,15 +780,17 @@ const N8N_PUBLISH = 'https://n8n.intelechia.com/webhook/site/publish';
 const N8N_PROXY   = 'https://n8n.intelechia.com/webhook/feed';
 const N8N_AUTH    = 'Bearer Provoking0-Cranium7-Penpal4-Childlike0-Uranium9';
 const SNAPSHOT_FILE = 'eviction-lab-snapshot.json';
+const LIBRARY_FILE  = 'tract-district-map.json';
+const LIBRARY_URL   = 'https://raw.githubusercontent.com/clovenbradshaw-ctrl/plain-text/main/tract-district-map.json';
 const PRINCETON_CSV = 'https://evictionlab.org/uploads/nashville_monthly_2020_2021.csv';
 const TIGER_URL = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWL_Current/MapServer/8/query';
 const NASH_GIS_BASE = 'https://maps.nashville.gov/arcgis/rest/services/Elections/Precincts/MapServer/1/query';
 const GEOCODE_DELAY_MS = 1100;
-const ENRICH_BATCH_SIZE = 25;          // republish every N tracts
-const LAST_DATA_CHECK_KEY = 'eo-last-data-check';
-const LAST_ENRICH_KEY     = 'eo-last-enrich-start';
-const DATA_CHECK_THROTTLE_MS   = 5  * 60 * 1000;  // 5 min between data checks
-const ENRICH_RESTART_THROTTLE_MS = 60 * 1000;     // 1 min before another tab restarts enrichment
+const LIBRARY_BATCH_SIZE = 25;                 // republish library every N tracts mapped
+const LAST_LIBRARY_RUN_KEY = 'eo-last-library-run';
+const LIBRARY_RESTART_THROTTLE_MS = 60 * 1000; // 1 min before another tab joins library build
+
+let library = null;  // { built_at, tracts: { GEOID: {lat, lon, council_district, council_rep, racial_majority} } }
 
 function bgStatus(msg, active=false) {
   const el = document.getElementById('bg-sync');
@@ -812,27 +818,21 @@ async function fetchPrincetonCsvRows() {
   return parsed.data.filter(r => r.GEOID && r.month);
 }
 
-function diffSnapshot(csvRows, existingSnap) {
-  const newTracts = new Set();
-  const changedPairs = [];
-  const existingPairFilings = {};
-  const tracts = (existingSnap && existingSnap.tracts) || {};
-  for (const geoid in tracts) {
-    for (const m of (tracts[geoid].monthly || [])) {
-      existingPairFilings[`${geoid}|${m.month}`] = m.filings;
+async function loadLibrary() {
+  try {
+    const r = await fetch(LIBRARY_URL, { cache: "no-store" });
+    if (!r.ok) return null;
+    let data = await r.json();
+    if (data.format === "gzip+base64" && data.data) {
+      const bin = Uint8Array.from(atob(data.data), c => c.charCodeAt(0));
+      const raw = pako.inflate(bin, { to: "string" });
+      data = JSON.parse(raw);
     }
+    return data;
+  } catch (e) {
+    console.warn("library load failed:", e);
+    return null;
   }
-  for (const r of csvRows) {
-    const geoid = String(r.GEOID);
-    const month = String(r.month);
-    const filings = r.filings_2020 || 0;
-    if (!tracts[geoid]) newTracts.add(geoid);
-    const k = `${geoid}|${month}`;
-    if (!(k in existingPairFilings) || existingPairFilings[k] !== filings) {
-      changedPairs.push({ geoid, month, filings, row: r });
-    }
-  }
-  return { newTracts: [...newTracts], changedPairs };
 }
 
 async function bgGetCentroid(geoid) {
@@ -862,112 +862,23 @@ async function bgGetCouncilDistrict(lat, lon) {
   return null;
 }
 
-// Build raw (un-enriched) tract entries from CSV samples
-function buildRawTractEntries(geoids, csvRows) {
-  const sampleByGeoid = {};
-  for (const r of csvRows) {
-    const g = String(r.GEOID);
-    if (!sampleByGeoid[g]) sampleByGeoid[g] = r;
-  }
-  const out = {};
-  for (const geoid of geoids) {
-    const sample = sampleByGeoid[geoid] || {};
-    out[geoid] = {
-      lat: null, lon: null,
-      council_district: '', council_rep: '',
-      racial_majority: sample.racial_majority || '',
-      monthly: [],
-      enriched_at: null,
-    };
-  }
-  return out;
-}
-
-function mergeAndRecompute(existing, newTractsData, changedPairs) {
-  const tracts = { ...(existing && existing.tracts || {}) };
-  for (const g in newTractsData) tracts[g] = newTractsData[g];
-
-  const monthlyByTract = {};
-  for (const g in tracts) {
-    monthlyByTract[g] = {};
-    for (const m of (tracts[g].monthly || [])) monthlyByTract[g][m.month] = m;
-  }
-  for (const p of changedPairs) {
-    if (!monthlyByTract[p.geoid]) monthlyByTract[p.geoid] = {};
-    monthlyByTract[p.geoid][p.month] = {
-      month: p.month,
-      type: p.row.type || '',
-      filings: p.row.filings_2020 || 0,
-      hist_avg: p.row.filings_avg || 0,
-      baseline: p.row.filings_avg_prepandemic_baseline || 0,
-      last_updated: p.row.last_updated || '',
-    };
-  }
-  for (const g in tracts) {
-    tracts[g].monthly = Object.values(monthlyByTract[g] || {})
-      .sort((a, b) => {
-        const [am, ay] = a.month.split('/'); const [bm, by] = b.month.split('/');
-        return (ay + am).localeCompare(by + bm);
-      });
-  }
-
-  const byDistrictMonth = {};
-  for (const g in tracts) {
-    const t = tracts[g];
-    const d = t.council_district;
-    if (!d) continue;
-    if (!byDistrictMonth[d]) byDistrictMonth[d] = {};
-    for (const m of t.monthly) {
-      byDistrictMonth[d][m.month] = (byDistrictMonth[d][m.month] || 0) + m.filings;
-    }
-  }
-  return {
-    updated_at: new Date().toISOString(),
-    source_url: PRINCETON_CSV,
-    tracts,
-    by_district_month: byDistrictMonth,
-  };
-}
-
-function recomputeDistrictRollup(snap) {
-  const byDistrictMonth = {};
-  for (const g in snap.tracts) {
-    const t = snap.tracts[g];
-    if (!t.council_district) continue;
-    if (!byDistrictMonth[t.council_district]) byDistrictMonth[t.council_district] = {};
-    for (const m of (t.monthly || [])) {
-      byDistrictMonth[t.council_district][m.month] =
-        (byDistrictMonth[t.council_district][m.month] || 0) + m.filings;
-    }
-  }
-  snap.by_district_month = byDistrictMonth;
-  snap.updated_at = new Date().toISOString();
-  return snap;
-}
-
-async function publishSnapshot(snap, commitMsg) {
-  const raw = JSON.stringify(snap);
+async function publishGzippedJson(filename, payload, commitMsg) {
+  const raw = JSON.stringify(payload);
   const compressed = pako.gzip(raw);
   let bin = '';
   for (let i = 0; i < compressed.length; i++) bin += String.fromCharCode(compressed[i]);
   const wrapper = {
     format: 'gzip+base64',
-    tract_count: Object.keys(snap.tracts).length,
     raw_bytes: raw.length,
     compressed_bytes: compressed.length,
     data: btoa(bin),
   };
-  const enrichedCount = Object.values(snap.tracts).filter(t => t.council_district).length;
-  const payload = {
-    filename: SNAPSHOT_FILE,
-    mode: 'overwrite',
-    content: wrapper,
-    commit_message: commitMsg || `eviction-lab: ${Object.keys(snap.tracts).length} tracts, ${enrichedCount} enriched`,
-  };
   const r = await fetch(N8N_PUBLISH, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': N8N_AUTH },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      filename, mode: 'overwrite', content: wrapper, commit_message: commitMsg,
+    }),
   });
   if (!r.ok) throw new Error(`publish HTTP ${r.status}`);
 }
@@ -978,57 +889,62 @@ function refreshSnapshotUi() {
   if (viewMode !== 'cases') render();
 }
 
-// Phase 1 — fetch Princeton, write any new data to GitHub immediately.
-// Returns the CSV rows so Phase 2 can keep using them.
-async function syncPrincetonData() {
-  bgStatus('Fetching Princeton CSV…', true);
-  const csvRows = await fetchPrincetonCsvRows();
-  const { newTracts, changedPairs } = diffSnapshot(csvRows, snapshot);
-
-  if (newTracts.length === 0 && changedPairs.length === 0) {
-    return csvRows;
+// Build the district-month rollup from the CSV using the library for tract→district.
+// Cheap, deterministic, ~5000 row loop.
+function buildSnapshotFromCsv(csvRows, lib) {
+  const tracts = (lib && lib.tracts) || {};
+  const byDistrictMonth = {};
+  const unmappedGeoids = new Set();
+  for (const r of csvRows) {
+    const geoid = String(r.GEOID);
+    const month = String(r.month);
+    const filings = r.filings_2020 || 0;
+    const t = tracts[geoid];
+    if (!t || !t.council_district) {
+      unmappedGeoids.add(geoid);
+      continue;
+    }
+    const d = t.council_district;
+    if (!byDistrictMonth[d]) byDistrictMonth[d] = {};
+    byDistrictMonth[d][month] = (byDistrictMonth[d][month] || 0) + filings;
   }
-
-  // Merge in memory and surface the data IMMEDIATELY — visitor sees Princeton
-  // numbers the moment we have them, without waiting for the GitHub publish.
-  const rawEntries = buildRawTractEntries(newTracts, csvRows);
-  snapshot = mergeAndRecompute(snapshot, rawEntries, changedPairs);
-  refreshSnapshotUi();
-
-  bgStatus(`Princeton: ${newTracts.length} new tracts, ${changedPairs.length} new cells — persisting…`, true);
-  // Persist to GitHub in the background; don't block enrichment on it.
-  publishSnapshot(
-    snapshot,
-    `eviction-lab: +${newTracts.length} tracts, +${changedPairs.length} cells (raw)`
-  ).catch(e => console.warn('phase-1 publish failed:', e));
-  return csvRows;
+  return {
+    updated_at: new Date().toISOString(),
+    source_url: PRINCETON_CSV,
+    by_district_month: byDistrictMonth,
+    unmapped_tracts: [...unmappedGeoids].sort(),
+    csv_row_count: csvRows.length,
+  };
 }
 
-// Phase 2 — enrich any tract that's missing council_district, batched publish.
-async function enrichMissingTracts(csvRows) {
-  const todo = Object.keys(snapshot.tracts)
-    .filter(g => !snapshot.tracts[g].council_district);
+function snapshotsEqual(a, b) {
+  if (!a || !b) return false;
+  return JSON.stringify(a.by_district_month || {}) === JSON.stringify(b.by_district_month || {});
+}
 
-  if (todo.length === 0) {
-    bgStatus('Princeton snapshot fully enriched', false);
-    setTimeout(() => bgStatus(''), 4000);
-    return;
-  }
-
-  // Soft cross-tab lock: if another browser started enrichment recently,
-  // back off so we don't all hammer Nashville GIS in parallel.
-  if (recentlyRan(LAST_ENRICH_KEY, ENRICH_RESTART_THROTTLE_MS)) {
-    bgStatus(`${todo.length} tracts need enrichment — another tab is working on it`, false);
+// Walk missing tracts, enrich each one with TIGER + Nashville GIS, append to
+// the library, and batch-publish so the next visitor inherits the progress.
+// This is the slow path — runs only when the library has gaps. Most visitors
+// after the first round will skip it entirely.
+async function extendLibrary(missingGeoids, csvRows) {
+  if (recentlyRan(LAST_LIBRARY_RUN_KEY, LIBRARY_RESTART_THROTTLE_MS)) {
+    bgStatus(`${missingGeoids.length} tracts need mapping — another tab is on it`, false);
     setTimeout(() => bgStatus(''), 5000);
-    return;
+    return false;
   }
 
-  let done = 0;
-  let sinceLastPublish = 0;
+  const sampleByGeoid = {};
+  for (const r of csvRows) {
+    const g = String(r.GEOID);
+    if (!sampleByGeoid[g]) sampleByGeoid[g] = r;
+  }
 
-  for (const geoid of todo) {
-    markRan(LAST_ENRICH_KEY);
-    bgStatus(`Enriching ${done+1}/${todo.length}: tract ${geoid}`, true);
+  if (!library) library = { built_at: null, tracts: {} };
+
+  let mapped = 0, done = 0, sinceLastPublish = 0;
+  for (const geoid of missingGeoids) {
+    markRan(LAST_LIBRARY_RUN_KEY);
+    bgStatus(`Mapping tract ${done+1}/${missingGeoids.length}: ${geoid}`, true);
     try {
       const centroid = await bgGetCentroid(geoid);
       if (centroid) {
@@ -1037,26 +953,28 @@ async function enrichMissingTracts(csvRows) {
           const dist = await bgGetCouncilDistrict(centroid.lat, centroid.lon);
           if (dist) { council = dist.district; rep = dist.rep; }
         } catch {}
-        const t = snapshot.tracts[geoid];
-        t.lat = centroid.lat;
-        t.lon = centroid.lon;
-        t.council_district = council;
-        t.council_rep = rep;
-        t.enriched_at = new Date().toISOString();
-        sinceLastPublish++;
+        const sample = sampleByGeoid[geoid] || {};
+        library.tracts[geoid] = {
+          lat: centroid.lat, lon: centroid.lon,
+          council_district: council, council_rep: rep,
+          racial_majority: sample.racial_majority || '',
+        };
+        if (council) { mapped++; sinceLastPublish++; }
       }
     } catch (e) {
-      console.warn('enrich error', geoid, e);
+      console.warn('library entry failed for', geoid, e);
     }
     done++;
 
-    if (sinceLastPublish >= ENRICH_BATCH_SIZE) {
-      recomputeDistrictRollup(snapshot);
+    if (sinceLastPublish >= LIBRARY_BATCH_SIZE) {
+      library.built_at = new Date().toISOString();
       try {
-        await publishSnapshot(snapshot, `eviction-lab: +${sinceLastPublish} tracts enriched (${done}/${todo.length})`);
-        refreshSnapshotUi();
+        await publishGzippedJson(
+          LIBRARY_FILE, library,
+          `tract-district-map: +${sinceLastPublish} mapped (${Object.keys(library.tracts).length} total)`
+        );
       } catch (e) {
-        console.warn('mid-enrichment publish failed:', e);
+        console.warn('mid-library publish failed:', e);
       }
       sinceLastPublish = 0;
     }
@@ -1065,40 +983,73 @@ async function enrichMissingTracts(csvRows) {
   }
 
   if (sinceLastPublish > 0) {
-    recomputeDistrictRollup(snapshot);
+    library.built_at = new Date().toISOString();
     try {
-      await publishSnapshot(snapshot, `eviction-lab: enrichment complete (${done} tracts this session)`);
-      refreshSnapshotUi();
+      await publishGzippedJson(
+        LIBRARY_FILE, library,
+        `tract-district-map: ${Object.keys(library.tracts).length} tracts (build complete)`
+      );
     } catch (e) {
-      console.warn('final publish failed:', e);
+      console.warn('final library publish failed:', e);
     }
   }
 
-  bgStatus(`Enrichment done — ${done} tracts processed`, false);
+  bgStatus(`Mapped ${mapped} new tracts to council districts`, false);
   setTimeout(() => bgStatus(''), 5000);
+  return mapped > 0;
 }
 
+// One unified flow:
+//   1. Fetch Princeton CSV + load tract-district library
+//   2. Build the snapshot in memory from CSV × library (instant)
+//   3. Publish snapshot if it differs from what's on GitHub
+//   4. Only if the library is missing tracts the CSV mentions — extend it
+//      (slow, one-time work), then rebuild + republish the snapshot
 async function kickBackgroundSync() {
   try {
-    // Phase 1: data check. Skip the throttle if we have no snapshot yet —
-    // we always want to build the first one ASAP.
-    const haveSnapshot = snapshot && Object.keys(snapshot.tracts || {}).length > 0;
-    let csvRows = null;
-    if (!haveSnapshot || !recentlyRan(LAST_DATA_CHECK_KEY, DATA_CHECK_THROTTLE_MS)) {
-      markRan(LAST_DATA_CHECK_KEY);
-      try {
-        csvRows = await syncPrincetonData();
-      } catch (e) {
-        console.warn('princeton sync failed:', e);
-        bgStatus(`Princeton sync failed: ${e.message}`, false);
-        setTimeout(() => bgStatus(''), 5000);
+    bgStatus('Fetching Princeton CSV…', true);
+    const [csvRows, libFromGithub] = await Promise.all([
+      fetchPrincetonCsvRows(),
+      library ? Promise.resolve(library) : loadLibrary(),
+    ]);
+    library = libFromGithub || library || { built_at: null, tracts: {} };
+
+    const newSnapshot = buildSnapshotFromCsv(csvRows, library);
+    const changed = !snapshot || !snapshotsEqual(snapshot, newSnapshot);
+
+    if (changed) {
+      snapshot = newSnapshot;
+      refreshSnapshotUi();
+      if (Object.keys(newSnapshot.by_district_month).length > 0) {
+        publishGzippedJson(
+          SNAPSHOT_FILE, newSnapshot,
+          `eviction-lab: rebuild from CSV+library (${Object.keys(newSnapshot.by_district_month).length} districts, ${csvRows.length} rows)`
+        ).catch(e => console.warn('snapshot publish failed:', e));
       }
     }
 
-    // Phase 2: enrichment (always attempt — there may be leftover work
-    // from a previous visitor who closed the tab mid-run)
-    if (snapshot && Object.keys(snapshot.tracts).length > 0) {
-      await enrichMissingTracts(csvRows);
+    // Library check: any tract Princeton mentions that we haven't mapped yet?
+    const csvTracts = [...new Set(csvRows.map(r => String(r.GEOID)))];
+    const missing = csvTracts.filter(g => !library.tracts[g] || !library.tracts[g].council_district);
+
+    if (missing.length === 0) {
+      bgStatus(`Up to date · library covers ${csvTracts.length} tracts`, false);
+      setTimeout(() => bgStatus(''), 3000);
+      return;
+    }
+
+    const extended = await extendLibrary(missing, csvRows);
+    if (extended) {
+      // Rebuild snapshot with the new mappings now folded in
+      const finalSnapshot = buildSnapshotFromCsv(csvRows, library);
+      if (!snapshotsEqual(snapshot, finalSnapshot)) {
+        snapshot = finalSnapshot;
+        refreshSnapshotUi();
+        publishGzippedJson(
+          SNAPSHOT_FILE, finalSnapshot,
+          `eviction-lab: rebuild after library extension`
+        ).catch(e => console.warn('snapshot publish failed:', e));
+      }
     }
   } catch (e) {
     console.warn('bg sync failed:', e);
