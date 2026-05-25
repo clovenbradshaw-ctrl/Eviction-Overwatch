@@ -217,6 +217,35 @@ h1 {
   margin-left: 6px; cursor: pointer; font-weight: bold;
 }
 
+.export-wrap { position: relative; margin-left: auto; }
+.export-btn {
+  padding: 4px 12px; font-size: 11px;
+  font-family: var(--mono); color: var(--gold);
+  background: transparent; border: 1px solid var(--gold-dim);
+  border-radius: 3px; cursor: pointer; letter-spacing: 0.04em;
+}
+.export-btn:hover { background: rgba(196,164,74,0.10); }
+.export-btn[disabled] { opacity: 0.6; cursor: wait; }
+.export-menu {
+  position: absolute; top: 100%; right: 0; z-index: 50;
+  min-width: 240px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 4px; margin-top: 4px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+}
+.export-menu .item {
+  padding: 8px 12px; cursor: pointer;
+  border-bottom: 1px solid #1f1d17;
+  display: flex; justify-content: space-between; gap: 12px;
+}
+.export-menu .item:last-child { border-bottom: none; }
+.export-menu .item:hover { background: rgba(196,164,74,0.08); }
+.export-menu .item .count { color: var(--dim); font-size: 11px; }
+.export-menu .note {
+  padding: 8px 12px; font-size: 10px; color: var(--dim);
+  border-top: 1px solid #1f1d17; line-height: 1.4;
+}
+
 .dropdown {
   position: absolute; top: 100%; left: 0; z-index: 50;
   min-width: 300px; max-height: 320px; overflow-y: auto;
@@ -529,7 +558,13 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 
   <div class="toolbar" id="local-toolbar">
     <input id="search" placeholder="Search docket, plaintiff, attorney, address...">
-    <div class="filter-row" id="filters"></div>
+    <div class="filter-row">
+      <div id="filters" style="display:contents"></div>
+      <div class="export-wrap">
+        <button class="export-btn" id="export-btn" type="button" onclick="toggleExportMenu()">Export ▾</button>
+        <div class="export-menu" id="export-menu" style="display:none"></div>
+      </div>
+    </div>
     <div class="result-count" id="result-count"></div>
   </div>
 
@@ -1811,6 +1846,123 @@ async function kickBackgroundSync() {
   }
 }
 
+/* ───────────────────────── CSV export ─────────────────────────
+   Two scopes: 'filtered' (current search + filters) and 'all'.
+   ENC: fields are decrypted when unlocked, otherwise emitted as empty.
+   Decryption runs concurrently across all rows for one cell key at a time. */
+
+let exportInFlight = false;
+
+function toggleExportMenu() {
+  const menu = document.getElementById('export-menu');
+  if (menu.style.display !== 'none') { menu.style.display = 'none'; return; }
+  const filtered = getFiltered().length;
+  const total = allRows.length;
+  const redactedNote = isUnlocked()
+    ? 'Logged in — encrypted fields will be decrypted.'
+    : 'Not logged in — encrypted fields will be blank.';
+  menu.innerHTML = `
+    <div class="item" onclick="runExport('filtered')">
+      <span>Filtered cases</span><span class="count">${filtered}</span>
+    </div>
+    <div class="item" onclick="runExport('all')">
+      <span>All cases</span><span class="count">${total}</span>
+    </div>
+    <div class="note">${redactedNote}</div>`;
+  menu.style.display = 'block';
+}
+
+function closeExportMenu() {
+  document.getElementById('export-menu').style.display = 'none';
+}
+
+async function runExport(scope) {
+  if (exportInFlight) return;
+  closeExportMenu();
+  const btn = document.getElementById('export-btn');
+  exportInFlight = true;
+  btn.disabled = true;
+  btn.textContent = 'Exporting…';
+  try {
+    const rows = scope === 'filtered' ? getFiltered() : allRows;
+    const csv = await buildCsv(rows);
+    const stamp = new Date().toISOString().slice(0, 10);
+    const suffix = isUnlocked() ? '' : '-redacted';
+    downloadCsv(csv, `eviction-cases-${scope}-${stamp}${suffix}.csv`);
+  } catch (e) {
+    console.warn('[eo] export failed:', e);
+    alert('Export failed: ' + e.message);
+  } finally {
+    exportInFlight = false;
+    btn.disabled = false;
+    btn.textContent = 'Export ▾';
+  }
+}
+
+async function buildCsv(rows) {
+  // Union of all keys across rows. 'docket' first, then the priority fields
+  // that already drive the record panel, then everything else alphabetically.
+  const keySet = new Set();
+  for (const r of rows) for (const k of Object.keys(r)) keySet.add(k);
+  const PRIORITY = [
+    'docket', 'status', 'file_date', 'Plaintiff_1', 'Attorney',
+    'address_formatted', 'council_district', 'council_rep',
+    'state_house_district', 'us_congressional_district',
+    'census_geoid', 'census_name',
+  ];
+  const cols = [];
+  const seen = new Set();
+  for (const k of PRIORITY) if (keySet.has(k)) { cols.push(k); seen.add(k); }
+  for (const k of [...keySet].sort()) if (!seen.has(k)) cols.push(k);
+
+  const unlocked = isUnlocked();
+  const out = new Array(rows.length);
+  for (let i = 0; i < rows.length; i++) out[i] = {};
+
+  // Resolve cell values per column. ENC: cells in the same column get
+  // decrypted in parallel; plain cells fill in synchronously.
+  for (const k of cols) {
+    // Belt-and-suspenders: defendant fields are already encrypted in the
+    // source, but if a plaintext defendant column ever shows up we still
+    // refuse to leak it without a login.
+    const forceBlank = !unlocked && /^defendant/i.test(k);
+    const encJobs = [];
+    for (let i = 0; i < rows.length; i++) {
+      const v = rows[i][k];
+      if (forceBlank) { out[i][k] = ''; continue; }
+      if (v == null || v === '') { out[i][k] = ''; continue; }
+      if (isEncrypted(v)) {
+        if (unlocked) {
+          encJobs.push(decryptValue(v, unlockKeyPassword).then(p => {
+            out[i][k] = p == null ? '' : p;
+          }));
+        } else {
+          out[i][k] = '';
+        }
+      } else if (typeof v === 'object') {
+        out[i][k] = JSON.stringify(v);
+      } else {
+        out[i][k] = String(v);
+      }
+    }
+    if (encJobs.length) await Promise.all(encJobs);
+  }
+
+  return Papa.unparse(out, { columns: cols });
+}
+
+function downloadCsv(text, filename) {
+  const blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 /* ───────────────────────── Boot ───────────────────────── */
 
 document.addEventListener("click", e => {
@@ -1818,6 +1970,7 @@ document.addEventListener("click", e => {
     document.getElementById("dd-" + activeDropdown).style.display = "none";
     activeDropdown = null;
   }
+  if (!e.target.closest(".export-wrap")) closeExportMenu();
 });
 
 document.addEventListener("keydown", e => {
