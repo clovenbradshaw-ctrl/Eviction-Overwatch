@@ -1244,6 +1244,7 @@ async function loadData() {
       markSource('cases', { status: 'ok', rows: allRows.length, fromCache: true });
 
       kickBackgroundSync();
+      kickMssDemographicsSync();
       kickCensusRaceSync();
       startUpdatePolling();
       whenIdle(() => revalidateCases());
@@ -1258,13 +1259,19 @@ async function loadData() {
     kickBackgroundSync();
     kickMssDemographicsSync();
     kickCensusRaceSync();
-    // Persist + sha capture after first paint so we don't block render.
-    whenIdle(async () => {
-      const sha = await fetchLatestCasesSha().catch(() => null);
+    startUpdatePolling();
+
+    // Persist as soon as we're idle so the next refresh hits the warm
+    // path. The previous version gated the OPFS write on the commits-API
+    // sha fetch finishing — a quick second refresh before that resolved
+    // meant the user re-downloaded from scratch. The sha is captured in
+    // parallel and re-persisted once it lands.
+    whenIdle(() => opfsCache.put(CACHE_FILES.cases, { data, sha: null }));
+    fetchLatestCasesSha().then(sha => {
+      if (!sha) return;
       casesSha = sha;
-      await opfsCache.put(CACHE_FILES.cases, { data, sha });
-      startUpdatePolling();
-    });
+      whenIdle(() => opfsCache.put(CACHE_FILES.cases, { data, sha }));
+    }).catch(() => {});
   } catch (e) {
     markSource('cases', { status: 'failed', error: e.message });
     document.getElementById("loading").style.display = "none";
