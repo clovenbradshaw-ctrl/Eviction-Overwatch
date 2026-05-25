@@ -642,6 +642,8 @@ function median(arr) {
 
 function updateCoverageHeadline() {
   const el = document.getElementById('coverage-headline');
+  // Coverage is only meaningful when comparing — keep Local view clean.
+  if (viewSource === 'local') { el.textContent = ''; return; }
   if (!snapshot) { el.innerHTML = '<span style="color:var(--dim)">Princeton snapshot not yet on GitHub</span>'; return; }
   const princeton = princetonByDistrictMonth();
   const local = localByDistrictMonth();
