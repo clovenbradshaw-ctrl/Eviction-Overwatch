@@ -397,6 +397,64 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   display: flex; justify-content: space-between;
   font-size: 9px; color: var(--dim); margin-top: 4px;
 }
+
+/* Race / ethnicity breakdown inside profile */
+.race-bars { display: flex; flex-direction: column; gap: 4px; }
+.race-row {
+  display: grid; grid-template-columns: 200px 1fr 110px;
+  gap: 8px; align-items: center; font-size: 11px;
+}
+.race-row .label-cell { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.race-row .bar-cell {
+  height: 8px; background: rgba(255,255,255,0.04);
+  border-radius: 2px; overflow: hidden;
+}
+.race-row .bar-cell > div {
+  height: 100%; background: var(--gold-dim); border-radius: 2px;
+}
+.race-row .num-cell {
+  font-variant-numeric: tabular-nums; color: var(--dim);
+  text-align: right; font-size: 11px;
+}
+.race-source-note {
+  font-size: 10px; color: var(--dim); margin-top: 10px;
+  padding-top: 8px; border-top: 1px solid var(--surface);
+}
+.race-source-note a { color: var(--gold-dim); text-decoration: none; }
+.race-source-note a:hover { text-decoration: underline; }
+.race-overlap { border-top: 1px dashed var(--border); margin-top: 6px; padding-top: 6px; }
+
+/* Provenance footer — every external source disclosed */
+#provenance-footer {
+  margin-top: 32px; padding: 20px 24px 32px;
+  border-top: 1px solid var(--border);
+  background: #100f0c;
+}
+#provenance-footer .prov-title {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em;
+  color: var(--muted); margin-bottom: 12px;
+}
+#provenance-list {
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+.prov-source {
+  padding: 10px 12px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 4px;
+  font-size: 11px;
+}
+.prov-source .prov-name { color: var(--gold); font-weight: 500; margin-bottom: 3px; }
+.prov-source .prov-url { word-break: break-all; margin-bottom: 6px; }
+.prov-source .prov-url a { color: var(--text); text-decoration: none; }
+.prov-source .prov-url a:hover { color: var(--gold); text-decoration: underline; }
+.prov-source .prov-meta {
+  font-size: 10px; color: var(--dim);
+  font-variant-numeric: tabular-nums; margin-bottom: 4px;
+}
+.prov-source .prov-meta.fresh { color: var(--green); }
+.prov-source .prov-meta.pending { color: var(--amber); }
+.prov-source .prov-meta.failed { color: var(--red); }
+.prov-source .prov-notes { color: var(--muted); font-size: 10px; line-height: 1.4; }
 </style>
 </head>
 <body>
@@ -484,12 +542,98 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
     <div id="map"></div>
     <div class="map-status" id="map-status">Loading map…</div>
   </div>
+
+  <footer id="provenance-footer">
+    <div class="prov-title">Data Sources · provenance</div>
+    <div id="provenance-list"></div>
+  </footer>
 </div>
 
 <div id="error" style="display:none"></div>
 
 <script>
 const CASES_URL = "https://raw.githubusercontent.com/clovenbradshaw-ctrl/plain-text/main/cases.json";
+
+/* ───────────────────────── Provenance registry ─────────────────────────
+   Every external HTTP source the page touches is registered here so the
+   footer can show exactly what was fetched, when, and how many rows came
+   back. Update via markSource(...) on each fetch. */
+
+const ACS_YEAR = 2022;  // ACS 5-year vintage we query (2018–2022 averages)
+const ACS_RACE_URL = `https://api.census.gov/data/${ACS_YEAR}/acs/acs5`
+  + `?get=NAME,B02001_001E,B02001_002E,B02001_003E,B02001_004E,B02001_005E,B02001_006E,B02001_007E,B02001_008E,B03003_003E`
+  + `&for=tract:*&in=state:47%20county:037`;
+const TIGER_TRACT_URL = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWL_Current/MapServer/8/query?'
+  + 'where=' + encodeURIComponent("STATE='47' AND COUNTY='037'")
+  + '&outFields=GEOID&returnGeometry=true&f=geojson';
+
+const sources = {
+  cases: {
+    name: 'Nashville eviction cases',
+    url: CASES_URL,
+    notes: 'Court records compiled from circuitclerk.nashville.gov, gzipped + base64-wrapped in a GitHub-hosted JSON.',
+    status: 'pending', fetchedAt: null, rows: null, error: null,
+  },
+  princeton: {
+    name: 'Princeton Eviction Lab — Nashville monthly filings',
+    url: 'https://evictionlab.org/uploads/nashville_monthly_2020_2021.csv',
+    notes: 'Pre-pandemic / pandemic-era filings 2020–2021 by census tract. Fetched live each session via CORS proxy; never persisted.',
+    status: 'pending', fetchedAt: null, rows: null, error: null,
+  },
+  acs: {
+    name: `US Census ACS 5-year (${ACS_YEAR}) — race & ethnicity by tract`,
+    url: ACS_RACE_URL,
+    notes: 'Tables B02001 (race) and B03003 (Hispanic origin) for Davidson County (47/037). This is the upstream source the Eviction Lab itself uses for demographics.',
+    status: 'pending', fetchedAt: null, rows: null, error: null,
+  },
+  tiger: {
+    name: 'US Census TIGERweb — tract boundaries',
+    url: TIGER_TRACT_URL,
+    notes: 'Current census tract polygons for Davidson County. Fetched only when the Map view is opened.',
+    status: 'idle', fetchedAt: null, rows: null, error: null,
+  },
+};
+
+function markSource(key, patch) {
+  if (!sources[key]) return;
+  Object.assign(sources[key], patch);
+  if (patch.status === 'ok' || patch.status === 'failed') {
+    sources[key].fetchedAt = new Date().toISOString();
+  }
+  renderProvenance();
+}
+
+function fmtFetchedAt(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+}
+
+function renderProvenance() {
+  const root = document.getElementById('provenance-list');
+  if (!root) return;
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+  root.innerHTML = Object.values(sources).map(s => {
+    let statusLine;
+    if (s.status === 'ok') {
+      statusLine = `<div class="prov-meta fresh">✓ Fetched ${esc(fmtFetchedAt(s.fetchedAt))}${s.rows != null ? ` · ${s.rows.toLocaleString()} rows` : ''}</div>`;
+    } else if (s.status === 'failed') {
+      statusLine = `<div class="prov-meta failed">✗ Failed ${esc(fmtFetchedAt(s.fetchedAt))}${s.error ? ` · ${esc(s.error)}` : ''}</div>`;
+    } else if (s.status === 'pending') {
+      statusLine = `<div class="prov-meta pending">↻ Fetching…</div>`;
+    } else {
+      statusLine = `<div class="prov-meta">Not fetched yet</div>`;
+    }
+    return `<div class="prov-source">
+      <div class="prov-name">${esc(s.name)}</div>
+      <div class="prov-url"><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.url)}</a></div>
+      ${statusLine}
+      <div class="prov-notes">${esc(s.notes)}</div>
+    </div>`;
+  }).join('');
+}
 
 /* ───────────────────────── Existing case-table state ───────────────────────── */
 
@@ -536,6 +680,7 @@ let agg = {
   princetonDistrict: {},      // { "5":   { "MM/YYYY": filings } }
   localMonths:     [],        // sorted asc, derived from allRows
   princetonMonths: [],        // sorted asc, derived from princetonRows
+  tractRace:       {},        // { GEOID: { total, white, black, native, asian, pacific, other, multiple, hispanic, name } }
 };
 
 // Map view state
@@ -572,6 +717,7 @@ async function loadData() {
       Defendant_1: (c.Defendant_1 || "").startsWith("ENC:") ? "—" : c.Defendant_1 || "",
     }));
 
+    markSource('cases', { status: 'ok', rows: allRows.length });
     rebuildLocalAggregates();
 
     document.getElementById("loading").style.display = "none";
@@ -583,12 +729,15 @@ async function loadData() {
     buildFilters();
     buildHeader();
     bindViewControls();
+    renderProvenance();
     render();
 
-    // Pull the Princeton CSV live from evictionlab.org in the background.
-    // Nothing is written back to GitHub — Princeton lives only in memory.
+    // Pull background datasets live (Princeton filings CSV + Census ACS race
+    // table). Nothing is written back to GitHub — both live only in memory.
     kickBackgroundSync();
+    kickCensusRaceSync();
   } catch (e) {
+    markSource('cases', { status: 'failed', error: e.message });
     document.getElementById("loading").style.display = "none";
     document.getElementById("error").style.display = "block";
     document.getElementById("error").textContent = "Error: " + e.message;
@@ -991,13 +1140,18 @@ function mapLayer() {
 }
 
 async function fetchTractGeometries() {
-  const url = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWL_Current/MapServer/8/query?'
-    + 'where=' + encodeURIComponent("STATE='47' AND COUNTY='037'")
-    + '&outFields=GEOID&returnGeometry=true&f=geojson';
-  const r = await fetch(pxProxy(url));
-  if (!r.ok) throw new Error(`TIGER geometry HTTP ${r.status}`);
+  markSource('tiger', { status: 'pending' });
+  const r = await fetch(pxProxy(TIGER_TRACT_URL));
+  if (!r.ok) {
+    markSource('tiger', { status: 'failed', error: `HTTP ${r.status}` });
+    throw new Error(`TIGER geometry HTTP ${r.status}`);
+  }
   const data = await r.json();
-  if (!data.features) throw new Error('TIGER geometry: no features');
+  if (!data.features) {
+    markSource('tiger', { status: 'failed', error: 'no features' });
+    throw new Error('TIGER geometry: no features');
+  }
+  markSource('tiger', { status: 'ok', rows: data.features.length });
   return data;
 }
 
@@ -1309,6 +1463,47 @@ function showDistrictProfile(district) {
             }).join('')}</ul>
           </div>` : ''}
 
+          ${(() => {
+            const race = aggregateDistrictRace(a.district);
+            if (!race) {
+              const status = sources.acs.status;
+              const msg = status === 'pending' ? 'Fetching Census ACS data…'
+                : status === 'failed' ? `Census ACS fetch failed: ${escape(sources.acs.error || '')}`
+                : 'No tracts mapped to this district yet.';
+              return `<div class="profile-section"><h3>Race & Ethnicity</h3><div class="profile-empty">${msg}</div></div>`;
+            }
+            const pct = (n, t) => t > 0 ? (n / t * 100).toFixed(1) : '0.0';
+            const bar = (n, t) => `<div style="width:${t > 0 ? (n/t*100).toFixed(2) : 0}%"></div>`;
+            const row = (label, n) => `<div class="race-row">
+              <div class="label-cell">${label}</div>
+              <div class="bar-cell">${bar(n, race.total)}</div>
+              <div class="num-cell">${n.toLocaleString()} · ${pct(n, race.total)}%</div>
+            </div>`;
+            const coverage = race.tractsKnown
+              ? `${race.tractsMatched} of ${race.tractsKnown} known tracts matched`
+              : '';
+            return `<div class="profile-section">
+              <h3>Race &amp; Ethnicity (district population)</h3>
+              <div class="race-bars">
+                ${row('White alone', race.white)}
+                ${row('Black or African American alone', race.black)}
+                ${row('Asian alone', race.asian)}
+                ${row('American Indian / Alaska Native alone', race.native)}
+                ${row('Native Hawaiian / Pacific Islander alone', race.pacific)}
+                ${row('Some other race alone', race.other)}
+                ${row('Two or more races', race.multiple)}
+                <div class="race-overlap"></div>
+                ${row('Hispanic or Latino (any race)', race.hispanic)}
+              </div>
+              <div class="race-source-note">
+                Total population: <strong>${race.total.toLocaleString()}</strong> · ${coverage}.
+                Aggregated from tracts in this district. Source:
+                <a href="${escape(sources.acs.url)}" target="_blank" rel="noopener">US Census ACS 5-year (${ACS_YEAR}), tables B02001 + B03003</a>.
+                Hispanic/Latino is an ethnicity that overlaps with the race categories above, so it is shown separately and is not part of the sum.
+              </div>
+            </div>`;
+          })()}
+
           <div class="profile-section">
             <h3>Recent Cases</h3>
             <table class="profile-cases"><tbody>
@@ -1454,15 +1649,102 @@ async function kickBackgroundSync() {
     bgStatus('Fetching Princeton CSV…', true);
     princetonRows = await fetchPrincetonCsvRows();
     rebuildPrincetonAggregates();
+    markSource('princeton', { status: 'ok', rows: princetonRows.length });
     console.info(`[eo] princeton csv: ${princetonRows.length} rows · ${agg.princetonMonths.length} months`);
     refreshSnapshotUi();
     bgStatus(`Princeton: ${princetonRows.length} rows loaded (live)`, false);
     setTimeout(() => bgStatus(''), 3000);
   } catch (e) {
     console.warn('Princeton CSV fetch failed:', e);
+    markSource('princeton', { status: 'failed', error: e.message });
     bgStatus(`Princeton fetch failed: ${e.message}`, false);
     setTimeout(() => bgStatus(''), 5000);
   }
+}
+
+/* ───────────────────────── Census ACS race data ─────────────────────────
+   Fetched once per session direct from api.census.gov through the n8n CORS
+   proxy. We pull tables B02001 (race) and B03003 (Hispanic origin) for every
+   tract in Davidson County, then aggregate up to council districts using the
+   tract→district mapping that's already in agg.tractToDistrict.
+   Nothing is persisted; the data lives only in memory. */
+
+async function fetchCensusRaceRows() {
+  const r = await fetch(pxProxy(ACS_RACE_URL));
+  if (!r.ok) throw new Error(`ACS HTTP ${r.status}`);
+  const data = await r.json();
+  if (!Array.isArray(data) || !data.length) throw new Error('ACS: empty response');
+  const headers = data[0];
+  const idx = {};
+  headers.forEach((h, i) => { idx[h] = i; });
+  const need = ['NAME','B02001_001E','B02001_002E','B02001_003E','B02001_004E','B02001_005E','B02001_006E','B02001_007E','B02001_008E','B03003_003E','state','county','tract'];
+  for (const k of need) if (idx[k] == null) throw new Error(`ACS: missing column ${k}`);
+  const out = {};
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    const geoid = String(row[idx.state]) + String(row[idx.county]) + String(row[idx.tract]);
+    const num = v => { const n = +v; return Number.isFinite(n) && n >= 0 ? n : 0; };
+    out[geoid] = {
+      name:     row[idx.NAME],
+      total:    num(row[idx['B02001_001E']]),
+      white:    num(row[idx['B02001_002E']]),
+      black:    num(row[idx['B02001_003E']]),
+      native:   num(row[idx['B02001_004E']]),
+      asian:    num(row[idx['B02001_005E']]),
+      pacific:  num(row[idx['B02001_006E']]),
+      other:    num(row[idx['B02001_007E']]),
+      multiple: num(row[idx['B02001_008E']]),
+      hispanic: num(row[idx['B03003_003E']]),
+    };
+  }
+  return out;
+}
+
+async function kickCensusRaceSync() {
+  try {
+    bgStatus('Fetching Census ACS race data…', true);
+    agg.tractRace = await fetchCensusRaceRows();
+    const n = Object.keys(agg.tractRace).length;
+    markSource('acs', { status: 'ok', rows: n });
+    console.info(`[eo] ACS ${ACS_YEAR}: ${n} tracts loaded`);
+    bgStatus(`ACS: ${n} tracts loaded (live)`, false);
+    setTimeout(() => bgStatus(''), 3000);
+  } catch (e) {
+    console.warn('Census ACS fetch failed:', e);
+    markSource('acs', { status: 'failed', error: e.message });
+    bgStatus(`ACS fetch failed: ${e.message}`, false);
+    setTimeout(() => bgStatus(''), 5000);
+  }
+}
+
+/* Sum up race counts across every tract mapped to a given council district.
+   Returns null if the data isn't loaded yet, or if no tracts in our cases
+   ever appeared in this district. The aggregate is by population, not by
+   case count — this describes the district's demographic profile. */
+function aggregateDistrictRace(district) {
+  if (!agg.tractRace || !Object.keys(agg.tractRace).length) return null;
+  const tractIds = [];
+  for (const g in agg.tractToDistrict) {
+    if (agg.tractToDistrict[g].council_district === district) tractIds.push(g);
+  }
+  if (!tractIds.length) return null;
+  const sum = { total: 0, white: 0, black: 0, native: 0, asian: 0, pacific: 0, other: 0, multiple: 0, hispanic: 0 };
+  let matched = 0, missing = [];
+  for (const g of tractIds) {
+    const r = agg.tractRace[g];
+    if (!r) { missing.push(g); continue; }
+    matched++;
+    sum.total    += r.total;
+    sum.white    += r.white;
+    sum.black    += r.black;
+    sum.native   += r.native;
+    sum.asian    += r.asian;
+    sum.pacific  += r.pacific;
+    sum.other    += r.other;
+    sum.multiple += r.multiple;
+    sum.hispanic += r.hispanic;
+  }
+  return { ...sum, tractsMatched: matched, tractsKnown: tractIds.length, missing };
 }
 
 /* ───────────────────────── Boot ───────────────────────── */
