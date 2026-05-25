@@ -7,6 +7,8 @@
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%231a1810'/%3E%3Ctext x='50%25' y='54%25' font-family='Georgia,serif' font-size='44' font-weight='700' text-anchor='middle' dominant-baseline='middle' fill='%23c9a961'%3E%E2%9A%96%3C/text%3E%3C/svg%3E">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:wght@400;600&display=swap');
 
@@ -250,6 +252,45 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 
 .spark { display: inline-flex; gap: 1px; align-items: flex-end; height: 16px; }
 .spark span { display: inline-block; width: 4px; background: var(--gold-dim); border-radius: 1px; }
+
+/* Map view */
+#map-view { padding: 0; }
+#map { width: 100%; height: 65vh; background: #1a1814; }
+.map-controls {
+  padding: 12px 24px; background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+}
+.map-controls .month-label {
+  font-size: 13px; font-weight: 500; min-width: 110px;
+  color: var(--gold); font-variant-numeric: tabular-nums;
+}
+.map-controls input[type=range] {
+  flex: 1; min-width: 200px; accent-color: var(--gold);
+}
+.map-controls .scale-legend {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 10px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.08em;
+}
+.map-controls .scale-bar {
+  display: inline-block; width: 120px; height: 8px;
+  background: linear-gradient(to right, #ffffb2, #fed976, #feb24c, #fd8d3c, #fc4e2a, #e31a1c, #b10026);
+  border-radius: 2px;
+}
+.map-status {
+  padding: 40px 24px; text-align: center;
+  color: var(--muted); font-size: 12px;
+}
+.leaflet-tooltip {
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); font-family: var(--mono); font-size: 11px;
+  padding: 6px 10px; border-radius: 3px; box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+}
+.leaflet-tooltip::before { border-top-color: var(--border); }
+.leaflet-control-zoom a {
+  background: var(--surface); color: var(--text); border-color: var(--border);
+}
+.leaflet-control-zoom a:hover { background: var(--bg); color: var(--gold); }
 </style>
 </head>
 <body>
@@ -288,6 +329,7 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
       <div class="seg" id="view-seg">
         <button data-val="cases" class="on">Cases</button>
         <button data-val="coverage">Coverage by District</button>
+        <button data-val="map">Map</button>
       </div>
     </div>
     <div class="coverage" id="coverage-headline"></div>
@@ -307,6 +349,18 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   </div>
 
   <div id="grid-view" style="display:none"></div>
+
+  <div id="map-view" style="display:none">
+    <div class="map-controls" id="map-controls" style="display:none">
+      <span class="month-label" id="map-month-label"></span>
+      <input type="range" id="map-slider" min="0" max="0" value="0">
+      <div class="scale-legend">
+        <span>fewer</span><span class="scale-bar"></span><span>more</span>
+      </div>
+    </div>
+    <div id="map"></div>
+    <div class="map-status" id="map-status">Loading map…</div>
+  </div>
 </div>
 
 <div id="error" style="display:none"></div>
@@ -344,7 +398,16 @@ let filters = {};
 let activeDropdown = null;
 
 let snapshot = null;          // decoded eviction-lab-snapshot.json
-let viewMode = 'cases';       // 'cases' | 'coverage'
+let viewMode = 'cases';       // 'cases' | 'coverage' | 'map'
+
+// Map view state
+let tractMonthlyData = null;  // { GEOID: { "MM/YYYY": filings } }
+let mapMonths = [];           // sorted ascending: ["01/2024", "02/2024", ...]
+let maxFilings = 0;           // max single-tract single-month value across CSV
+let tractGeometries = null;   // GeoJSON FeatureCollection from TIGERweb
+let leafletMap = null;
+let tractLayer = null;
+let mapMonth = null;          // currently displayed "MM/YYYY"
 
 function shorten(val, prefix) {
   return (val || "").replace(prefix, "D");
@@ -748,21 +811,175 @@ function renderCoverageGrid() {
   root.innerHTML = html;
 }
 
+/* ───────────────────────── Map view (heat map + time slider) ───────────────────────── */
+
+function buildTractMonthlyData(csvRows) {
+  const data = {};
+  const months = new Set();
+  let max = 0;
+  for (const r of csvRows) {
+    const g = String(r.GEOID);
+    const m = String(r.month);
+    const f = r.filings_2020 || 0;
+    if (!data[g]) data[g] = {};
+    data[g][m] = f;
+    months.add(m);
+    if (f > max) max = f;
+  }
+  const sorted = [...months].sort((a, b) => {
+    const [am, ay] = a.split('/'); const [bm, by] = b.split('/');
+    return (ay + am).localeCompare(by + bm);
+  });
+  return { data, months: sorted, max };
+}
+
+async function fetchTractGeometries() {
+  const url = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWL_Current/MapServer/8/query?'
+    + 'where=' + encodeURIComponent("STATE='47' AND COUNTY='037'")
+    + '&outFields=GEOID&returnGeometry=true&f=geojson';
+  const r = await fetch(pxProxy(url));
+  if (!r.ok) throw new Error(`TIGER geometry HTTP ${r.status}`);
+  const data = await r.json();
+  if (!data.features) throw new Error('TIGER geometry: no features');
+  return data;
+}
+
+// YlOrRd sequential palette
+const HEAT_STOPS = [
+  [0.00, [255, 255, 178]],
+  [0.20, [254, 217, 118]],
+  [0.40, [254, 178, 76]],
+  [0.60, [253, 141, 60]],
+  [0.75, [252, 78, 42]],
+  [0.90, [227, 26, 28]],
+  [1.00, [177, 0, 38]],
+];
+
+function colorForFilings(filings, max) {
+  if (filings == null || filings <= 0) return '#1a1814';
+  const t = Math.min(1, filings / Math.max(1, max));
+  let prev = HEAT_STOPS[0], next = HEAT_STOPS[HEAT_STOPS.length - 1];
+  for (let i = 0; i < HEAT_STOPS.length - 1; i++) {
+    if (t >= HEAT_STOPS[i][0] && t <= HEAT_STOPS[i+1][0]) {
+      prev = HEAT_STOPS[i]; next = HEAT_STOPS[i+1]; break;
+    }
+  }
+  const span = next[0] - prev[0] || 1;
+  const f = (t - prev[0]) / span;
+  const ch = i => Math.round(prev[1][i] + (next[1][i] - prev[1][i]) * f);
+  return `rgb(${ch(0)},${ch(1)},${ch(2)})`;
+}
+
+function updateMapColors() {
+  if (!tractLayer || !tractMonthlyData || !mapMonth) return;
+  tractLayer.eachLayer(layer => {
+    const geoid = String(layer.feature.properties.GEOID);
+    const filings = (tractMonthlyData[geoid] && tractMonthlyData[geoid][mapMonth]) || 0;
+    layer.setStyle({ fillColor: colorForFilings(filings, maxFilings) });
+  });
+}
+
+async function renderMapView() {
+  const status = document.getElementById('map-status');
+  const controls = document.getElementById('map-controls');
+
+  // Waiting on the CSV parse (kicked by kickBackgroundSync)
+  if (!tractMonthlyData || mapMonths.length === 0) {
+    status.textContent = 'Waiting for Princeton CSV…';
+    status.style.display = '';
+    controls.style.display = 'none';
+    return;
+  }
+
+  if (!mapMonth) mapMonth = mapMonths[mapMonths.length - 1];
+
+  // Fetch tract polygons once per session
+  if (!tractGeometries) {
+    status.textContent = 'Fetching Davidson County tract boundaries from TIGERweb…';
+    status.style.display = '';
+    controls.style.display = 'none';
+    try {
+      tractGeometries = await fetchTractGeometries();
+    } catch (e) {
+      console.warn('tract geometry fetch failed:', e);
+      status.textContent = 'Failed to load tract boundaries: ' + e.message;
+      return;
+    }
+  }
+
+  // Init Leaflet once
+  if (!leafletMap) {
+    leafletMap = L.map('map', { zoomControl: true, attributionControl: false });
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+    }).addTo(leafletMap);
+    L.control.attribution({ prefix: false })
+      .addAttribution('Tiles © OpenStreetMap, CartoDB · Tracts © US Census')
+      .addTo(leafletMap);
+
+    tractLayer = L.geoJSON(tractGeometries, {
+      style: () => ({
+        fillColor: '#1a1814', fillOpacity: 0.75,
+        color: '#2a2820', weight: 1, opacity: 0.6,
+      }),
+      onEachFeature: (feature, layer) => {
+        const geoid = String(feature.properties.GEOID);
+        layer.on('mouseover', e => {
+          const filings = (tractMonthlyData[geoid] && tractMonthlyData[geoid][mapMonth]) || 0;
+          const districtInfo = library && library.tracts && library.tracts[geoid];
+          const districtLine = districtInfo && districtInfo.council_district
+            ? `<br>${districtInfo.council_district}` : '';
+          layer.bindTooltip(
+            `<strong>Tract ${geoid}</strong>${districtLine}<br>${mapMonth}: ${filings} filings`,
+            { sticky: true }
+          ).openTooltip(e.latlng);
+        });
+        layer.on('mouseout', () => layer.closeTooltip());
+      },
+    }).addTo(leafletMap);
+
+    leafletMap.fitBounds(tractLayer.getBounds(), { padding: [20, 20] });
+
+    // Slider
+    const slider = document.getElementById('map-slider');
+    slider.min = 0;
+    slider.max = mapMonths.length - 1;
+    slider.value = mapMonths.length - 1;
+    slider.addEventListener('input', e => {
+      mapMonth = mapMonths[parseInt(e.target.value, 10)];
+      document.getElementById('map-month-label').textContent = mapMonth;
+      updateMapColors();
+    });
+    document.getElementById('map-month-label').textContent = mapMonth;
+  }
+
+  status.style.display = 'none';
+  controls.style.display = '';
+  updateMapColors();
+  // Leaflet needs a kick to recompute size after its container becomes visible
+  setTimeout(() => leafletMap && leafletMap.invalidateSize(), 50);
+}
+
 /* ───────────────────────── Dispatch ───────────────────────── */
 
 function setVisibility() {
-  const isCases = viewMode === 'cases';
-  document.getElementById('local-toolbar').style.display    = isCases ? '' : 'none';
-  document.getElementById('local-table-wrap').style.display = isCases ? '' : 'none';
-  document.getElementById('grid-view').style.display        = isCases ? 'none' : '';
+  const isCases    = viewMode === 'cases';
+  const isCoverage = viewMode === 'coverage';
+  const isMap      = viewMode === 'map';
+  document.getElementById('local-toolbar').style.display    = isCases    ? '' : 'none';
+  document.getElementById('local-table-wrap').style.display = isCases    ? '' : 'none';
+  document.getElementById('grid-view').style.display        = isCoverage ? '' : 'none';
+  document.getElementById('map-view').style.display         = isMap      ? '' : 'none';
 }
 
 function render() {
   setVisibility();
   if (viewMode === 'cases') {
     renderLocalTable();
-  } else {
+  } else if (viewMode === 'coverage') {
     renderCoverageGrid();
+  } else if (viewMode === 'map') {
+    renderMapView();
   }
   updateCoverageHeadline();
 }
@@ -1021,6 +1238,13 @@ async function kickBackgroundSync() {
     // don't re-fetch it here.
     const csvRows = await fetchPrincetonCsvRows();
     console.info(`[eo] princeton csv: ${csvRows.length} rows · library has ${Object.keys(library.tracts).length} tracts`);
+
+    // Per-tract monthly data powers the Map view; build it once per session.
+    const tmd = buildTractMonthlyData(csvRows);
+    tractMonthlyData = tmd.data;
+    mapMonths = tmd.months;
+    maxFilings = tmd.max;
+    if (viewMode === 'map') renderMapView();
 
     const newSnapshot = buildSnapshotFromCsv(csvRows, library);
     const changed = !snapshot || !snapshotsEqual(snapshot, newSnapshot);
