@@ -424,6 +424,61 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 .race-source-note a:hover { text-decoration: underline; }
 .race-overlap { border-top: 1px dashed var(--border); margin-top: 6px; padding-top: 6px; }
 
+/* Case detail modal */
+.docket-clickable { cursor: pointer; }
+.docket-clickable:hover { text-decoration: underline; }
+.case-fields {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 4px 24px;
+}
+@media (max-width: 640px) {
+  .case-fields { grid-template-columns: 1fr; }
+}
+.case-field {
+  display: flex; gap: 12px; padding: 3px 0;
+  font-size: 11px; align-items: baseline;
+}
+.case-field .label {
+  width: 130px; min-width: 130px;
+  color: var(--dim); font-size: 9px;
+  text-transform: uppercase; letter-spacing: 0.1em;
+}
+.case-field .value {
+  flex: 1; color: var(--text); word-break: break-word;
+}
+.case-field .value .rep { color: var(--muted); }
+
+/* Pleadings timeline */
+.pleadings-list { display: flex; flex-direction: column; }
+.pleading-row {
+  display: grid; grid-template-columns: 88px 64px 1fr auto;
+  gap: 12px; align-items: start;
+  padding: 8px 0; border-bottom: 1px solid var(--surface);
+}
+.pleading-row:last-child { border-bottom: none; }
+.pleading-date {
+  font-variant-numeric: tabular-nums; color: var(--muted);
+  font-size: 11px; padding-top: 2px;
+}
+.pleading-code {
+  font-size: 10px; padding: 2px 6px;
+  background: rgba(196,164,74,0.10); color: var(--gold);
+  border: 1px solid var(--gold-dim); border-radius: 3px;
+  text-align: center; letter-spacing: 0.06em; font-weight: 500;
+}
+.pleading-body { padding-top: 1px; }
+.pleading-desc { font-size: 12px; color: var(--text); line-height: 1.3; }
+.pleading-detail {
+  font-size: 10px; color: var(--dim);
+  margin-top: 2px;
+}
+.pleading-image-badge {
+  font-size: 9px; letter-spacing: 0.1em;
+  color: var(--muted); border: 1px solid var(--border);
+  padding: 2px 6px; border-radius: 2px;
+  align-self: start; white-space: nowrap;
+}
+
 /* Provenance footer — every external source disclosed */
 #provenance-footer {
   margin-top: 32px; padding: 20px 24px 32px;
@@ -929,7 +984,10 @@ function renderLocalTable() {
     return "<tr>" + COLUMNS.map(c => {
       let v = r[c.key] || "";
       if (c.key === "Attorney" && v === ", PRS") v = "pro se";
-      if (c.key === "docket") return `<td><span class="docket">${v}</span></td>`;
+      if (c.key === "docket") {
+        const safe = String(v).replace(/'/g, "\\'");
+        return `<td><span class="docket docket-clickable" onclick="showCaseProfile('${safe}')">${v}</span></td>`;
+      }
       if (c.key === "status") return `<td><span class="dot ${dotClass}"></span>${v}</td>`;
       if (c.key === "council_district") v = shorten(v, "Council District ");
       if (c.key === "state_house_district") v = shorten(v, "State House District ");
@@ -1636,7 +1694,7 @@ function showDistrictProfile(district) {
                 const dotClass = status === 'PENDING' ? 'dot-pending'
                   : (status === 'DISMISSED' || status === 'NONSUIT') ? 'dot-dismissed' : 'dot-other';
                 return `<tr>
-                  <td class="docket">${escape(r.docket || '')}</td>
+                  <td class="docket docket-clickable" onclick="closeDistrictProfile(); showCaseProfile('${String(r.docket || '').replace(/'/g, "\\'")}')">${escape(r.docket || '')}</td>
                   <td>${escape(r.file_date || '')}</td>
                   <td><span class="dot ${dotClass}"></span>${escape(status)}</td>
                   <td>${escape(r.Plaintiff_1 || '')}</td>
@@ -1678,6 +1736,122 @@ function filterCasesByDistrict(d) {
     b.classList.toggle('on', b.dataset.val === 'cases'));
   updateFilterBtns();
   render();
+}
+
+/* ───────────────────────── Case profile + pleadings ───────────────────────── */
+
+const escapeHtml = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+  '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+}[c]));
+
+// Render the PLEADINGS array as a vertical timeline. Pleadings are stored on
+// each case as objects of { date, code, description, detail, has_image }.
+// Sorted newest-first; an "IMG" badge is shown when a scanned image is on
+// file (we don't have a URL to link to, so it's a marker only).
+function formatPleadings(pleadings) {
+  if (!Array.isArray(pleadings) || !pleadings.length) {
+    return '<div class="profile-empty">No pleadings on record.</div>';
+  }
+  const parseDate = v => {
+    const m = String(v || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    return m ? new Date(+m[3], +m[1] - 1, +m[2]).getTime() : 0;
+  };
+  const sorted = [...pleadings].sort((a, b) => parseDate(b.date) - parseDate(a.date));
+  return `<div class="pleadings-list">${sorted.map(p => {
+    const code = String(p.code || '').toUpperCase();
+    return `<div class="pleading-row">
+      <div class="pleading-date">${escapeHtml(p.date || '')}</div>
+      <div class="pleading-code">${escapeHtml(code)}</div>
+      <div class="pleading-body">
+        <div class="pleading-desc">${escapeHtml(p.description || '')}</div>
+        ${p.detail ? `<div class="pleading-detail">${escapeHtml(p.detail)}</div>` : ''}
+      </div>
+      ${p.has_image ? '<div class="pleading-image-badge">IMG</div>' : '<div></div>'}
+    </div>`;
+  }).join('')}</div>`;
+}
+
+function showCaseProfile(docket) {
+  const r = allRows.find(x => x.docket === docket);
+  if (!r) return;
+  // If a district modal is open, close it so we don't stack.
+  closeDistrictProfile();
+
+  const status = r.status || '';
+  const dotClass = status === 'PENDING' ? 'dot-pending'
+    : (status === 'DISMISSED' || status === 'NONSUIT') ? 'dot-dismissed' : 'dot-other';
+  const attorney = r.Attorney === ', PRS' ? 'pro se' : r.Attorney;
+  const datePart = iso => iso ? String(iso).split('T')[0] : '';
+  const districtVal = (label, rep) => label
+    ? escapeHtml(label) + (rep ? ` <span class="rep">· ${escapeHtml(rep)}</span>` : '')
+    : '';
+  const field = (label, htmlValue) => htmlValue
+    ? `<div class="case-field"><div class="label">${escapeHtml(label)}</div><div class="value">${htmlValue}</div></div>`
+    : '';
+
+  const pleadings = Array.isArray(r.pleadings) ? r.pleadings : [];
+
+  const html = `
+    <div class="modal-backdrop" id="case-modal" onclick="if (event.target === this) closeCaseProfile()">
+      <div class="modal">
+        <div class="modal-header">
+          <div>
+            <h2 style="font-family:var(--mono); color:var(--gold); font-size:18px">${escapeHtml(r.docket || '')}</h2>
+            <div class="modal-sub">
+              <span class="dot ${dotClass}"></span>${escapeHtml(status || 'UNKNOWN')}
+              ${r.file_date ? ' · filed ' + escapeHtml(r.file_date) : ''}
+              ${r.last_checked ? ' · last checked ' + escapeHtml(datePart(r.last_checked)) : ''}
+            </div>
+          </div>
+          <button class="modal-close" onclick="closeCaseProfile()">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="profile-section">
+            <h3>Parties</h3>
+            <div class="case-fields">
+              ${field('Plaintiff', escapeHtml(r.Plaintiff_1 || ''))}
+              ${field('Defendant', escapeHtml(r.Defendant_1 || ''))}
+              ${field('Attorney', escapeHtml(attorney || ''))}
+              ${field('Office', escapeHtml(r.office || ''))}
+            </div>
+          </div>
+
+          <div class="profile-section">
+            <h3>Location &amp; Districts</h3>
+            <div class="case-fields">
+              ${field('Address', escapeHtml(r.address_formatted || r.geocoded_address || ''))}
+              ${field('Census Tract', escapeHtml(r.census_name || (r.census_geoid ? 'GEOID ' + r.census_geoid : '')))}
+              ${field('Council', districtVal(r.council_district, r.council_rep))}
+              ${field('State House', districtVal(r.state_house_district, r.state_house_rep))}
+              ${field('State Senate', districtVal(r.state_senate_district, r.state_senate_rep))}
+              ${field('US Congressional', escapeHtml(r.us_congressional_district || ''))}
+              ${field('School Board', districtVal(r.school_board_district, r.school_board_rep))}
+            </div>
+          </div>
+
+          <div class="profile-section">
+            <h3>Pleadings (${pleadings.length})</h3>
+            ${formatPleadings(pleadings)}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const wrap = document.createElement('div');
+  wrap.innerHTML = html;
+  document.body.appendChild(wrap.firstElementChild);
+  document.addEventListener('keydown', escCloseCaseProfile);
+}
+
+function closeCaseProfile() {
+  const m = document.getElementById('case-modal');
+  if (m) m.remove();
+  document.removeEventListener('keydown', escCloseCaseProfile);
+}
+
+function escCloseCaseProfile(e) {
+  if (e.key === 'Escape') closeCaseProfile();
 }
 
 /* ───────────────────────── Dispatch ───────────────────────── */
