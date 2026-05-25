@@ -5,10 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Nashville Eviction Tracker</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%231a1810'/%3E%3Ctext x='50%25' y='54%25' font-family='Georgia,serif' font-size='44' font-weight='700' text-anchor='middle' dominant-baseline='middle' fill='%23c9a961'%3E%E2%9A%96%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://raw.githubusercontent.com" crossorigin>
+<link rel="preconnect" href="https://api.github.com" crossorigin>
+<link rel="preconnect" href="https://n8n.intelechia.com" crossorigin>
+<link rel="preconnect" href="https://tigerweb.geo.census.gov" crossorigin>
+<link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="preload" as="script" href="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js">
+<link rel="preload" as="style"  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:wght@400;600&display=swap');
 
@@ -889,6 +893,109 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 <script>
 const CASES_URL = "https://raw.githubusercontent.com/clovenbradshaw-ctrl/plain-text/main/cases.json";
 
+/* ───────────────────────── OPFS binary cache ─────────────────────────
+   Pay the network cost once. On warm loads each dataset is hydrated from
+   the Origin Private File System (a per-origin sandboxed filesystem the
+   browser persists across sessions) so we render before the network even
+   gets a chance to answer, then revalidate in the background.
+
+   Why OPFS and not IndexedDB: OPFS is a flat file store with no schema
+   migrations, no transactions, and no structured-clone copy on read or
+   write. For these payloads — already-parsed JSON we just want to slurp
+   into memory — it's measurably faster and simpler than wrapping every
+   blob in an IDB record.
+
+   Bump CACHE_VERSION whenever the on-disk shape of a cached entry
+   changes; mismatched versions are treated as cache misses. */
+const CACHE_VERSION = 1;
+const CACHE_FILES = {
+  cases:     'cases.v1.json',
+  princeton: 'princeton.v1.json',
+  acs:       'acs.v1.json',
+  tiger:     'tiger.v1.json',
+};
+
+const opfsCache = (() => {
+  const supported = typeof navigator !== 'undefined'
+    && navigator.storage && typeof navigator.storage.getDirectory === 'function';
+  let rootPromise = null;
+  const root = () => (rootPromise ||= navigator.storage.getDirectory());
+
+  async function get(name) {
+    if (!supported) return null;
+    try {
+      const dir = await root();
+      const handle = await dir.getFileHandle(name);
+      const file = await handle.getFile();
+      const buf = await file.arrayBuffer();
+      const obj = JSON.parse(new TextDecoder().decode(new Uint8Array(buf)));
+      if (!obj || obj.v !== CACHE_VERSION) return null;
+      return obj;
+    } catch (e) {
+      if (e && e.name !== 'NotFoundError') console.warn('[opfs] get', name, e);
+      return null;
+    }
+  }
+
+  async function put(name, payload) {
+    if (!supported) return false;
+    try {
+      const dir = await root();
+      const handle = await dir.getFileHandle(name, { create: true });
+      const writable = await handle.createWritable();
+      const bytes = new TextEncoder().encode(
+        JSON.stringify({ v: CACHE_VERSION, savedAt: Date.now(), ...payload })
+      );
+      await writable.write(bytes);
+      await writable.close();
+      return true;
+    } catch (e) {
+      console.warn('[opfs] put', name, e);
+      return false;
+    }
+  }
+
+  return { supported, get, put };
+})();
+
+/* ───────────────────────── Lazy script loader ─────────────────────────
+   Papaparse and Leaflet are only needed once the user crosses into a code
+   path that uses them (Princeton CSV / Map view). Loading them on demand
+   shaves ~180KB off the critical path. */
+const _scriptPromises = {};
+function loadScript(src) {
+  return _scriptPromises[src] ||= new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('script load failed: ' + src));
+    document.head.appendChild(s);
+  });
+}
+const _stylePromises = {};
+function loadStyle(href) {
+  return _stylePromises[href] ||= new Promise((resolve, reject) => {
+    const l = document.createElement('link');
+    l.rel = 'stylesheet';
+    l.href = href;
+    l.onload = () => resolve();
+    l.onerror = () => reject(new Error('style load failed: ' + href));
+    document.head.appendChild(l);
+  });
+}
+
+const PAPAPARSE_URL = 'https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js';
+const LEAFLET_JS_URL = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+const LEAFLET_CSS_URL = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+
+function whenIdle(fn, timeout = 1500) {
+  if (typeof requestIdleCallback === 'function') {
+    return requestIdleCallback(fn, { timeout });
+  }
+  return setTimeout(fn, 0);
+}
+
 /* ───────────────────────── Provenance registry ─────────────────────────
    Every external HTTP source the page touches is registered here so the
    footer can show exactly what was fetched, when, and how many rows came
@@ -939,6 +1046,8 @@ const sources = {
 
 function markSource(key, patch) {
   if (!sources[key]) return;
+  // Clear stale fromCache flag when the patch represents a fresh fetch.
+  if (patch.status === 'ok' && !('fromCache' in patch)) sources[key].fromCache = false;
   Object.assign(sources[key], patch);
   if (patch.status === 'ok' || patch.status === 'failed') {
     sources[key].fetchedAt = new Date().toISOString();
@@ -961,7 +1070,8 @@ function renderProvenance() {
   root.innerHTML = Object.values(sources).map(s => {
     let statusLine;
     if (s.status === 'ok') {
-      statusLine = `<div class="prov-meta fresh">✓ Fetched ${esc(fmtFetchedAt(s.fetchedAt))}${s.rows != null ? ` · ${s.rows.toLocaleString()} rows` : ''}</div>`;
+      const verb = s.fromCache ? 'Loaded from cache' : 'Fetched';
+      statusLine = `<div class="prov-meta fresh">✓ ${verb} ${esc(fmtFetchedAt(s.fetchedAt))}${s.rows != null ? ` · ${s.rows.toLocaleString()} rows` : ''}</div>`;
     } else if (s.status === 'failed') {
       statusLine = `<div class="prov-meta failed">✗ Failed ${esc(fmtFetchedAt(s.fetchedAt))}${s.error ? ` · ${esc(s.error)}` : ''}</div>`;
     } else if (s.status === 'pending') {
@@ -1053,9 +1163,14 @@ function shorten(val, prefix) {
   return (val || "").replace(prefix, "D");
 }
 
-/* ───────────────────────── Load data ───────────────────────── */
+/* ───────────────────────── Load data ─────────────────────────
+   Cold path: download cases.json (gzip+base64-wrapped), inflate, parse,
+   stash the result in OPFS.
+   Warm path: read the prior inflated JSON straight out of OPFS so the
+   table paints before the network has a chance to answer; then revalidate
+   the GitHub commit sha and diff-merge in the background. */
 
-async function loadCases() {
+async function downloadCases() {
   const resp = await fetch(CASES_URL);
   let data = await resp.json();
   if (data.format === "gzip+base64" && data.data) {
@@ -1066,49 +1181,82 @@ async function loadCases() {
   return data;
 }
 
+function applyInitialCases(data) {
+  const cases = data.cases || {};
+  // Keep ENC: values verbatim so they can be decrypted after login. The
+  // display layer hides them until the user unlocks.
+  allRows = Object.entries(cases).map(([docket, c]) => ({ docket, ...c }));
+  rebuildLocalAggregates();
+
+  document.getElementById("loading").style.display = "none";
+  document.getElementById("app").style.display = "block";
+  document.getElementById("updated").textContent = "Updated " + (data.updated_at || "—").split("T")[0];
+
+  updateSubtitle();
+  buildStats();
+  buildFilters();
+  buildHeader();
+  bindViewControls();
+  bindRowClicks();
+  renderProvenance();
+  render();
+}
+
 async function loadData() {
   try {
-    const data = await loadCases();
+    const cached = await opfsCache.get(CACHE_FILES.cases);
+    if (cached && cached.data) {
+      // Warm path — render from disk immediately, revalidate in the
+      // background. Network is still hit, but UI is already interactive.
+      casesSha = cached.sha || null;
+      applyInitialCases(cached.data);
+      markSource('cases', { status: 'ok', rows: allRows.length, fromCache: true });
 
-    const cases = data.cases || {};
-    // Keep ENC: values verbatim so they can be decrypted after login. The
-    // display layer hides them until the user unlocks.
-    allRows = Object.entries(cases).map(([docket, c]) => ({
-      docket,
-      ...c,
-    }));
+      kickBackgroundSync();
+      kickCensusRaceSync();
+      startUpdatePolling();
+      whenIdle(() => revalidateCases());
+      return;
+    }
 
+    // Cold path — full download.
+    const data = await downloadCases();
+    applyInitialCases(data);
     markSource('cases', { status: 'ok', rows: allRows.length });
-    rebuildLocalAggregates();
 
-    document.getElementById("loading").style.display = "none";
-    document.getElementById("app").style.display = "block";
-    document.getElementById("updated").textContent = "Updated " + (data.updated_at || "—").split("T")[0];
-
-    updateSubtitle();
-    buildStats();
-    buildFilters();
-    buildHeader();
-    bindViewControls();
-    bindRowClicks();
-    renderProvenance();
-    render();
-
-    // Pull background datasets live (Princeton filings CSV + Census ACS race
-    // table). Nothing is written back to GitHub — both live only in memory.
     kickBackgroundSync();
     kickMssDemographicsSync();
     kickCensusRaceSync();
-
-    // Capture the current commit sha for cases.json, then start a 5-min
-    // poll that re-fetches and diff-merges only when the sha changes.
-    captureCasesSha();
-    startUpdatePolling();
+    // Persist + sha capture after first paint so we don't block render.
+    whenIdle(async () => {
+      const sha = await fetchLatestCasesSha().catch(() => null);
+      casesSha = sha;
+      await opfsCache.put(CACHE_FILES.cases, { data, sha });
+      startUpdatePolling();
+    });
   } catch (e) {
     markSource('cases', { status: 'failed', error: e.message });
     document.getElementById("loading").style.display = "none";
     document.getElementById("error").style.display = "block";
     document.getElementById("error").textContent = "Error: " + e.message;
+  }
+}
+
+// Warm-path revalidation: if the GitHub commit sha moved since we cached,
+// pull the new file and diff-merge into the live state.
+async function revalidateCases() {
+  const latest = await fetchLatestCasesSha().catch(() => null);
+  if (!latest) return;
+  if (!casesSha) { casesSha = latest; return; }
+  if (latest === casesSha) return;
+  bgStatus('Updates detected — fetching…', true);
+  try {
+    await applyCasesUpdate();
+    casesSha = latest;
+  } catch (e) {
+    console.warn('[eo] revalidate failed:', e);
+    bgStatus(`Update fetch failed: ${e.message}`, false);
+    setTimeout(() => bgStatus(''), 5000);
   }
 }
 
@@ -1521,7 +1669,24 @@ function mapLayer() {
   return { data, months, max };
 }
 
+// Tract polygons effectively never change between decennial geographies.
+// Cache aggressively; revalidate once a month at most.
+const TIGER_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
 async function fetchTractGeometries() {
+  const cached = await opfsCache.get(CACHE_FILES.tiger);
+  if (cached && cached.geo && cached.geo.features && cached.geo.features.length) {
+    markSource('tiger', { status: 'ok', rows: cached.geo.features.length, fromCache: true });
+    // Trigger a quiet refresh if the entry is stale, but return immediately.
+    if (Date.now() - (cached.savedAt || 0) > TIGER_TTL_MS) {
+      whenIdle(() => downloadTractGeometries().catch(() => {}));
+    }
+    return cached.geo;
+  }
+  return downloadTractGeometries();
+}
+
+async function downloadTractGeometries() {
   // Correct service is tigerWMS_Current; tigerWL_Current returns 404. Layer
   // 8 = "Census Tracts (Current)". Try direct (TIGERweb sends permissive
   // CORS) then fall back to the n8n proxy if the browser blocks it.
@@ -1535,6 +1700,7 @@ async function fetchTractGeometries() {
       const data = await r.json();
       if (data.features && data.features.length) {
         markSource('tiger', { status: 'ok', rows: data.features.length });
+        opfsCache.put(CACHE_FILES.tiger, { geo: data });
         return data;
       }
       lastErr = new Error('no features');
@@ -1718,6 +1884,18 @@ async function renderMapView() {
       : 'No scraped cases have census tracts yet.';
     status.style.display = '';
     controls.style.display = 'none';
+    return;
+  }
+
+  // Leaflet is loaded on demand — first map view pays a one-time cost, every
+  // other view never touches it.
+  try {
+    await Promise.all([
+      loadStyle(LEAFLET_CSS_URL),
+      loadScript(LEAFLET_JS_URL),
+    ]);
+  } catch (e) {
+    status.textContent = 'Failed to load map library: ' + e.message;
     return;
   }
 
@@ -2349,15 +2527,6 @@ async function fetchLatestCasesSha() {
   return Array.isArray(arr) && arr.length ? arr[0].sha : null;
 }
 
-async function captureCasesSha() {
-  try {
-    casesSha = await fetchLatestCasesSha();
-    console.info('[eo] initial cases.json sha:', casesSha);
-  } catch (e) {
-    console.warn('[eo] initial sha capture failed:', e.message);
-  }
-}
-
 async function checkForCasesUpdate() {
   let latest;
   try {
@@ -2382,7 +2551,10 @@ async function checkForCasesUpdate() {
 }
 
 async function applyCasesUpdate() {
-  const data = await loadCases();
+  const data = await downloadCases();
+  // Stash the fresh blob so the next reload starts from the new version.
+  const sha = await fetchLatestCasesSha().catch(() => casesSha);
+  opfsCache.put(CACHE_FILES.cases, { data, sha });
   const cases = data.cases || {};
   const oldByDocket = Object.fromEntries(allRows.map(r => [r.docket, r]));
   const newRows = Object.entries(cases).map(([docket, c]) => ({
@@ -2925,6 +3097,7 @@ async function fetchPrincetonCsvRows() {
   const r = await fetch(pxProxy(PRINCETON_CSV));
   if (!r.ok) throw new Error(`csv HTTP ${r.status}`);
   const text = await r.text();
+  await loadScript(PAPAPARSE_URL);
   const parsed = Papa.parse(text, { header: true, skipEmptyLines: true, dynamicTyping: true });
   return parsed.data.filter(r => r.GEOID && r.month);
 }
@@ -2935,19 +3108,35 @@ function refreshSnapshotUi() {
   if (viewMode !== 'cases') render();
 }
 
+// Princeton CSV is static historical filings — revalidate at most weekly.
+const PRINCETON_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 async function kickBackgroundSync() {
+  let usedCache = false;
   try {
+    const cached = await opfsCache.get(CACHE_FILES.princeton);
+    if (cached && Array.isArray(cached.rows)) {
+      princetonRows = cached.rows;
+      rebuildPrincetonAggregates();
+      markSource('princeton', { status: 'ok', rows: princetonRows.length, fromCache: true });
+      refreshSnapshotUi();
+      usedCache = true;
+      if (Date.now() - (cached.savedAt || 0) < PRINCETON_TTL_MS) return;
+    }
+
     bgStatus('Fetching Princeton CSV…', true);
-    princetonRows = await fetchPrincetonCsvRows();
+    const rows = await fetchPrincetonCsvRows();
+    princetonRows = rows;
     rebuildPrincetonAggregates();
-    markSource('princeton', { status: 'ok', rows: princetonRows.length });
-    console.info(`[eo] princeton csv: ${princetonRows.length} rows · ${agg.princetonMonths.length} months`);
+    markSource('princeton', { status: 'ok', rows: rows.length });
+    console.info(`[eo] princeton csv: ${rows.length} rows · ${agg.princetonMonths.length} months`);
     refreshSnapshotUi();
-    bgStatus(`Princeton: ${princetonRows.length} rows loaded (live)`, false);
+    opfsCache.put(CACHE_FILES.princeton, { rows });
+    bgStatus(`Princeton: ${rows.length} rows loaded (live)`, false);
     setTimeout(() => bgStatus(''), 3000);
   } catch (e) {
     console.warn('Princeton CSV fetch failed:', e);
-    markSource('princeton', { status: 'failed', error: e.message });
+    if (!usedCache) markSource('princeton', { status: 'failed', error: e.message });
     bgStatus(`Princeton fetch failed: ${e.message}`, false);
     setTimeout(() => bgStatus(''), 5000);
   }
@@ -3132,18 +3321,33 @@ async function kickMssDemographicsSync() {
   }
 }
 
+// ACS 5-year tables move once a year. Revalidate at most weekly.
+const ACS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 async function kickCensusRaceSync() {
+  let usedCache = false;
   try {
+    const cached = await opfsCache.get(CACHE_FILES.acs);
+    if (cached && cached.tractRace && typeof cached.tractRace === 'object') {
+      agg.tractRace = cached.tractRace;
+      const n = Object.keys(agg.tractRace).length;
+      markSource('acs', { status: 'ok', rows: n, fromCache: true });
+      usedCache = true;
+      if (Date.now() - (cached.savedAt || 0) < ACS_TTL_MS) return;
+    }
+
     bgStatus('Fetching Census ACS race data…', true);
-    agg.tractRace = await fetchCensusRaceRows();
-    const n = Object.keys(agg.tractRace).length;
+    const tractRace = await fetchCensusRaceRows();
+    agg.tractRace = tractRace;
+    const n = Object.keys(tractRace).length;
     markSource('acs', { status: 'ok', rows: n });
     console.info(`[eo] ACS ${ACS_YEAR}: ${n} tracts loaded`);
+    opfsCache.put(CACHE_FILES.acs, { tractRace });
     bgStatus(`ACS: ${n} tracts loaded (live)`, false);
     setTimeout(() => bgStatus(''), 3000);
   } catch (e) {
     console.warn('Census ACS fetch failed:', e);
-    markSource('acs', { status: 'failed', error: e.message });
+    if (!usedCache) markSource('acs', { status: 'failed', error: e.message });
     bgStatus(`ACS fetch failed: ${e.message}`, false);
     setTimeout(() => bgStatus(''), 5000);
   }
