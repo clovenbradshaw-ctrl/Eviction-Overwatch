@@ -6,6 +6,7 @@
 <title>Nashville Eviction Tracker</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%231a1810'/%3E%3Ctext x='50%25' y='54%25' font-family='Georgia,serif' font-size='44' font-weight='700' text-anchor='middle' dominant-baseline='middle' fill='%23c9a961'%3E%E2%9A%96%3C/text%3E%3C/svg%3E">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:wght@400;600&display=swap');
 
@@ -22,6 +23,9 @@
   --gold-dim: #8a7a3a;
   --pending: #e8a735;
   --dismissed: #6b7280;
+  --green: #4aba8a;
+  --amber: #e8a735;
+  --red: #e85d3a;
   --mono: 'JetBrains Mono', 'SF Mono', monospace;
   --serif: 'Source Serif 4', Georgia, serif;
 }
@@ -64,6 +68,8 @@ h1 {
 
 .subtitle { margin-top: 4px; font-size: 11px; color: var(--muted); letter-spacing: 0.04em; }
 .updated { font-size: 11px; color: var(--dim); text-align: right; }
+.bg-sync { font-size: 10px; color: var(--dim); margin-top: 4px; text-align: right; font-style: italic; }
+.bg-sync.active { color: var(--amber); }
 
 .stats-row {
   display: grid; grid-template-columns: 1fr 1fr;
@@ -91,6 +97,36 @@ h1 {
 .stat-link:hover { text-decoration: underline; }
 
 .stat-count { color: var(--dim); font-variant-numeric: tabular-nums; }
+
+.view-bar {
+  display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+  padding: 10px 24px;
+  border-bottom: 1px solid var(--border);
+  background: #181712;
+}
+.view-bar .group {
+  display: flex; align-items: center; gap: 6px;
+}
+.view-bar label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--dim);
+}
+.view-bar .seg {
+  display: inline-flex; border: 1px solid var(--border); border-radius: 3px; overflow: hidden;
+}
+.view-bar .seg button {
+  font-family: var(--mono); font-size: 11px; padding: 4px 10px;
+  color: var(--muted); background: transparent; border: none; cursor: pointer;
+}
+.view-bar .seg button.on { background: var(--gold); color: #1a1814; }
+.view-bar .seg button:not(.on):hover { color: var(--text); background: rgba(255,255,255,0.04); }
+.view-bar select {
+  font-family: var(--mono); font-size: 11px; padding: 3px 8px;
+  color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 3px;
+}
+.view-bar .coverage {
+  margin-left: auto; font-size: 11px; color: var(--muted);
+}
+.view-bar .coverage strong { color: var(--text); }
 
 .toolbar {
   padding: 16px 24px;
@@ -181,6 +217,28 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 .dot-other { background: #3b82f6; }
 
 #error { color: #ef4444; text-align: center; padding: 40px; }
+
+/* Aggregated grid view (Princeton / Delta) */
+#grid-view { padding: 16px 24px; }
+#grid-view table { min-width: 800px; }
+#grid-view th, #grid-view td { white-space: nowrap; }
+#grid-view td.num { font-variant-numeric: tabular-nums; text-align: right; }
+#grid-view td.row-label { font-weight: 500; color: var(--gold); }
+#grid-view .cell-stack { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.2; }
+#grid-view .cell-stack .ratio { font-size: 10px; color: var(--dim); }
+#grid-view td.cell-green { background: rgba(74,186,138,0.10); }
+#grid-view td.cell-amber { background: rgba(232,167,53,0.10); }
+#grid-view td.cell-red   { background: rgba(232,93,58,0.12); }
+#grid-view td.cell-na    { color: var(--dim); }
+#grid-view .notice { padding: 24px; text-align: center; color: var(--muted); font-size: 12px; }
+#grid-view .legend { margin-top: 12px; font-size: 10px; color: var(--dim); display: flex; gap: 16px; align-items: center; }
+#grid-view .legend .sw { display: inline-block; width: 10px; height: 10px; margin-right: 4px; vertical-align: middle; border-radius: 2px; }
+#grid-view .legend .sw.green { background: rgba(74,186,138,0.4); }
+#grid-view .legend .sw.amber { background: rgba(232,167,53,0.4); }
+#grid-view .legend .sw.red   { background: rgba(232,93,58,0.4); }
+
+.spark { display: inline-flex; gap: 1px; align-items: flex-end; height: 16px; }
+.spark span { display: inline-block; width: 4px; background: var(--gold-dim); border-radius: 1px; }
 </style>
 </head>
 <body>
@@ -196,7 +254,10 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
       <h1>Nashville Eviction Tracker</h1>
       <div class="subtitle" id="subtitle"></div>
     </div>
-    <div class="updated" id="updated"></div>
+    <div>
+      <div class="updated" id="updated"></div>
+      <div class="bg-sync" id="bg-sync"></div>
+    </div>
   </header>
 
   <div class="stats-row">
@@ -210,24 +271,48 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
     </div>
   </div>
 
-  <div class="toolbar">
+  <div class="view-bar">
+    <div class="group">
+      <label>Source</label>
+      <div class="seg" id="src-seg">
+        <button data-val="local" class="on">Local Scrape</button>
+        <button data-val="princeton">Princeton</button>
+        <button data-val="delta">Delta</button>
+      </div>
+    </div>
+    <div class="group">
+      <label>Group by</label>
+      <div class="seg" id="grp-seg">
+        <button data-val="district" class="on">District</button>
+        <button data-val="tract">Tract</button>
+      </div>
+    </div>
+    <div class="coverage" id="coverage-headline"></div>
+  </div>
+
+  <div class="toolbar" id="local-toolbar">
     <input id="search" placeholder="Search docket, plaintiff, attorney, address...">
     <div class="filter-row" id="filters"></div>
     <div class="result-count" id="result-count"></div>
   </div>
 
-  <div class="table-wrap">
+  <div class="table-wrap" id="local-table-wrap">
     <table>
       <thead><tr id="thead"></tr></thead>
       <tbody id="tbody"></tbody>
     </table>
   </div>
+
+  <div id="grid-view" style="display:none"></div>
 </div>
 
 <div id="error" style="display:none"></div>
 
 <script>
-const GITHUB_RAW = "https://raw.githubusercontent.com/clovenbradshaw-ctrl/plain-text/main/cases.json";
+const CASES_URL    = "https://raw.githubusercontent.com/clovenbradshaw-ctrl/plain-text/main/cases.json";
+const SNAPSHOT_URL = "https://raw.githubusercontent.com/clovenbradshaw-ctrl/plain-text/main/eviction-lab-snapshot.json";
+
+/* ───────────────────────── Existing case-table state ───────────────────────── */
 
 const COLUMNS = [
   { key: "docket", label: "Docket" },
@@ -255,21 +340,47 @@ let sortDir = -1;
 let filters = {};
 let activeDropdown = null;
 
+let snapshot = null;          // decoded eviction-lab-snapshot.json
+let viewSource = 'local';     // 'local' | 'princeton' | 'delta'
+let viewGroup  = 'district';  // 'district' | 'tract'
+
 function shorten(val, prefix) {
   return (val || "").replace(prefix, "D");
 }
 
-async function loadData() {
-  try {
-    const resp = await fetch(GITHUB_RAW);
-    let data = await resp.json();
+/* ───────────────────────── Load data ───────────────────────── */
 
-    // Auto-decompress gzip+base64
+async function loadCases() {
+  const resp = await fetch(CASES_URL);
+  let data = await resp.json();
+  if (data.format === "gzip+base64" && data.data) {
+    const bin = Uint8Array.from(atob(data.data), c => c.charCodeAt(0));
+    const raw = pako.inflate(bin, { to: "string" });
+    data = JSON.parse(raw);
+  }
+  return data;
+}
+
+async function loadSnapshot() {
+  try {
+    const r = await fetch(SNAPSHOT_URL, { cache: "no-store" });
+    if (!r.ok) return null;
+    let data = await r.json();
     if (data.format === "gzip+base64" && data.data) {
       const bin = Uint8Array.from(atob(data.data), c => c.charCodeAt(0));
       const raw = pako.inflate(bin, { to: "string" });
       data = JSON.parse(raw);
     }
+    return data;
+  } catch (e) {
+    console.warn("snapshot load failed:", e);
+    return null;
+  }
+}
+
+async function loadData() {
+  try {
+    const data = await loadCases();
 
     const cases = data.cases || {};
     allRows = Object.entries(cases).map(([docket, c]) => ({
@@ -282,21 +393,40 @@ async function loadData() {
     document.getElementById("app").style.display = "block";
     document.getElementById("updated").textContent = "Updated " + (data.updated_at || "—").split("T")[0];
 
-    const enriched = allRows.filter(r => r.enriched).length;
-    const withDistrict = allRows.filter(r => r.council_district).length;
-    document.getElementById("subtitle").textContent =
-      `${allRows.length} cases · ${enriched} enriched · ${withDistrict} with districts`;
-
+    updateSubtitle();
     buildStats();
     buildFilters();
     buildHeader();
+    bindViewControls();
     render();
+
+    // Fire-and-forget: load Princeton snapshot for the toggle, then kick off
+    // background enrichment if anything new is in Princeton's CSV.
+    loadSnapshot().then(s => {
+      snapshot = s;
+      updateCoverageHeadline();
+      updateSubtitle();
+      if (viewSource !== 'local') render();
+      kickBackgroundSync();
+    });
   } catch (e) {
     document.getElementById("loading").style.display = "none";
     document.getElementById("error").style.display = "block";
     document.getElementById("error").textContent = "Error: " + e.message;
   }
 }
+
+function updateSubtitle() {
+  const enriched = allRows.filter(r => r.enriched).length;
+  const withDistrict = allRows.filter(r => r.council_district).length;
+  let s = `${allRows.length} cases · ${enriched} enriched · ${withDistrict} with districts`;
+  if (snapshot && snapshot.updated_at) {
+    s += ` · baseline updated ${snapshot.updated_at.slice(0,10)}`;
+  }
+  document.getElementById("subtitle").textContent = s;
+}
+
+/* ───────────────────────── Existing per-case stats / filters / table ───────────────────────── */
 
 function buildStats() {
   const districts = {}, attorneys = {};
@@ -416,7 +546,7 @@ function getFiltered() {
   return rows;
 }
 
-function render() {
+function renderLocalTable() {
   const rows = getFiltered();
   rows.sort((a, b) => {
     const av = a[sortCol] || "";
@@ -424,7 +554,6 @@ function render() {
     return av < bv ? -sortDir : av > bv ? sortDir : 0;
   });
 
-  // Update sort arrows
   COLUMNS.forEach(c => {
     const th = document.getElementById("th-" + c.key);
     th.innerHTML = c.label + (sortCol === c.key
@@ -454,7 +583,452 @@ function render() {
   }).join("");
 }
 
-// Close dropdowns on outside click
+/* ───────────────────────── Aggregations for the toggle ───────────────────────── */
+
+// Map "Council District 5" → "5"
+function normalizeDistrict(d) {
+  if (!d) return null;
+  const m = String(d).match(/(\d+)/);
+  return m ? m[1] : String(d);
+}
+
+// "MM/DD/YYYY" → "MM/YYYY"
+function caseFileDateToMonth(fileDate) {
+  if (!fileDate) return null;
+  const m = String(fileDate).match(/^(\d{1,2})\/\d{1,2}\/(\d{4})$/);
+  if (!m) return null;
+  return `${m[1].padStart(2,'0')}/${m[2]}`;
+}
+
+function localByDistrictMonth() {
+  const out = {};
+  for (const r of allRows) {
+    const d = normalizeDistrict(r.council_district);
+    const m = caseFileDateToMonth(r.file_date);
+    if (!d || !m) continue;
+    if (!out[d]) out[d] = {};
+    out[d][m] = (out[d][m] || 0) + 1;
+  }
+  return out;
+}
+
+function princetonByDistrictMonth() {
+  if (!snapshot || !snapshot.by_district_month) return {};
+  const out = {};
+  for (const d in snapshot.by_district_month) {
+    out[normalizeDistrict(d)] = snapshot.by_district_month[d];
+  }
+  return out;
+}
+
+function princetonByTractMonth() {
+  if (!snapshot || !snapshot.tracts) return {};
+  const out = {};
+  for (const geoid in snapshot.tracts) {
+    const t = snapshot.tracts[geoid];
+    out[geoid] = {};
+    for (const m of (t.monthly || [])) out[geoid][m.month] = m.filings;
+  }
+  return out;
+}
+
+function recentMonths(princeton, n=6) {
+  const set = new Set();
+  for (const row of Object.values(princeton)) {
+    for (const m in row) set.add(m);
+  }
+  return [...set].sort((a, b) => {
+    const [am, ay] = a.split('/'); const [bm, by] = b.split('/');
+    return (by + bm).localeCompare(ay + am);
+  }).slice(0, n).reverse();
+}
+
+function ratioClass(ratio) {
+  if (ratio == null || !isFinite(ratio)) return 'cell-na';
+  if (ratio >= 0.85) return 'cell-green';
+  if (ratio >= 0.50) return 'cell-amber';
+  return 'cell-red';
+}
+
+function median(arr) {
+  if (!arr.length) return null;
+  const s = [...arr].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m-1] + s[m]) / 2;
+}
+
+function updateCoverageHeadline() {
+  const el = document.getElementById('coverage-headline');
+  if (!snapshot) { el.innerHTML = '<span style="color:var(--dim)">Princeton snapshot not yet on GitHub</span>'; return; }
+  const princeton = princetonByDistrictMonth();
+  const local = localByDistrictMonth();
+  const months = recentMonths(princeton, 6);
+  if (!months.length) { el.textContent = ''; return; }
+  const latest = months[months.length - 1];
+  const ratios = [];
+  for (const d in princeton) {
+    const p = princeton[d][latest] || 0;
+    const l = (local[d] && local[d][latest]) || 0;
+    if (p > 0) ratios.push(l / p);
+  }
+  const med = median(ratios);
+  if (med == null) { el.innerHTML = `<span style="color:var(--dim)">no overlap for ${latest}</span>`; return; }
+  el.innerHTML = `Coverage for <strong>${latest}</strong>: <strong>${(med * 100).toFixed(0)}%</strong> of Princeton (median across ${ratios.length} districts)`;
+}
+
+/* ───────────────────────── Grid view (Princeton / Delta) ───────────────────────── */
+
+function renderGridView() {
+  const root = document.getElementById('grid-view');
+
+  if (viewSource === 'local' && viewGroup === 'district') {
+    root.style.display = 'none';
+    document.getElementById('local-toolbar').style.display = '';
+    document.getElementById('local-table-wrap').style.display = '';
+    return;
+  }
+  document.getElementById('local-toolbar').style.display = 'none';
+  document.getElementById('local-table-wrap').style.display = 'none';
+  root.style.display = '';
+
+  if (viewGroup === 'tract' && viewSource !== 'princeton') {
+    root.innerHTML = `<div class="notice">Tract-level <em>${viewSource}</em> requires <code>census_tract</code> on scraped cases — coming soon.<br>Try <b>Princeton + Tract</b> to browse the snapshot, or switch back to <b>District</b>.</div>`;
+    return;
+  }
+
+  if (!snapshot) {
+    root.innerHTML = `<div class="notice">Princeton snapshot has not been published yet. The first visitor (you, perhaps) will trigger background enrichment — reload in a few minutes.</div>`;
+    return;
+  }
+
+  const princeton = viewGroup === 'district' ? princetonByDistrictMonth() : princetonByTractMonth();
+  const local     = viewGroup === 'district' ? localByDistrictMonth()     : {};
+
+  const rowKeys = Object.keys(princeton).sort((a, b) => {
+    const an = parseInt(a, 10), bn = parseInt(b, 10);
+    if (!isNaN(an) && !isNaN(bn)) return an - bn;
+    return a.localeCompare(b);
+  });
+  const months = recentMonths(princeton, 6);
+
+  if (!rowKeys.length || !months.length) {
+    root.innerHTML = `<div class="notice">No data in snapshot yet.</div>`;
+    return;
+  }
+
+  const rowLabel = viewGroup === 'district' ? 'District' : 'Tract (GEOID)';
+
+  let html = `<table><thead><tr><th>${rowLabel}</th>`;
+  for (const m of months) html += `<th class="num">${m}</th>`;
+  html += `</tr></thead><tbody>`;
+
+  for (const k of rowKeys) {
+    html += `<tr><td class="row-label">${viewGroup === 'district' ? 'D' + k : k}</td>`;
+    for (const m of months) {
+      const p = princeton[k][m];
+      const l = (local[k] && local[k][m]) || 0;
+
+      if (viewSource === 'princeton') {
+        html += `<td class="num">${p != null ? p : '—'}</td>`;
+      } else if (viewSource === 'local') {
+        html += `<td class="num">${l != null ? l : '—'}</td>`;
+      } else {
+        // delta
+        if (p == null || p === 0) {
+          html += `<td class="num cell-na">— </td>`;
+        } else {
+          const ratio = l / p;
+          const cls = ratioClass(ratio);
+          const delta = l - p;
+          html += `<td class="num ${cls}"><div class="cell-stack"><span>${delta > 0 ? '+' + delta : delta}</span><span class="ratio">${(ratio*100).toFixed(0)}%</span></div></td>`;
+        }
+      }
+    }
+    html += `</tr>`;
+  }
+  html += `</tbody></table>`;
+
+  if (viewSource === 'delta') {
+    html += `<div class="legend">
+      <span><span class="sw green"></span> ≥85% of Princeton</span>
+      <span><span class="sw amber"></span> 50–85%</span>
+      <span><span class="sw red"></span> &lt;50%</span>
+      <span style="color:var(--dim)">Each cell: scraped − Princeton (delta) / scraped÷Princeton (ratio)</span>
+    </div>`;
+  }
+
+  root.innerHTML = html;
+}
+
+function render() {
+  if (viewSource === 'local' && viewGroup === 'district') {
+    renderLocalTable();
+    document.getElementById('grid-view').style.display = 'none';
+    document.getElementById('local-toolbar').style.display = '';
+    document.getElementById('local-table-wrap').style.display = '';
+  } else {
+    renderGridView();
+  }
+  updateCoverageHeadline();
+}
+
+function bindViewControls() {
+  document.querySelectorAll('#src-seg button').forEach(b => {
+    b.addEventListener('click', () => {
+      viewSource = b.dataset.val;
+      document.querySelectorAll('#src-seg button').forEach(x => x.classList.toggle('on', x === b));
+      render();
+    });
+  });
+  document.querySelectorAll('#grp-seg button').forEach(b => {
+    b.addEventListener('click', () => {
+      viewGroup = b.dataset.val;
+      document.querySelectorAll('#grp-seg button').forEach(x => x.classList.toggle('on', x === b));
+      render();
+    });
+  });
+}
+
+/* ───────────────────────── Background snapshot enrichment ───────────────────────── */
+/* Runs after the main UI loads. Fetches Princeton CSV, diffs against the
+   snapshot we already loaded, enriches any new tracts (rate-limited TIGER +
+   Nashville GIS calls), and POSTs an updated snapshot to /webhook/site/publish.
+   No-op if there's nothing new. Multiple concurrent visitors may race; the
+   write is idempotent (overwrite mode) so the cost is at worst a duplicate
+   commit. */
+
+const N8N_PUBLISH = 'https://n8n.intelechia.com/webhook/site/publish';
+const N8N_PROXY   = 'https://n8n.intelechia.com/webhook/feed';
+const N8N_AUTH    = 'Bearer Provoking0-Cranium7-Penpal4-Childlike0-Uranium9';
+const SNAPSHOT_FILE = 'eviction-lab-snapshot.json';
+const PRINCETON_CSV = 'https://evictionlab.org/uploads/nashville_monthly_2020_2021.csv';
+const TIGER_URL = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWL_Current/MapServer/8/query';
+const NASH_GIS_BASE = 'https://maps.nashville.gov/arcgis/rest/services/Elections/Precincts/MapServer/1/query';
+const GEOCODE_DELAY_MS = 1100;
+const LAST_RUN_KEY = 'eo-last-bg-sync';
+const MIN_RUN_INTERVAL_MS = 30 * 60 * 1000;  // 30 min between attempts per browser
+
+function bgStatus(msg, active=false) {
+  const el = document.getElementById('bg-sync');
+  el.textContent = msg || '';
+  el.classList.toggle('active', active);
+}
+
+function pxProxy(url) { return `${N8N_PROXY}?url=${encodeURIComponent(url)}`; }
+
+function shouldRunBgSync() {
+  try {
+    const last = parseInt(localStorage.getItem(LAST_RUN_KEY) || '0', 10);
+    if (Date.now() - last < MIN_RUN_INTERVAL_MS) return false;
+  } catch {}
+  return true;
+}
+function markBgSyncRun() {
+  try { localStorage.setItem(LAST_RUN_KEY, String(Date.now())); } catch {}
+}
+
+async function fetchPrincetonCsvRows() {
+  const r = await fetch(pxProxy(PRINCETON_CSV));
+  if (!r.ok) throw new Error(`csv HTTP ${r.status}`);
+  const text = await r.text();
+  const parsed = Papa.parse(text, { header: true, skipEmptyLines: true, dynamicTyping: true });
+  return parsed.data.filter(r => r.GEOID && r.month);
+}
+
+function diffSnapshot(csvRows, existingSnap) {
+  const newTracts = new Set();
+  const changedPairs = [];
+  const existingPairFilings = {};
+  const tracts = (existingSnap && existingSnap.tracts) || {};
+  for (const geoid in tracts) {
+    for (const m of (tracts[geoid].monthly || [])) {
+      existingPairFilings[`${geoid}|${m.month}`] = m.filings;
+    }
+  }
+  for (const r of csvRows) {
+    const geoid = String(r.GEOID);
+    const month = String(r.month);
+    const filings = r.filings_2020 || 0;
+    if (!tracts[geoid]) newTracts.add(geoid);
+    const k = `${geoid}|${month}`;
+    if (!(k in existingPairFilings) || existingPairFilings[k] !== filings) {
+      changedPairs.push({ geoid, month, filings, row: r });
+    }
+  }
+  return { newTracts: [...newTracts], changedPairs };
+}
+
+async function bgGetCentroid(geoid) {
+  const url = `${TIGER_URL}?where=${encodeURIComponent("GEOID='" + geoid + "'")}&outFields=GEOID,CENTLAT,CENTLON&returnGeometry=false&f=json`;
+  const r = await fetch(pxProxy(url));
+  if (!r.ok) return null;
+  const data = await r.json();
+  if (data.features && data.features.length > 0) {
+    const f = data.features[0].attributes;
+    return { lat: parseFloat(f.CENTLAT), lon: parseFloat(f.CENTLON) };
+  }
+  return null;
+}
+async function bgGetCouncilDistrict(lat, lon) {
+  const params = new URLSearchParams({
+    geometry: `${lon},${lat}`, geometryType: 'esriGeometryPoint', inSR: '4326',
+    spatialRel: 'esriSpatialRelIntersects',
+    outFields: 'DistrictName,Representative', returnGeometry: 'false', f: 'json',
+  });
+  const r = await fetch(pxProxy(`${NASH_GIS_BASE}?${params}`));
+  if (!r.ok) return null;
+  const data = await r.json();
+  if (data.features && data.features.length > 0) {
+    const a = data.features[0].attributes;
+    return { district: a.DistrictName || '', rep: a.Representative || '' };
+  }
+  return null;
+}
+
+async function bgEnrichNewTracts(geoids, csvRows) {
+  const sampleByGeoid = {};
+  for (const r of csvRows) {
+    const g = String(r.GEOID);
+    if (!sampleByGeoid[g]) sampleByGeoid[g] = r;
+  }
+  const result = {};
+  let done = 0;
+  for (const geoid of geoids) {
+    bgStatus(`Enriching ${done+1}/${geoids.length}: tract ${geoid}`, true);
+    try {
+      const centroid = await bgGetCentroid(geoid);
+      if (centroid) {
+        let council = '', rep = '';
+        try {
+          const dist = await bgGetCouncilDistrict(centroid.lat, centroid.lon);
+          if (dist) { council = dist.district; rep = dist.rep; }
+        } catch {}
+        const sample = sampleByGeoid[geoid] || {};
+        result[geoid] = {
+          lat: centroid.lat, lon: centroid.lon,
+          council_district: council, council_rep: rep,
+          racial_majority: sample.racial_majority || '',
+          monthly: [],
+          enriched_at: new Date().toISOString(),
+        };
+      }
+    } catch (e) {
+      console.warn('enrich error', geoid, e);
+    }
+    done++;
+    await new Promise(r => setTimeout(r, GEOCODE_DELAY_MS));
+  }
+  return result;
+}
+
+function mergeAndRecompute(existing, newTractsData, changedPairs) {
+  const tracts = { ...(existing && existing.tracts || {}) };
+  for (const g in newTractsData) tracts[g] = newTractsData[g];
+
+  const monthlyByTract = {};
+  for (const g in tracts) {
+    monthlyByTract[g] = {};
+    for (const m of (tracts[g].monthly || [])) monthlyByTract[g][m.month] = m;
+  }
+  for (const p of changedPairs) {
+    if (!monthlyByTract[p.geoid]) monthlyByTract[p.geoid] = {};
+    monthlyByTract[p.geoid][p.month] = {
+      month: p.month,
+      filings: p.row.filings_2020 || 0,
+      hist_avg: p.row.filings_avg || 0,
+      baseline: p.row.filings_avg_prepandemic_baseline || 0,
+    };
+  }
+  for (const g in tracts) {
+    tracts[g].monthly = Object.values(monthlyByTract[g] || {})
+      .sort((a, b) => {
+        const [am, ay] = a.month.split('/'); const [bm, by] = b.month.split('/');
+        return (ay + am).localeCompare(by + bm);
+      });
+  }
+
+  const byDistrictMonth = {};
+  for (const g in tracts) {
+    const t = tracts[g];
+    const d = t.council_district;
+    if (!d) continue;
+    if (!byDistrictMonth[d]) byDistrictMonth[d] = {};
+    for (const m of t.monthly) {
+      byDistrictMonth[d][m.month] = (byDistrictMonth[d][m.month] || 0) + m.filings;
+    }
+  }
+  return {
+    updated_at: new Date().toISOString(),
+    source_url: PRINCETON_CSV,
+    tracts,
+    by_district_month: byDistrictMonth,
+  };
+}
+
+async function publishSnapshot(snap) {
+  const raw = JSON.stringify(snap);
+  const compressed = pako.gzip(raw);
+  let bin = '';
+  for (let i = 0; i < compressed.length; i++) bin += String.fromCharCode(compressed[i]);
+  const wrapper = {
+    format: 'gzip+base64',
+    tract_count: Object.keys(snap.tracts).length,
+    raw_bytes: raw.length,
+    compressed_bytes: compressed.length,
+    data: btoa(bin),
+  };
+  const payload = {
+    filename: SNAPSHOT_FILE,
+    mode: 'overwrite',
+    content: wrapper,
+    commit_message: `eviction-lab: ${Object.keys(snap.tracts).length} tracts (bg sync)`,
+  };
+  const r = await fetch(N8N_PUBLISH, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': N8N_AUTH },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) throw new Error(`publish HTTP ${r.status}`);
+}
+
+async function kickBackgroundSync() {
+  if (!shouldRunBgSync()) {
+    bgStatus('');
+    return;
+  }
+  try {
+    bgStatus('Checking Princeton for updates…', true);
+    const csvRows = await fetchPrincetonCsvRows();
+    const { newTracts, changedPairs } = diffSnapshot(csvRows, snapshot);
+
+    if (newTracts.length === 0 && changedPairs.length === 0) {
+      bgStatus('Princeton snapshot up to date', false);
+      markBgSyncRun();
+      setTimeout(() => bgStatus(''), 3000);
+      return;
+    }
+
+    markBgSyncRun();  // mark before the slow part so racing tabs back off
+    bgStatus(`Syncing: ${newTracts.length} new tracts, ${changedPairs.length} changed cells`, true);
+
+    const newTractsData = newTracts.length ? await bgEnrichNewTracts(newTracts, csvRows) : {};
+    const updated = mergeAndRecompute(snapshot, newTractsData, changedPairs);
+    await publishSnapshot(updated);
+    snapshot = updated;
+    bgStatus(`Snapshot updated: ${Object.keys(updated.tracts).length} tracts`, false);
+    updateCoverageHeadline();
+    updateSubtitle();
+    if (viewSource !== 'local') render();
+    setTimeout(() => bgStatus(''), 5000);
+  } catch (e) {
+    console.warn('bg sync failed:', e);
+    bgStatus(`Sync failed: ${e.message}`, false);
+    setTimeout(() => bgStatus(''), 5000);
+  }
+}
+
+/* ───────────────────────── Boot ───────────────────────── */
+
 document.addEventListener("click", e => {
   if (activeDropdown && !e.target.closest(".filter-btn") && !e.target.closest(".dropdown")) {
     document.getElementById("dd-" + activeDropdown).style.display = "none";
