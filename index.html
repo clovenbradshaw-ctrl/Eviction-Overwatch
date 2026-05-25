@@ -557,6 +557,18 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 
 /* Districts view */
 #districts-view { padding: 16px 24px; }
+#districts-view .districts-source-note {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  background: rgba(196,164,74,0.08);
+  border-left: 3px solid var(--gold-dim);
+  border-radius: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+  max-width: 900px;
+}
+#districts-view .districts-source-note strong { color: var(--text); font-weight: 500; }
 #districts-view table { min-width: 900px; }
 #districts-view tbody tr { cursor: pointer; }
 #districts-view tbody tr:hover td { background: rgba(196,164,74,0.06); }
@@ -1339,9 +1351,11 @@ function updateSubtitle() {
   const enriched = allRows.filter(r => r.enriched).length;
   const withTract = allRows.filter(r => r.census_geoid).length;
   const tractCount = Object.keys(agg.tractInfo).length;
-  let s = `${allRows.length} cases · ${enriched} enriched · ${withTract} with tracts (${tractCount} unique)`;
-  if (princetonRows) s += ` · Princeton: ${princetonRows.length} rows (live)`;
-  document.getElementById("subtitle").textContent = s;
+  let s = `Scraped: ${allRows.length.toLocaleString()} cases · ${enriched.toLocaleString()} enriched · ${withTract.toLocaleString()} with tracts (${tractCount.toLocaleString()} unique)`;
+  if (princetonRows) s += ` · Princeton (independent): ${princetonRows.length.toLocaleString()} monthly-filing rows 2020–21 — not added to scraped count`;
+  const el = document.getElementById("subtitle");
+  el.textContent = s;
+  el.title = 'Scraped = current per-case court records (one row per docket). Princeton = aggregated monthly filing totals 2020–21 (one row per tract-month, no dockets). Different shapes, different time windows — never sum them.';
 }
 
 /* ───────────────────────── Existing per-case stats / filters / table ───────────────────────── */
@@ -1510,8 +1524,8 @@ function renderLocalTable() {
 
   document.getElementById("result-count").textContent =
     rows.length === allRows.length
-      ? `${allRows.length} cases`
-      : `${rows.length} of ${allRows.length}`;
+      ? `${allRows.length.toLocaleString()} scraped cases`
+      : `${rows.length.toLocaleString()} of ${allRows.length.toLocaleString()} scraped cases`;
 
   const tbody = document.getElementById("tbody");
   tbody.innerHTML = rows.map(r => {
@@ -2907,11 +2921,14 @@ function renderDistrictsView() {
     return t;
   };
 
-  let html = `<table><thead><tr>
+  let html = `<div class="districts-source-note" title="${escapeAttr('Scraped = current per-case court records (one row per docket). Princeton = aggregated monthly filing totals 2020–21 (no dockets). Same kind of evictions counted two different ways, in different time windows — never sum the two columns. ' + SRC_SCRAPED + ' ' + SRC_PRINCETON)}">
+    <strong>Cases (Scraped)</strong> and <strong>Filings (Princeton 2020–21)</strong> are <strong>two independent counts of the same kind of evictions</strong> — different sources, different time windows. <strong>Do not add them.</strong>
+  </div>
+  <table><thead><tr>
     <th title="Metro Nashville council district. ${escapeAttr(SRC_GEOCODED)}">District</th>
     <th title="Council member for the district. ${escapeAttr(SRC_GEOCODED)}">Council Rep</th>
-    <th class="num" title="Total cases in the scraped court records (recent filings). ${escapeAttr(SRC_SCRAPED)}">Cases (Scraped)</th>
-    <th class="num" title="Total filings from Princeton Eviction Lab CSV, summed across all available months (2020–2021). ${escapeAttr(SRC_PRINCETON)}">Filings (Princeton 2020–21)</th>
+    <th class="num" title="Total cases in the scraped court records (recent filings). Independent count from Princeton — do not sum. ${escapeAttr(SRC_SCRAPED)}">Cases (Scraped)</th>
+    <th class="num" title="Total filings from Princeton Eviction Lab CSV, summed across all available months (2020–2021). Independent count from Scraped — do not sum. ${escapeAttr(SRC_PRINCETON)}">Filings (Princeton 2020–21)</th>
     <th class="num" title="Cases currently in PENDING status. ${escapeAttr(SRC_SCRAPED)}">Pending</th>
     <th class="num" title="Cases with DISMISSED or NONSUIT status. ${escapeAttr(SRC_SCRAPED)}">Dismissed</th>
     <th class="num" title="Distinct census tracts touched by scraped cases in this district. ${escapeAttr(SRC_DERIVED)}">Tracts</th>
@@ -3123,7 +3140,7 @@ function showDistrictProfile(district) {
         </div>
         <div class="dp-body">
           <div class="profile-grid">
-            <div class="profile-stat stat-multi" title="${esc('Total cases tallied separately from each source — they cover different time periods so they are not summed. ' + SRC_SCRAPED + ' ' + SRC_PRINCETON)}">
+            <div class="profile-stat stat-multi" title="${esc('Two independent counts — the same evictions counted two different ways. Scraped = current per-case court records (one row per docket). Princeton = aggregated monthly filing totals 2020–21 (no dockets, just counts). Different shapes, different time windows — DO NOT add them together. ' + SRC_SCRAPED + ' ' + SRC_PRINCETON)}">
               <div class="label">Total Cases</div>
               <div class="stat-sources">
                 <span class="src-num" title="${esc('Recent court filings. ' + SRC_SCRAPED)}"><span class="src-tag">Scraped</span> ${a.cases.toLocaleString()}</span>
