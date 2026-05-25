@@ -409,7 +409,16 @@ async function loadData() {
 
     Promise.all([snapshotPromise, libraryPromise]).then(([s, lib]) => {
       snapshot = s;
-      library = lib;
+      // Use an empty sentinel rather than null when the file doesn't exist on
+      // GitHub yet — that way kickBackgroundSync's `library ?` guard correctly
+      // skips re-fetching the same 404.
+      library = lib || { built_at: null, tracts: {} };
+      const tractCount = Object.keys(library.tracts).length;
+      const mappedCount = Object.values(library.tracts).filter(t => t.council_district).length;
+      console.info(
+        `[eo] library: ${lib ? 'loaded' : 'absent (404)'}` +
+        ` · ${tractCount} tracts · ${mappedCount} mapped to districts`
+      );
       refreshSnapshotUi();
       kickBackgroundSync();
     });
@@ -1008,11 +1017,10 @@ async function extendLibrary(missingGeoids, csvRows) {
 async function kickBackgroundSync() {
   try {
     bgStatus('Fetching Princeton CSV…', true);
-    const [csvRows, libFromGithub] = await Promise.all([
-      fetchPrincetonCsvRows(),
-      library ? Promise.resolve(library) : loadLibrary(),
-    ]);
-    library = libFromGithub || library || { built_at: null, tracts: {} };
+    // library was populated (possibly as an empty sentinel) in loadData;
+    // don't re-fetch it here.
+    const csvRows = await fetchPrincetonCsvRows();
+    console.info(`[eo] princeton csv: ${csvRows.length} rows · library has ${Object.keys(library.tracts).length} tracts`);
 
     const newSnapshot = buildSnapshotFromCsv(csvRows, library);
     const changed = !snapshot || !snapshotsEqual(snapshot, newSnapshot);
@@ -1033,11 +1041,13 @@ async function kickBackgroundSync() {
     const missing = csvTracts.filter(g => !library.tracts[g] || !library.tracts[g].council_district);
 
     if (missing.length === 0) {
+      console.info(`[eo] library is complete (${csvTracts.length}/${csvTracts.length} CSV tracts mapped) — skipping enrichment`);
       bgStatus(`Up to date · library covers ${csvTracts.length} tracts`, false);
       setTimeout(() => bgStatus(''), 3000);
       return;
     }
 
+    console.info(`[eo] library has ${missing.length} unmapped tracts — extending`);
     const extended = await extendLibrary(missing, csvRows);
     if (extended) {
       // Rebuild snapshot with the new mappings now folded in
