@@ -291,6 +291,112 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   background: var(--surface); color: var(--text); border-color: var(--border);
 }
 .leaflet-control-zoom a:hover { background: var(--bg); color: var(--gold); }
+
+/* Districts view */
+#districts-view { padding: 16px 24px; }
+#districts-view table { min-width: 900px; }
+#districts-view tbody tr { cursor: pointer; }
+#districts-view tbody tr:hover td { background: rgba(196,164,74,0.06); }
+#districts-view td.num { font-variant-numeric: tabular-nums; text-align: right; }
+#districts-view td.district-label { color: var(--gold); font-weight: 500; }
+#districts-view td.rep { color: var(--text); }
+#districts-view .spark { height: 18px; }
+#districts-view .spark span { background: var(--gold-dim); width: 3px; min-height: 1px; }
+
+/* District profile modal */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(10,9,7,0.78);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 40px 16px; overflow-y: auto;
+}
+.modal {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; width: 100%; max-width: 880px;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+}
+.modal-header {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  padding: 20px 24px; border-bottom: 1px solid var(--border);
+}
+.modal-header h2 {
+  font-family: var(--serif); font-size: 22px; font-weight: 400;
+  color: #f5f0e0; letter-spacing: -0.02em;
+}
+.modal-header .modal-sub { margin-top: 4px; font-size: 11px; color: var(--muted); }
+.modal-close {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--muted); font-family: var(--mono); font-size: 14px;
+  width: 28px; height: 28px; border-radius: 4px; cursor: pointer;
+}
+.modal-close:hover { color: var(--text); border-color: var(--muted); }
+.modal-body { padding: 20px 24px 24px; }
+
+.profile-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: 12px; margin-bottom: 20px;
+}
+.profile-stat {
+  padding: 10px 12px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 4px;
+}
+.profile-stat .label {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--dim); margin-bottom: 4px;
+}
+.profile-stat .value {
+  font-size: 18px; font-variant-numeric: tabular-nums; color: var(--text);
+}
+.profile-stat .value.pending { color: var(--pending); }
+.profile-stat .value.dismissed { color: var(--dismissed); }
+
+.profile-section { margin-bottom: 20px; }
+.profile-section h3 {
+  font-family: var(--mono); font-size: 10px; font-weight: 500;
+  text-transform: uppercase; letter-spacing: 0.12em;
+  color: var(--dim); margin-bottom: 8px;
+  padding-bottom: 6px; border-bottom: 1px solid var(--border);
+}
+.profile-cols {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 24px;
+}
+.profile-list { list-style: none; }
+.profile-list li {
+  display: flex; justify-content: space-between;
+  padding: 4px 0; font-size: 12px;
+}
+.profile-list li span:first-child {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  margin-right: 12px;
+}
+.profile-list li .count { color: var(--dim); font-variant-numeric: tabular-nums; }
+.profile-empty { color: var(--dim); font-style: italic; font-size: 11px; }
+
+.profile-cases { width: 100%; }
+.profile-cases td {
+  padding: 5px 8px; font-size: 11px;
+  border-bottom: 1px solid var(--surface);
+  white-space: nowrap; max-width: 220px;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.profile-cases td.docket { color: var(--gold); }
+.profile-trend {
+  display: flex; gap: 2px; align-items: flex-end; height: 48px;
+  padding: 8px 0;
+}
+.profile-trend .bar {
+  flex: 1; min-width: 4px; background: var(--gold-dim);
+  border-radius: 1px; position: relative;
+}
+.profile-trend .bar:hover { background: var(--gold); }
+.profile-trend .month-labels {
+  display: flex; gap: 2px; margin-top: 4px;
+}
+.trend-wrap { padding: 4px 0; }
+.trend-axis {
+  display: flex; justify-content: space-between;
+  font-size: 9px; color: var(--dim); margin-top: 4px;
+}
 </style>
 </head>
 <body>
@@ -328,6 +434,7 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
       <label>View</label>
       <div class="seg" id="view-seg">
         <button data-val="cases" class="on">Cases</button>
+        <button data-val="districts">Districts</button>
         <button data-val="coverage">Coverage</button>
         <button data-val="map">Map</button>
       </div>
@@ -361,6 +468,8 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
       <tbody id="tbody"></tbody>
     </table>
   </div>
+
+  <div id="districts-view" style="display:none"></div>
 
   <div id="grid-view" style="display:none"></div>
 
@@ -773,7 +882,7 @@ function median(arr) {
 
 function updateCoverageHeadline() {
   const el = document.getElementById('coverage-headline');
-  if (viewMode === 'cases') { el.textContent = ''; return; }
+  if (viewMode === 'cases' || viewMode === 'districts') { el.textContent = ''; return; }
   if (!princetonRows) {
     el.innerHTML = '<span style="color:var(--dim)">Fetching Princeton CSV…</span>';
     return;
@@ -1028,24 +1137,252 @@ async function renderMapView() {
   setTimeout(() => leafletMap && leafletMap.invalidateSize(), 50);
 }
 
+/* ───────────────────────── Districts view + profile ───────────────────────── */
+
+// Aggregate everything we want to show per council district from allRows.
+// Done on every render so it picks up new cases without a separate cache.
+function aggregateDistricts() {
+  const out = {};
+  for (const r of allRows) {
+    const d = r.council_district;
+    if (!d) continue;
+    if (!out[d]) {
+      out[d] = {
+        district: d,
+        key: normalizeDistrict(d),
+        rep: r.council_rep || '',
+        cases: 0, pending: 0, dismissed: 0, other: 0,
+        tracts: new Set(),
+        plaintiffs: {}, attorneys: {},
+        rows: [],
+        months: {},
+      };
+    }
+    const a = out[d];
+    a.cases++;
+    if (r.status === 'PENDING') a.pending++;
+    else if (r.status === 'DISMISSED' || r.status === 'NONSUIT') a.dismissed++;
+    else a.other++;
+    if (r.census_geoid) a.tracts.add(String(r.census_geoid));
+    if (r.Plaintiff_1) a.plaintiffs[r.Plaintiff_1] = (a.plaintiffs[r.Plaintiff_1] || 0) + 1;
+    if (r.Attorney && r.Attorney !== ', PRS') a.attorneys[r.Attorney] = (a.attorneys[r.Attorney] || 0) + 1;
+    a.rows.push(r);
+    const m = caseFileDateToMonth(r.file_date);
+    if (m) a.months[m] = (a.months[m] || 0) + 1;
+  }
+  return out;
+}
+
+function sparklineHtml(monthsMap, recentMonths) {
+  const counts = recentMonths.map(m => monthsMap[m] || 0);
+  const max = Math.max(1, ...counts);
+  return `<span class="spark">` + counts.map(c =>
+    `<span style="height:${Math.max(1, (c / max) * 16)}px"></span>`
+  ).join('') + `</span>`;
+}
+
+function renderDistrictsView() {
+  const root = document.getElementById('districts-view');
+  const byD = aggregateDistricts();
+  const rows = Object.values(byD).sort((a, b) => {
+    const an = parseInt(a.key, 10), bn = parseInt(b.key, 10);
+    if (!isNaN(an) && !isNaN(bn)) return an - bn;
+    return a.district.localeCompare(b.district);
+  });
+
+  if (!rows.length) {
+    root.innerHTML = `<div class="notice" style="padding:24px;text-align:center;color:var(--muted)">No council district data in current cases.</div>`;
+    return;
+  }
+
+  const recent = agg.localMonths.slice(-12);
+
+  let html = `<table><thead><tr>
+    <th>District</th><th>Council Rep</th>
+    <th class="num">Cases</th><th class="num">Pending</th>
+    <th class="num">Dismissed</th><th class="num">Tracts</th>
+    <th>Last 12 months</th>
+  </tr></thead><tbody>`;
+  for (const a of rows) {
+    html += `<tr onclick="showDistrictProfile('${a.district.replace(/'/g, "\\'")}')">`
+      + `<td class="district-label">${shorten(a.district, 'Council District ')}</td>`
+      + `<td class="rep">${a.rep || '—'}</td>`
+      + `<td class="num">${a.cases}</td>`
+      + `<td class="num">${a.pending}</td>`
+      + `<td class="num">${a.dismissed}</td>`
+      + `<td class="num">${a.tracts.size}</td>`
+      + `<td>${recent.length ? sparklineHtml(a.months, recent) : '—'}</td>`
+      + `</tr>`;
+  }
+  html += `</tbody></table>`;
+  root.innerHTML = html;
+}
+
+function showDistrictProfile(district) {
+  const byD = aggregateDistricts();
+  const a = byD[district];
+  if (!a) return;
+
+  const topList = (obj, n) => Object.entries(obj).sort((x, y) => y[1] - x[1]).slice(0, n);
+  const topPlaintiffs = topList(a.plaintiffs, 5);
+  const topAttorneys  = topList(a.attorneys, 5);
+
+  // Tracts: rank by case count within this district
+  const tractCounts = {};
+  for (const r of a.rows) {
+    if (r.census_geoid) {
+      const g = String(r.census_geoid);
+      tractCounts[g] = (tractCounts[g] || 0) + 1;
+    }
+  }
+  const topTracts = Object.entries(tractCounts).sort((x, y) => y[1] - x[1]);
+
+  // Recent cases — sort by file_date desc, take 10
+  const parseDate = v => {
+    const m = String(v || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    return m ? new Date(+m[3], +m[1] - 1, +m[2]).getTime() : 0;
+  };
+  const recentCases = [...a.rows].sort((x, y) => parseDate(y.file_date) - parseDate(x.file_date)).slice(0, 10);
+
+  // Monthly trend over the union of all months this district has activity in
+  const monthKeys = sortMonthsAsc(Object.keys(a.months));
+  const maxMonth = Math.max(1, ...monthKeys.map(m => a.months[m]));
+
+  const escape = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+
+  const profileHtml = `
+    <div class="modal-backdrop" id="district-modal" onclick="if (event.target === this) closeDistrictProfile()">
+      <div class="modal">
+        <div class="modal-header">
+          <div>
+            <h2>${escape(a.district)}</h2>
+            <div class="modal-sub">${a.rep ? 'Council Rep: ' + escape(a.rep) : 'No rep on file'} · ${a.tracts.size} census tract${a.tracts.size === 1 ? '' : 's'}</div>
+          </div>
+          <button class="modal-close" onclick="closeDistrictProfile()">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="profile-grid">
+            <div class="profile-stat"><div class="label">Total Cases</div><div class="value">${a.cases}</div></div>
+            <div class="profile-stat"><div class="label">Pending</div><div class="value pending">${a.pending}</div></div>
+            <div class="profile-stat"><div class="label">Dismissed</div><div class="value dismissed">${a.dismissed}</div></div>
+            <div class="profile-stat"><div class="label">Other</div><div class="value">${a.other}</div></div>
+          </div>
+
+          ${monthKeys.length ? `
+          <div class="profile-section">
+            <h3>Monthly Filings</h3>
+            <div class="trend-wrap">
+              <div class="profile-trend">
+                ${monthKeys.map(m => `<div class="bar" style="height:${Math.max(2, (a.months[m] / maxMonth) * 44)}px" title="${m}: ${a.months[m]}"></div>`).join('')}
+              </div>
+              <div class="trend-axis">
+                <span>${monthKeys[0]}</span>
+                <span>${monthKeys[monthKeys.length - 1]}</span>
+              </div>
+            </div>
+          </div>` : ''}
+
+          <div class="profile-cols">
+            <div class="profile-section">
+              <h3>Top Plaintiffs</h3>
+              ${topPlaintiffs.length ? `<ul class="profile-list">${topPlaintiffs.map(([n, c]) =>
+                `<li><span>${escape(n)}</span><span class="count">${c}</span></li>`).join('')}</ul>`
+                : '<div class="profile-empty">No plaintiff data.</div>'}
+            </div>
+            <div class="profile-section">
+              <h3>Top Attorneys</h3>
+              ${topAttorneys.length ? `<ul class="profile-list">${topAttorneys.map(([n, c]) =>
+                `<li><span>${escape(n.split(',')[0])}</span><span class="count">${c}</span></li>`).join('')}</ul>`
+                : '<div class="profile-empty">No attorney data (all pro se).</div>'}
+            </div>
+          </div>
+
+          ${topTracts.length ? `
+          <div class="profile-section">
+            <h3>Census Tracts</h3>
+            <ul class="profile-list">${topTracts.map(([g, c]) => {
+              const info = agg.tractInfo[g];
+              const name = info && info.name ? info.name : `Tract ${g}`;
+              return `<li><span>${escape(name)}</span><span class="count">${c}</span></li>`;
+            }).join('')}</ul>
+          </div>` : ''}
+
+          <div class="profile-section">
+            <h3>Recent Cases</h3>
+            <table class="profile-cases"><tbody>
+              ${recentCases.map(r => {
+                const status = r.status || '';
+                const dotClass = status === 'PENDING' ? 'dot-pending'
+                  : (status === 'DISMISSED' || status === 'NONSUIT') ? 'dot-dismissed' : 'dot-other';
+                return `<tr>
+                  <td class="docket">${escape(r.docket || '')}</td>
+                  <td>${escape(r.file_date || '')}</td>
+                  <td><span class="dot ${dotClass}"></span>${escape(status)}</td>
+                  <td>${escape(r.Plaintiff_1 || '')}</td>
+                  <td>${escape(r.address_formatted || '')}</td>
+                </tr>`;
+              }).join('')}
+            </tbody></table>
+          </div>
+
+          <div class="profile-section" style="margin-bottom:0">
+            <button class="filter-btn" style="cursor:pointer" onclick="filterCasesByDistrict('${a.district.replace(/'/g, "\\'")}')">View all ${a.cases} cases in Cases tab →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const wrap = document.createElement('div');
+  wrap.innerHTML = profileHtml;
+  document.body.appendChild(wrap.firstElementChild);
+  document.addEventListener('keydown', escCloseProfile);
+}
+
+function closeDistrictProfile() {
+  const m = document.getElementById('district-modal');
+  if (m) m.remove();
+  document.removeEventListener('keydown', escCloseProfile);
+}
+
+function escCloseProfile(e) {
+  if (e.key === 'Escape') closeDistrictProfile();
+}
+
+function filterCasesByDistrict(d) {
+  closeDistrictProfile();
+  filters.council_district = d;
+  viewMode = 'cases';
+  document.querySelectorAll('#view-seg button').forEach(b =>
+    b.classList.toggle('on', b.dataset.val === 'cases'));
+  updateFilterBtns();
+  render();
+}
+
 /* ───────────────────────── Dispatch ───────────────────────── */
 
 function setVisibility() {
-  const isCases    = viewMode === 'cases';
-  const isCoverage = viewMode === 'coverage';
-  const isMap      = viewMode === 'map';
-  document.getElementById('local-toolbar').style.display      = isCases    ? '' : 'none';
-  document.getElementById('local-table-wrap').style.display   = isCases    ? '' : 'none';
-  document.getElementById('grid-view').style.display          = isCoverage ? '' : 'none';
-  document.getElementById('map-view').style.display           = isMap      ? '' : 'none';
-  document.getElementById('coverage-mode-group').style.display = isCoverage ? '' : 'none';
-  document.getElementById('map-source-group').style.display    = isMap      ? '' : 'none';
+  const isCases     = viewMode === 'cases';
+  const isDistricts = viewMode === 'districts';
+  const isCoverage  = viewMode === 'coverage';
+  const isMap       = viewMode === 'map';
+  document.getElementById('local-toolbar').style.display       = isCases     ? '' : 'none';
+  document.getElementById('local-table-wrap').style.display    = isCases     ? '' : 'none';
+  document.getElementById('districts-view').style.display      = isDistricts ? '' : 'none';
+  document.getElementById('grid-view').style.display           = isCoverage  ? '' : 'none';
+  document.getElementById('map-view').style.display            = isMap       ? '' : 'none';
+  document.getElementById('coverage-mode-group').style.display = isCoverage  ? '' : 'none';
+  document.getElementById('map-source-group').style.display    = isMap       ? '' : 'none';
 }
 
 function render() {
   setVisibility();
   if (viewMode === 'cases') {
     renderLocalTable();
+  } else if (viewMode === 'districts') {
+    renderDistrictsView();
   } else if (viewMode === 'coverage') {
     renderCoverageGrid();
   } else if (viewMode === 'map') {
