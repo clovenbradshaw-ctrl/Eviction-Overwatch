@@ -468,6 +468,12 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 #record-panel .rp-actions button:hover { background: rgba(196,164,74,0.10); }
 #record-panel .rp-actions button:disabled { opacity: 0.5; cursor: wait; }
 #record-panel .rp-actions button.copied { color: var(--green); border-color: var(--green); }
+#record-panel .rp-actions button.pq-pending {
+  color: var(--gold); border-color: var(--gold);
+  background: rgba(196,164,74,0.10);
+}
+#record-panel .rp-actions button.pq-done { color: var(--green); border-color: var(--green); }
+#record-panel .rp-actions button.pq-error { color: var(--red); border-color: var(--red); }
 #record-panel .rp-fields { padding: 0 0 24px; }
 #record-panel .rp-row {
   display: grid; grid-template-columns: 130px 1fr;
@@ -1200,6 +1206,11 @@ function applyInitialCases(data) {
   bindRowClicks();
   renderProvenance();
   render();
+  // Warm the priority-queue state so the per-record button can render in
+  // the right state on the first click. The webhook materializes
+  // priority_queue.json on the first add() — list() just returns an empty
+  // stub if it doesn't exist yet.
+  loadPriorityQueue();
 }
 
 async function loadData() {
@@ -2173,10 +2184,21 @@ function renderRecordPanel(docket) {
       <button type="button" onclick="copyRecord('${safeDocket}', this)" title="Copy as text">Copy</button>
       <button type="button" onclick="exportRecord('${safeDocket}', this)" title="Download as CSV">Export CSV</button>
       <button type="button" onclick="printRecord('${safeDocket}', this)" title="Open print view">Print</button>
+      <button type="button" class="pq-btn" data-docket="${safeDocket}" data-pq-action="add"
+              onclick="prioritizeRecord('${safeDocket}', this)"
+              title="Push this docket to the front of the scraper queue">★ Prioritize</button>
     </div>
     <div class="rp-fields">${rowHtml}</div>`;
   panel.classList.add('open');
   panel.setAttribute('aria-hidden', 'false');
+
+  // Sync the priority button. Show whatever we already know immediately,
+  // then re-fetch in the background so a docket marked done by the scraper
+  // since app load shows up without a page refresh.
+  refreshPriorityButton(r.docket);
+  loadPriorityQueue(true).then(() => {
+    if (selectedRecordDocket === r.docket) refreshPriorityButton(r.docket);
+  });
 
   // After the panel is in the DOM, kick off async decryption for any
   // ENC: rows. Each row gets patched independently when its plaintext
@@ -2197,6 +2219,113 @@ function renderRecordPanel(docket) {
         valEl.className = 'val empty';
       }
     });
+  }
+}
+
+/* ───────────────────────── Priority queue (scraper re-scrape) ─────────
+   Push a docket to the front of the CaseLink scraper's enrichment line via
+   the n8n /webhook/priority-queue endpoint. The endpoint reads & writes
+   priority_queue.json in clovenbradshaw-ctrl/plain-text; the file is created
+   automatically on the first successful add. We fetch the current queue once
+   at app load so the record-panel button can show pending / done state. */
+
+const PQ_WEBHOOK = 'https://n8n.intelechia.com/webhook/priority-queue';
+const PQ_AUTH    = 'Bearer Provoking0-Cranium7-Penpal4-Childlike0-Uranium9';
+
+let priorityQueueState   = null;  // last { queue, max_size, updated_at } seen
+let priorityQueueLoadedAt = 0;    // Date.now() of last successful list()
+let pqLoadPromise        = null;  // in-flight list() promise, if any
+const PQ_FRESH_MS = 15_000;       // skip re-fetch if state is newer than this
+
+async function pqApiCall(payload) {
+  const resp = await fetch(PQ_WEBHOOK, {
+    method: 'POST',
+    headers: { 'Authorization': PQ_AUTH, 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!resp.ok) throw new Error(`PQ HTTP ${resp.status}`);
+  return resp.json();
+}
+
+async function loadPriorityQueue(force = false) {
+  if (pqLoadPromise) return pqLoadPromise;
+  if (priorityQueueState && !force) return priorityQueueState;
+  if (priorityQueueState && Date.now() - priorityQueueLoadedAt < PQ_FRESH_MS) {
+    return priorityQueueState;
+  }
+  pqLoadPromise = pqApiCall({ action: 'list' })
+    .then(r => { priorityQueueState = r; priorityQueueLoadedAt = Date.now(); return r; })
+    .catch(e => { console.warn('[pq] load failed:', e); return null; })
+    .finally(() => { pqLoadPromise = null; });
+  return pqLoadPromise;
+}
+
+// Most-recent status for a docket in the queue: 'pending' | 'done' | 'error' | null.
+function pqStatusFor(docket) {
+  const q = priorityQueueState && priorityQueueState.queue;
+  if (!Array.isArray(q) || !q.length) return null;
+  const D = String(docket || '').toUpperCase();
+  const items = q.filter(i => String(i.docket || '').toUpperCase() === D);
+  if (!items.length) return null;
+  if (items.some(i => i.status === 'pending')) return 'pending';
+  const sorted = [...items].sort((a, b) =>
+    String(b.added_at || '').localeCompare(String(a.added_at || '')));
+  return sorted[0].status || null;
+}
+
+// Sync the record-panel priority button to the current queue state.
+function refreshPriorityButton(docket) {
+  if (!docket) return;
+  const btn = document.querySelector(`#record-panel .pq-btn[data-docket="${CSS.escape(docket)}"]`);
+  if (!btn) return;
+  const status = pqStatusFor(docket);
+  btn.classList.remove('pq-pending', 'pq-done', 'pq-error');
+  btn.disabled = false;
+  if (status === 'pending') {
+    btn.textContent = '★ Queued (Remove)';
+    btn.classList.add('pq-pending');
+    btn.dataset.pqAction = 'remove';
+    btn.title = 'Already in the priority queue — click to remove';
+  } else if (status === 'done') {
+    btn.textContent = '✓ Re-scraped';
+    btn.classList.add('pq-done');
+    btn.dataset.pqAction = 'add';
+    btn.title = 'Recently re-scraped — click to queue again';
+  } else if (status === 'error') {
+    btn.textContent = '★ Retry priority';
+    btn.classList.add('pq-error');
+    btn.dataset.pqAction = 'add';
+    btn.title = 'Previous re-scrape errored — click to retry';
+  } else {
+    btn.textContent = '★ Prioritize';
+    btn.dataset.pqAction = 'add';
+    btn.title = 'Push this docket to the front of the scraper queue';
+  }
+}
+
+async function prioritizeRecord(docket, btn) {
+  if (!btn || !docket) return;
+  const action = btn.dataset.pqAction || 'add';
+  btn.disabled = true;
+  btn.textContent = action === 'remove' ? 'Removing…' : 'Queuing…';
+  try {
+    const result = await pqApiCall({ action, docket });
+    if (result && result.queue) {
+      priorityQueueState = result;
+      priorityQueueLoadedAt = Date.now();
+    }
+    if (result && result.error) {
+      // Endpoint surfaces user-visible errors (queue full, duplicate, etc.).
+      flashButton(btn, result.error, 'copied', 1800);
+      setTimeout(() => refreshPriorityButton(docket), 1900);
+      return;
+    }
+    flashButton(btn, action === 'remove' ? 'Removed' : '★ Queued');
+    setTimeout(() => refreshPriorityButton(docket), 1300);
+  } catch (e) {
+    console.warn('[pq] action failed:', e);
+    flashButton(btn, 'Failed', 'copied', 1500);
+    setTimeout(() => refreshPriorityButton(docket), 1600);
   }
 }
 
