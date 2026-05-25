@@ -306,6 +306,8 @@ td {
 
 tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 
+#tbody td.money { font-variant-numeric: tabular-nums; text-align: right; }
+
 #tbody tr { cursor: pointer; }
 #tbody tr:hover td { background: rgba(196,164,74,0.10); }
 #tbody tr.selected td { background: rgba(196,164,74,0.16); }
@@ -487,6 +489,21 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 }
 #record-panel .rp-row .val.empty { color: var(--dim); }
 #record-panel .rp-row .val.enc { color: var(--muted); font-style: italic; }
+
+/* Wide section for nested arrays (pleadings, judgments) — these don't fit
+   in the narrow value column so they get the full panel width with the
+   label rendered above as a heading. */
+#record-panel .rp-section {
+  padding: 10px 14px 12px;
+  border-bottom: 1px solid var(--surface);
+  font-size: 11px;
+}
+#record-panel .rp-section > .lbl {
+  display: block;
+  color: var(--dim); text-transform: uppercase;
+  letter-spacing: 0.06em; font-size: 10px;
+  margin-bottom: 4px;
+}
 
 .spark { display: inline-flex; gap: 1px; align-items: flex-end; height: 16px; }
 .spark span { display: inline-block; width: 4px; background: var(--gold-dim); border-radius: 1px; }
@@ -688,35 +705,46 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   text-align: right;
 }
 
-/* Pleadings timeline (used inside main's record-panel) */
+/* Pleadings timeline (used inside main's record-panel).
+   The host .val column is narrow (~210px), so we stack the metadata on a
+   wrap-friendly header row above a full-width description rather than
+   competing for horizontal space — otherwise the description column gets
+   squeezed to ~30px and text wraps one character per line. */
 .pleadings-list { display: flex; flex-direction: column; margin-top: 4px; }
 .pleading-row {
-  display: grid; grid-template-columns: 88px 64px 1fr auto;
-  gap: 10px; align-items: start;
+  display: flex; flex-direction: column; gap: 4px;
   padding: 7px 0; border-bottom: 1px solid var(--border);
+  min-width: 0;
 }
 .pleading-row:last-child { border-bottom: none; }
+.pleading-meta {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: 6px; min-width: 0;
+}
 .pleading-date {
   font-variant-numeric: tabular-nums; color: var(--muted);
-  font-size: 11px; padding-top: 2px;
+  font-size: 11px; white-space: nowrap;
 }
 .pleading-code {
   font-size: 10px; padding: 2px 6px;
   background: rgba(196,164,74,0.10); color: var(--gold);
   border: 1px solid var(--gold-dim); border-radius: 3px;
   text-align: center; letter-spacing: 0.06em; font-weight: 500;
+  white-space: nowrap;
 }
-.pleading-body { padding-top: 1px; min-width: 0; }
 .pleading-desc {
   font-size: 12px; color: var(--text); line-height: 1.3;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
-.pleading-detail { font-size: 10px; color: var(--dim); margin-top: 2px; }
+.pleading-detail {
+  font-size: 10px; color: var(--dim);
+  overflow-wrap: anywhere;
+}
 .pleading-image-badge {
   font-size: 9px; letter-spacing: 0.1em;
   color: var(--muted); border: 1px solid var(--border);
-  padding: 2px 6px; border-radius: 2px;
-  align-self: start; white-space: nowrap;
+  padding: 1px 5px; border-radius: 2px;
+  white-space: nowrap; margin-left: auto;
 }
 
 /* Provenance footer — every external source disclosed */
@@ -1101,6 +1129,7 @@ const COLUMNS = [
   { key: "council_rep", label: "Council Rep" },
   { key: "state_house_district", label: "State House" },
   { key: "us_congressional_district", label: "US Cong." },
+  { key: "judgment_amount", label: "Judgment $", numeric: true, align: "right" },
 ];
 
 const FILTER_FIELDS = [
@@ -1108,6 +1137,7 @@ const FILTER_FIELDS = [
   { key: "council_district", label: "Council District" },
   { key: "Attorney", label: "Attorney" },
   { key: "Plaintiff_1", label: "Plaintiff" },
+  { key: "judgment_bucket", label: "Judgment $", order: JUDGMENT_BUCKETS },
 ];
 
 let allRows = [];
@@ -1186,6 +1216,7 @@ function applyInitialCases(data) {
   // Keep ENC: values verbatim so they can be decrypted after login. The
   // display layer hides them until the user unlocks.
   allRows = Object.entries(cases).map(([docket, c]) => ({ docket, ...c }));
+  enrichCaseRows(allRows);
   rebuildLocalAggregates();
 
   document.getElementById("loading").style.display = "none";
@@ -1312,7 +1343,10 @@ function toggleDropdown(field) {
     const v = r[field] || "(empty)";
     counts[v] = (counts[v] || 0) + 1;
   });
-  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  const f = FILTER_FIELDS.find(x => x.key === field);
+  const sorted = f && f.order
+    ? f.order.filter(k => k in counts).map(k => [k, counts[k]])
+    : Object.entries(counts).sort((a, b) => b[1] - a[1]);
 
   const dd = document.getElementById("dd-" + field);
   dd.innerHTML = sorted.map(([v, c]) => {
@@ -1359,9 +1393,10 @@ function updateFilterBtns() {
 }
 
 function buildHeader() {
-  document.getElementById("thead").innerHTML = COLUMNS.map(c =>
-    `<th onclick="doSort('${c.key}')" id="th-${c.key}">${c.label}</th>`
-  ).join("");
+  document.getElementById("thead").innerHTML = COLUMNS.map(c => {
+    const align = c.align === "right" ? ' style="text-align:right"' : "";
+    return `<th onclick="doSort('${c.key}')" id="th-${c.key}"${align}>${c.label}</th>`;
+  }).join("");
 }
 
 function doSort(col) {
@@ -1391,7 +1426,9 @@ function getFiltered() {
 
 function renderLocalTable() {
   const rows = getFiltered();
+  const sortColDef = COLUMNS.find(c => c.key === sortCol);
   const isDateCol = sortCol === "file_date";
+  const isNumCol = !!(sortColDef && sortColDef.numeric);
   const parseDate = v => {
     const m = String(v || "").match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
     return m ? new Date(+m[3], +m[1] - 1, +m[2]).getTime() : NaN;
@@ -1405,6 +1442,14 @@ function renderLocalTable() {
       if (aBad) return 1;
       if (bBad) return -1;
       return at < bt ? -sortDir : at > bt ? sortDir : 0;
+    }
+    if (isNumCol) {
+      const av = a[sortCol], bv = b[sortCol];
+      const aBad = av == null, bBad = bv == null;
+      if (aBad && bBad) return 0;
+      if (aBad) return 1;
+      if (bBad) return -1;
+      return av < bv ? -sortDir : av > bv ? sortDir : 0;
     }
     const av = a[sortCol] || "";
     const bv = b[sortCol] || "";
@@ -1429,6 +1474,12 @@ function renderLocalTable() {
       : "dot-other";
     const sel = selectedRecordDocket === r.docket ? ' class="selected"' : '';
     return `<tr data-docket="${escapeAttr(r.docket)}"${sel}>` + COLUMNS.map(c => {
+      if (c.key === "judgment_amount") {
+        const amt = r.judgment_amount;
+        return amt == null
+          ? `<td class="money">—</td>`
+          : `<td class="money">${formatMoney(amt)}</td>`;
+      }
       let v = r[c.key] || "";
       if (c.key === "Attorney" && v === ", PRS") v = "pro se";
       if (c.key === "docket") return `<td><span class="docket">${v}</span></td>`;
@@ -1982,6 +2033,66 @@ function escapeAttr(s) {
     .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 }
 
+// Parse a money amount out of a judgment row's description. The upstream
+// data smuggles the awarded amount onto the end of `judgment_type` (e.g.
+// "JUDGMENT-D1 4,203.48"), so we pull the first dollar-formatted token.
+const JUDGMENT_AMOUNT_RE = /(\d{1,3}(?:,\d{3})*\.\d{2})/;
+function extractJudgmentAmount(row) {
+  const arr = row.judgments;
+  if (!Array.isArray(arr) || !arr.length) return null;
+  let total = 0;
+  let found = false;
+  for (const j of arr) {
+    const m = String(j && j.judgment_type || '').match(JUDGMENT_AMOUNT_RE);
+    if (!m) continue;
+    const n = parseFloat(m[1].replace(/,/g, ''));
+    if (!Number.isFinite(n)) continue;
+    total += n;
+    found = true;
+  }
+  return found ? Math.round(total * 100) / 100 : null;
+}
+
+const JUDGMENT_BUCKETS = ['(no $)', '<$1k', '$1k–3k', '$3k–5k', '$5k–10k', '$10k+'];
+function bucketJudgmentAmount(amt) {
+  if (amt == null) return '(no $)';
+  if (amt < 1000) return '<$1k';
+  if (amt < 3000) return '$1k–3k';
+  if (amt < 5000) return '$3k–5k';
+  if (amt < 10000) return '$5k–10k';
+  return '$10k+';
+}
+
+// Derive judgment_amount + judgment_bucket on each row at load time. These
+// power a numeric "Judgment $" table column and a bucket-based filter.
+function enrichCaseRows(rows) {
+  for (const r of rows) {
+    r.judgment_amount = extractJudgmentAmount(r);
+    r.judgment_bucket = bucketJudgmentAmount(r.judgment_amount);
+  }
+}
+
+function formatMoney(n) {
+  return '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Render a JUDGMENTS array using the same timeline markup as pleadings.
+// The upstream schema is { judgment_date, party_name, judgment_type, judge }
+// — the same shape as pleadings under different field names.
+function formatJudgments(judgments) {
+  if (!Array.isArray(judgments) || !judgments.length) {
+    return '<span class="empty">— no judgments —</span>';
+  }
+  const normalized = judgments.map(j => ({
+    date: j.judgment_date,
+    code: j.party_name,
+    description: j.judgment_type,
+    detail: '',
+    has_image: false,
+  }));
+  return formatPleadings(normalized);
+}
+
 // Render the PLEADINGS array as a vertical timeline. Pleadings are stored on
 // each case as objects of { date, code, description, detail, has_image },
 // sorted newest-first; an "IMG" badge marks pleadings that have a scanned
@@ -1998,13 +2109,13 @@ function formatPleadings(pleadings) {
   return `<div class="pleadings-list">${sorted.map(p => {
     const code = String(p.code || '').toUpperCase();
     return `<div class="pleading-row">
-      <div class="pleading-date">${escapeHtml(p.date || '')}</div>
-      <div class="pleading-code">${escapeHtml(code)}</div>
-      <div class="pleading-body">
-        <div class="pleading-desc">${escapeHtml(p.description || '')}</div>
-        ${p.detail ? `<div class="pleading-detail">${escapeHtml(p.detail)}</div>` : ''}
+      <div class="pleading-meta">
+        <span class="pleading-date">${escapeHtml(p.date || '')}</span>
+        ${code ? `<span class="pleading-code">${escapeHtml(code)}</span>` : ''}
+        ${p.has_image ? '<span class="pleading-image-badge">IMG</span>' : ''}
       </div>
-      ${p.has_image ? '<div class="pleading-image-badge">IMG</div>' : '<div></div>'}
+      <div class="pleading-desc">${escapeHtml(p.description || '')}</div>
+      ${p.detail ? `<div class="pleading-detail">${escapeHtml(p.detail)}</div>` : ''}
     </div>`;
   }).join('')}</div>`;
 }
@@ -2132,18 +2243,38 @@ function renderRecordPanel(docket) {
   const seen = new Set();
   const ordered = [];
   for (const k of PRIORITY) if (k in r) { ordered.push(k); seen.add(k); }
-  for (const k of Object.keys(r).sort()) if (!seen.has(k)) ordered.push(k);
+  // judgment_bucket is a derived display label for filtering only — hide it
+  // from the per-record field listing where judgment_amount is already shown.
+  for (const k of Object.keys(r).sort()) {
+    if (k === 'judgment_bucket') continue;
+    if (!seen.has(k)) ordered.push(k);
+  }
 
   const rowHtml = ordered.map(k => {
     let v = r[k];
     let cls = 'val';
     let display;
     let encAttr = '';
-    // Pleadings get a formatted timeline instead of raw JSON.
+    // Nested arrays (pleadings, judgments) get a full-width section
+    // instead of being squeezed into the narrow value column.
     if (k === 'pleadings' && Array.isArray(v)) {
+      return `<div class="rp-section">
+        <span class="lbl">${escapeHtml(k)}</span>
+        ${formatPleadings(v)}
+      </div>`;
+    }
+    if (k === 'judgments' && Array.isArray(v)) {
+      return `<div class="rp-section">
+        <span class="lbl">${escapeHtml(k)}</span>
+        ${formatJudgments(v)}
+      </div>`;
+    }
+    if (k === 'judgment_amount') {
+      const txt = v == null ? '—' : formatMoney(v);
+      const empty = v == null ? ' empty' : '';
       return `<div class="rp-row">
         <span class="lbl">${escapeHtml(k)}</span>
-        <span class="val">${formatPleadings(v)}</span>
+        <span class="val${empty}">${escapeHtml(txt)}</span>
       </div>`;
     }
     if (v == null || v === '') { display = '—'; cls += ' empty'; }
@@ -2218,7 +2349,10 @@ async function resolveRecordFields(docket) {
   const seen = new Set();
   const keys = [];
   for (const k of PRIORITY) if (k in r) { keys.push(k); seen.add(k); }
-  for (const k of Object.keys(r).sort()) if (!seen.has(k)) keys.push(k);
+  for (const k of Object.keys(r).sort()) {
+    if (k === 'judgment_bucket') continue;
+    if (!seen.has(k)) keys.push(k);
+  }
 
   const fields = [];
   for (const k of keys) {
@@ -2249,6 +2383,20 @@ async function resolveRecordFields(docket) {
       fields.push([k, lines.join('\n')]);
       continue;
     }
+    if (k === 'judgments' && Array.isArray(v)) {
+      const parseDate = s => {
+        const m = String(s || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+        return m ? new Date(+m[3], +m[1] - 1, +m[2]).getTime() : 0;
+      };
+      const sorted = [...v].sort((a, b) => parseDate(b.judgment_date) - parseDate(a.judgment_date));
+      const lines = sorted.map(j => {
+        const parts = [j.judgment_date || '', (j.party_name || '').toUpperCase(), j.judgment_type || ''].filter(Boolean);
+        return parts.join(' · ');
+      });
+      fields.push([k, lines.join('\n')]);
+      continue;
+    }
+    if (k === 'judgment_amount' && v != null) { fields.push([k, formatMoney(v)]); continue; }
     if (typeof v === 'object') { fields.push([k, JSON.stringify(v)]); continue; }
     fields.push([k, String(v)]);
   }
@@ -2574,6 +2722,7 @@ async function applyCasesUpdate() {
   for (const d in oldByDocket) if (!newDockets.has(d)) removed++;
 
   allRows = newRows;
+  enrichCaseRows(allRows);
   rebuildLocalAggregates();
   if (princetonRows) rebuildPrincetonAggregates();
 
@@ -3209,7 +3358,10 @@ async function buildCsv(rows) {
   const cols = [];
   const seen = new Set();
   for (const k of PRIORITY) if (keySet.has(k)) { cols.push(k); seen.add(k); }
-  for (const k of [...keySet].sort()) if (!seen.has(k)) cols.push(k);
+  for (const k of [...keySet].sort()) {
+    if (k === 'judgment_bucket') continue;
+    if (!seen.has(k)) cols.push(k);
+  }
 
   const unlocked = isUnlocked();
   const out = new Array(rows.length);
