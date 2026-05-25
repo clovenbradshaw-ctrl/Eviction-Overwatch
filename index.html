@@ -613,6 +613,23 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 .profile-stat .value.pending { color: var(--pending); }
 .profile-stat .value.dismissed { color: var(--dismissed); }
 
+/* Two-source tally inside a single profile-stat (Total Cases). */
+.profile-stat.stat-multi { padding-bottom: 8px; }
+.profile-stat .stat-sources {
+  display: flex; flex-direction: column; gap: 3px;
+  margin-top: 2px;
+}
+.profile-stat .src-num {
+  display: flex; justify-content: space-between; align-items: baseline;
+  gap: 8px; font-size: 14px; font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.profile-stat .src-num.pending { color: var(--dim); }
+.profile-stat .src-tag {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--dim); font-variant-numeric: normal;
+}
+
 .profile-section { margin-bottom: 20px; }
 .profile-section h3 {
   font-family: var(--mono); font-size: 10px; font-weight: 500;
@@ -1115,18 +1132,39 @@ function renderProvenance() {
 
 /* ───────────────────────── Existing case-table state ───────────────────────── */
 
+// Source-attribution tooltips shared across views. Keep these in sync with the
+// `sources` map above — these strings are what users see when hovering any
+// column header, stat, or label.
+const SRC_SCRAPED   = 'Source: scraped cases.json (circuitclerk.nashville.gov, via clovenbradshaw-ctrl/plain-text).';
+const SRC_GEOCODED  = 'Source: geocoded from the case address during scrape (cases.json).';
+const SRC_DERIVED   = 'Source: derived locally from scraped cases.json fields.';
+const SRC_PRINCETON = 'Source: Princeton Eviction Lab monthly filings CSV (2020–2021, evictionlab.org).';
+const SRC_MSS       = 'Source: Metro Social Services district demographics (ACS 2017–2021 5-year estimates).';
+const SRC_TIGER     = 'Source: US Census TIGERweb tract polygons (Davidson County).';
+
 const COLUMNS = [
-  { key: "docket", label: "Docket" },
-  { key: "file_date", label: "Filed" },
-  { key: "status", label: "Status" },
-  { key: "Plaintiff_1", label: "Plaintiff" },
-  { key: "Attorney", label: "Attorney" },
-  { key: "address_formatted", label: "Address" },
-  { key: "council_district", label: "Council" },
-  { key: "council_rep", label: "Council Rep" },
-  { key: "state_house_district", label: "State House" },
-  { key: "us_congressional_district", label: "US Cong." },
-  { key: "judgment_amount", label: "Judgment $", numeric: true, align: "right" },
+  { key: "docket", label: "Docket",
+    tip: 'Court docket number. ' + SRC_SCRAPED },
+  { key: "file_date", label: "Filed",
+    tip: 'Date the case was filed in court. ' + SRC_SCRAPED },
+  { key: "status", label: "Status",
+    tip: 'Current case status (PENDING, DISMISSED, NONSUIT, …). ' + SRC_SCRAPED },
+  { key: "Plaintiff_1", label: "Plaintiff",
+    tip: 'Primary plaintiff (typically the landlord or property manager). ' + SRC_SCRAPED },
+  { key: "Attorney", label: "Attorney",
+    tip: 'Plaintiff\'s attorney (",PRS" rendered as "pro se"). ' + SRC_SCRAPED },
+  { key: "address_formatted", label: "Address",
+    tip: 'Defendant address as normalized from the court record. ' + SRC_SCRAPED },
+  { key: "council_district", label: "Council",
+    tip: 'Metro Nashville council district. ' + SRC_GEOCODED },
+  { key: "council_rep", label: "Council Rep",
+    tip: 'Council member for the district. ' + SRC_GEOCODED },
+  { key: "state_house_district", label: "State House",
+    tip: 'Tennessee state house district. ' + SRC_GEOCODED },
+  { key: "us_congressional_district", label: "US Cong.",
+    tip: 'US congressional district. ' + SRC_GEOCODED },
+  { key: "judgment_amount", label: "Judgment $", numeric: true, align: "right",
+    tip: 'Judgment dollar amount, extracted from judgment records on the case. ' + SRC_DERIVED },
 ];
 
 // Declared before FILTER_FIELDS so the order: reference below resolves.
@@ -1401,7 +1439,8 @@ function updateFilterBtns() {
 function buildHeader() {
   document.getElementById("thead").innerHTML = COLUMNS.map(c => {
     const align = c.align === "right" ? ' style="text-align:right"' : "";
-    return `<th onclick="doSort('${c.key}')" id="th-${c.key}"${align}>${c.label}</th>`;
+    const tip = c.tip ? ` title="${escapeAttr(c.tip)}"` : "";
+    return `<th onclick="doSort('${c.key}')" id="th-${c.key}"${align}${tip}>${c.label}</th>`;
   }).join("");
 }
 
@@ -1466,6 +1505,7 @@ function renderLocalTable() {
     const th = document.getElementById("th-" + c.key);
     th.innerHTML = c.label + (sortCol === c.key
       ? `<span class="arrow">${sortDir === 1 ? "↑" : "↓"}</span>` : "");
+    if (c.tip) th.title = c.tip;
   });
 
   document.getElementById("result-count").textContent =
@@ -2858,21 +2898,35 @@ function renderDistrictsView() {
 
   const recent = agg.localMonths.slice(-12);
 
+  const princetonTotalFor = key => {
+    const m = agg.princetonDistrict[key];
+    if (!m) return null;
+    let t = 0;
+    for (const v of Object.values(m)) t += v;
+    return t;
+  };
+
   let html = `<table><thead><tr>
-    <th>District</th><th>Council Rep</th>
-    <th class="num">Cases</th><th class="num">Pending</th>
-    <th class="num">Dismissed</th><th class="num">Tracts</th>
-    <th>Last 12 months</th>
+    <th title="Metro Nashville council district. ${escapeAttr(SRC_GEOCODED)}">District</th>
+    <th title="Council member for the district. ${escapeAttr(SRC_GEOCODED)}">Council Rep</th>
+    <th class="num" title="Total cases in the scraped court records (recent filings). ${escapeAttr(SRC_SCRAPED)}">Cases (Scraped)</th>
+    <th class="num" title="Total filings from Princeton Eviction Lab CSV, summed across all available months (2020–2021). ${escapeAttr(SRC_PRINCETON)}">Filings (Princeton 2020–21)</th>
+    <th class="num" title="Cases currently in PENDING status. ${escapeAttr(SRC_SCRAPED)}">Pending</th>
+    <th class="num" title="Cases with DISMISSED or NONSUIT status. ${escapeAttr(SRC_SCRAPED)}">Dismissed</th>
+    <th class="num" title="Distinct census tracts touched by scraped cases in this district. ${escapeAttr(SRC_DERIVED)}">Tracts</th>
+    <th title="Sparkline of monthly case counts over the last 12 months. ${escapeAttr(SRC_SCRAPED)}">Last 12 months</th>
   </tr></thead><tbody>`;
   for (const a of rows) {
+    const pTot = princetonTotalFor(a.key);
     html += `<tr onclick="showDistrictProfile('${a.district.replace(/'/g, "\\'")}')">`
-      + `<td class="district-label">${shorten(a.district, 'Council District ')}</td>`
-      + `<td class="rep">${escapeHtmlSafe(a.rep) || '—'}</td>`
-      + `<td class="num">${a.cases}</td>`
-      + `<td class="num">${a.pending}</td>`
-      + `<td class="num">${a.dismissed}</td>`
-      + `<td class="num">${a.tracts.size}</td>`
-      + `<td>${recent.length ? sparklineHtml(a.months, recent) : '—'}</td>`
+      + `<td class="district-label" title="${escapeAttr(SRC_GEOCODED)}">${shorten(a.district, 'Council District ')}</td>`
+      + `<td class="rep" title="${escapeAttr(SRC_GEOCODED)}">${escapeHtmlSafe(a.rep) || '—'}</td>`
+      + `<td class="num" title="Scraped count. ${escapeAttr(SRC_SCRAPED)}">${a.cases}</td>`
+      + `<td class="num" title="${pTot == null ? 'No Princeton data for this district yet (fetch may still be pending).' : 'Princeton 2020–21 total. ' + escapeAttr(SRC_PRINCETON)}">${pTot == null ? '—' : pTot.toLocaleString()}</td>`
+      + `<td class="num" title="Pending count from scraped status. ${escapeAttr(SRC_SCRAPED)}">${a.pending}</td>`
+      + `<td class="num" title="Dismissed/Nonsuit count from scraped status. ${escapeAttr(SRC_SCRAPED)}">${a.dismissed}</td>`
+      + `<td class="num" title="Distinct census tracts in scraped cases. ${escapeAttr(SRC_DERIVED)}">${a.tracts.size}</td>`
+      + `<td title="Scraped monthly counts, last 12 months. ${escapeAttr(SRC_SCRAPED)}">${recent.length ? sparklineHtml(a.months, recent) : '—'}</td>`
       + `</tr>`;
   }
   html += `</tbody></table>`;
@@ -2918,6 +2972,15 @@ function showDistrictProfile(district) {
   const mss = districtKey ? agg.districtDemographics[districtKey] : null;
   const county = agg.countyTotals;
 
+  // Princeton total filings (2020–21) for this district, if loaded.
+  const princetonMap = districtKey ? agg.princetonDistrict[districtKey] : null;
+  let princetonTotal = null;
+  if (princetonMap) {
+    princetonTotal = 0;
+    for (const v of Object.values(princetonMap)) princetonTotal += v;
+  }
+  const princetonStatus = sources.princeton.status;
+
   // MSS-derived district context: income, poverty, housing cost burden,
   // employment.
   let demoSection = '';
@@ -2940,53 +3003,53 @@ function showDistrictProfile(district) {
 
     demoSection = `
       <div class="profile-section">
-        <h3>District Demographics</h3>
+        <h3 title="${esc(SRC_MSS)}">District Demographics</h3>
         <div class="demo-grid">
-          <div class="demo-cell">
+          <div class="demo-cell" title="Total district population. ${esc(SRC_MSS)}">
             <div class="label">Population</div>
             <div class="value">${fmtNum(mss.population)}</div>
           </div>
-          <div class="demo-cell">
+          <div class="demo-cell" title="Median household income for the district. ${esc(SRC_MSS)}">
             <div class="label">Median HH income</div>
             <div class="value">${fmtUsd(mss.income && mss.income.median_household_income)}</div>
             ${county ? cmp(mss.income && mss.income.median_household_income, county.median_household_income, cmpUsd, false) : ''}
           </div>
-          <div class="demo-cell">
+          <div class="demo-cell" title="Median gross monthly rent in the district. ${esc(SRC_MSS)}">
             <div class="label">Median monthly rent</div>
             <div class="value">${fmtUsd(mss.housing && mss.housing.median_monthly_rent)}</div>
             ${county ? cmp(mss.housing && mss.housing.median_monthly_rent, county.median_monthly_rent, cmpUsd, true) : ''}
           </div>
-          <div class="demo-cell">
+          <div class="demo-cell" title="Total housing units in the district. ${esc(SRC_MSS)}">
             <div class="label">Housing units</div>
             <div class="value">${fmtNum(mss.housing && mss.housing.total_housing_units)}</div>
             <div class="compare">${fmtPct(mss.housing && mss.housing.pct_occupied)} occupied</div>
           </div>
-          <div class="demo-cell">
+          <div class="demo-cell" title="Share of district population below the federal poverty line. ${esc(SRC_MSS)}">
             <div class="label">Poverty rate</div>
             <div class="value">${fmtPct(mss.poverty && mss.poverty.pct_total_poverty)}</div>
             ${county ? cmp(mss.poverty && mss.poverty.pct_total_poverty, county.poverty_rate_percent, cmpPct, true) : ''}
           </div>
-          <div class="demo-cell">
+          <div class="demo-cell" title="Share of children below the federal poverty line. ${esc(SRC_MSS)}">
             <div class="label">Child poverty</div>
             <div class="value">${fmtPct(mss.poverty && mss.poverty.pct_child_poverty)}</div>
           </div>
-          <div class="demo-cell">
+          <div class="demo-cell" title="Unemployment rate in the district. ${esc(SRC_MSS)}">
             <div class="label">Unemployment</div>
             <div class="value">${fmtPct(mss.employment && mss.employment.unemployment_rate)}</div>
             ${county ? cmp(mss.employment && mss.employment.unemployment_rate, county.unemployment_rate_percent, cmpPct, true) : ''}
           </div>
-          <div class="demo-cell">
+          <div class="demo-cell" title="Median age of the district population. ${esc(SRC_MSS)}">
             <div class="label">Median age</div>
             <div class="value">${mss.median_age != null ? mss.median_age.toFixed(1) : '—'}</div>
           </div>
         </div>
         <div class="demo-bars">
-          <div class="demo-bar-row">
+          <div class="demo-bar-row" title="Share of renters paying 35% or more of household income on housing. ${esc(SRC_MSS)}">
             <div class="label-cell">Renters paying 35%+ of income</div>
             <div class="bar-cell"><div${rbCls} style="width:${rb != null ? Math.min(100, rb) : 0}%"></div></div>
             <div class="num-cell">${fmtPct(rb)}</div>
           </div>
-          <div class="demo-bar-row">
+          <div class="demo-bar-row" title="Share of owners paying 35% or more of household income on housing. ${esc(SRC_MSS)}">
             <div class="label-cell">Owners paying 35%+ of income</div>
             <div class="bar-cell"><div${obCls} style="width:${ob != null ? Math.min(100, ob) : 0}%"></div></div>
             <div class="num-cell">${fmtPct(ob)}</div>
@@ -3012,20 +3075,20 @@ function showDistrictProfile(district) {
     const pctNum = p => p != null ? p.toFixed(1) + '%' : '—';
     const approxCount = p => p != null && pop ? Math.round(pop * p / 100).toLocaleString() : '—';
     const bar = p => `<div style="width:${p != null ? Math.min(100, p).toFixed(2) : 0}%"></div>`;
-    const row = (label, p) => `<div class="race-row">
+    const row = (label, p, note) => `<div class="race-row" title="${esc((note ? note + ' ' : '') + SRC_MSS)}">
       <div class="label-cell">${label}</div>
       <div class="bar-cell">${bar(p)}</div>
       <div class="num-cell">~${approxCount(p)} · ${pctNum(p)}</div>
     </div>`;
     raceSection = `<div class="profile-section">
-      <h3>Race &amp; Ethnicity (district population)</h3>
+      <h3 title="${esc(SRC_MSS)}">Race &amp; Ethnicity (district population)</h3>
       <div class="race-bars">
-        ${row('White', re.pct_white)}
-        ${row('Black or African American', re.pct_black)}
-        ${row('Asian', re.pct_asian)}
-        ${row('Two or more races', re.pct_two_or_more)}
+        ${row('White', re.pct_white, 'Share of population identifying as White alone.')}
+        ${row('Black or African American', re.pct_black, 'Share of population identifying as Black or African American alone.')}
+        ${row('Asian', re.pct_asian, 'Share of population identifying as Asian alone.')}
+        ${row('Two or more races', re.pct_two_or_more, 'Share of population identifying with two or more races.')}
         <div class="race-overlap"></div>
-        ${row('Hispanic or Latino (any race)', re.pct_hispanic)}
+        ${row('Hispanic or Latino (any race)', re.pct_hispanic, 'Hispanic/Latino ethnicity — overlaps the race categories above.')}
       </div>
       <div class="race-source-note">
         Total population: <strong>${pop.toLocaleString()}</strong>. Counts approximated as population × percentage.
@@ -3041,32 +3104,44 @@ function showDistrictProfile(district) {
     raceSection = `<div class="profile-section"><h3>Race &amp; Ethnicity</h3><div class="profile-empty">${msg}</div></div>`;
   }
 
+  const princetonLine = princetonTotal != null
+    ? `<span class="src-num" title="${esc('Princeton 2020–21 sum across all months. ' + SRC_PRINCETON)}"><span class="src-tag">Princeton</span> ${princetonTotal.toLocaleString()}</span>`
+    : princetonStatus === 'pending'
+      ? `<span class="src-num pending" title="${esc('Princeton CSV still loading from evictionlab.org.')}"><span class="src-tag">Princeton</span> …</span>`
+      : `<span class="src-num pending" title="${esc('No Princeton data available for this district. ' + SRC_PRINCETON)}"><span class="src-tag">Princeton</span> —</span>`;
+
   const profileHtml = `
     <div class="dp-backdrop" id="district-modal" onclick="if (event.target === this) closeDistrictProfile()">
       <div class="dp-modal">
         <div class="dp-header">
           <div>
             <h2>${esc(a.district)}</h2>
-            <div class="dp-sub">${a.rep ? 'Council Rep: ' + esc(a.rep) : 'No rep on file'} · ${a.tracts.size} census tract${a.tracts.size === 1 ? '' : 's'}</div>
+            <div class="dp-sub" title="${esc('Council Rep and census tract counts. ' + SRC_GEOCODED)}">${a.rep ? 'Council Rep: ' + esc(a.rep) : 'No rep on file'} · ${a.tracts.size} census tract${a.tracts.size === 1 ? '' : 's'}</div>
           </div>
           <button class="dp-close" onclick="closeDistrictProfile()">×</button>
         </div>
         <div class="dp-body">
           <div class="profile-grid">
-            <div class="profile-stat"><div class="label">Total Cases</div><div class="value">${a.cases}</div></div>
-            <div class="profile-stat"><div class="label">Pending</div><div class="value pending">${a.pending}</div></div>
-            <div class="profile-stat"><div class="label">Dismissed</div><div class="value dismissed">${a.dismissed}</div></div>
-            <div class="profile-stat"><div class="label">Other</div><div class="value">${a.other}</div></div>
+            <div class="profile-stat stat-multi" title="${esc('Total cases tallied separately from each source — they cover different time periods so they are not summed. ' + SRC_SCRAPED + ' ' + SRC_PRINCETON)}">
+              <div class="label">Total Cases</div>
+              <div class="stat-sources">
+                <span class="src-num" title="${esc('Recent court filings. ' + SRC_SCRAPED)}"><span class="src-tag">Scraped</span> ${a.cases.toLocaleString()}</span>
+                ${princetonLine}
+              </div>
+            </div>
+            <div class="profile-stat" title="${esc('Cases currently in PENDING status. ' + SRC_SCRAPED)}"><div class="label">Pending</div><div class="value pending">${a.pending}</div></div>
+            <div class="profile-stat" title="${esc('Cases with DISMISSED or NONSUIT status. ' + SRC_SCRAPED)}"><div class="label">Dismissed</div><div class="value dismissed">${a.dismissed}</div></div>
+            <div class="profile-stat" title="${esc('Cases with any other status (closed, judgment entered, etc). ' + SRC_SCRAPED)}"><div class="label">Other</div><div class="value">${a.other}</div></div>
           </div>
 
           ${demoSection}
 
           ${monthKeys.length ? `
           <div class="profile-section">
-            <h3>Monthly Filings</h3>
+            <h3 title="${esc('Monthly case counts derived from file_date on each scraped case. ' + SRC_SCRAPED)}">Monthly Filings</h3>
             <div class="trend-wrap">
               <div class="profile-trend">
-                ${monthKeys.map(m => `<div class="bar" style="height:${Math.max(2, (a.months[m] / maxMonth) * 44)}px" title="${m}: ${a.months[m]}"></div>`).join('')}
+                ${monthKeys.map(m => `<div class="bar" style="height:${Math.max(2, (a.months[m] / maxMonth) * 44)}px" title="${m}: ${a.months[m]} (scraped)"></div>`).join('')}
               </div>
               <div class="trend-axis">
                 <span>${monthKeys[0]}</span>
@@ -3077,34 +3152,44 @@ function showDistrictProfile(district) {
 
           <div class="profile-cols">
             <div class="profile-section">
-              <h3>Top Plaintiffs</h3>
+              <h3 title="${esc('Top plaintiffs by case count, scraped from court records. ' + SRC_SCRAPED)}">Top Plaintiffs</h3>
               ${topPlaintiffs.length ? `<ul class="profile-list">${topPlaintiffs.map(([n, c]) =>
-                `<li><span>${esc(n)}</span><span class="count">${c}</span></li>`).join('')}</ul>`
+                `<li title="${esc('Plaintiff with ' + c + ' case(s) in this district. ' + SRC_SCRAPED)}"><span>${esc(n)}</span><span class="count">${c}</span></li>`).join('')}</ul>`
                 : '<div class="profile-empty">No plaintiff data.</div>'}
             </div>
             <div class="profile-section">
-              <h3>Top Attorneys</h3>
+              <h3 title="${esc('Top plaintiff attorneys by case count, excluding pro se. ' + SRC_SCRAPED)}">Top Attorneys</h3>
               ${topAttorneys.length ? `<ul class="profile-list">${topAttorneys.map(([n, c]) =>
-                `<li><span>${esc(n.split(',')[0])}</span><span class="count">${c}</span></li>`).join('')}</ul>`
+                `<li title="${esc('Attorney with ' + c + ' case(s) in this district. ' + SRC_SCRAPED)}"><span>${esc(n.split(',')[0])}</span><span class="count">${c}</span></li>`).join('')}</ul>`
                 : '<div class="profile-empty">No attorney data (all pro se).</div>'}
             </div>
           </div>
 
           ${topTracts.length ? `
           <div class="profile-section">
-            <h3>Census Tracts</h3>
+            <h3 title="${esc('Census tracts that contain scraped cases for this district. Tract names from ' + SRC_TIGER)}">Census Tracts</h3>
             <ul class="profile-list">${topTracts.map(([g, c]) => {
               const info = agg.tractInfo[g];
               const name = info && info.name ? info.name : `Tract ${g}`;
-              return `<li><span>${esc(name)}</span><span class="count">${c}</span></li>`;
+              return `<li title="${esc('Tract ' + g + ': ' + c + ' scraped case(s). ' + SRC_GEOCODED)}"><span>${esc(name)}</span><span class="count">${c}</span></li>`;
             }).join('')}</ul>
           </div>` : ''}
 
           ${raceSection}
 
           <div class="profile-section">
-            <h3>Recent Cases</h3>
-            <table class="profile-cases" style="width:100%"><tbody>
+            <h3 title="${esc('Most recent scraped cases in this district. ' + SRC_SCRAPED)}">Recent Cases</h3>
+            <table class="profile-cases" style="width:100%">
+              <thead>
+                <tr style="text-align:left;color:var(--dim);font-size:9px;text-transform:uppercase;letter-spacing:0.08em">
+                  <th style="padding:4px 8px" title="${esc('Court docket number. ' + SRC_SCRAPED)}">Docket</th>
+                  <th style="padding:4px 8px" title="${esc('Date the case was filed. ' + SRC_SCRAPED)}">Filed</th>
+                  <th style="padding:4px 8px" title="${esc('Current case status. ' + SRC_SCRAPED)}">Status</th>
+                  <th style="padding:4px 8px" title="${esc('Primary plaintiff. ' + SRC_SCRAPED)}">Plaintiff</th>
+                  <th style="padding:4px 8px" title="${esc('Defendant address. ' + SRC_SCRAPED)}">Address</th>
+                </tr>
+              </thead>
+              <tbody>
               ${recentCases.map(r => {
                 const st = r.status || '';
                 const dotClass = st === 'PENDING' ? 'dot-pending'
