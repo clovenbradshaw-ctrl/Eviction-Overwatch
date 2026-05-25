@@ -511,6 +511,18 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
         <button data-val="scraped">Scraped (live)</button>
       </div>
     </div>
+    <div class="group" id="map-mode-group" style="display:none">
+      <label>Mode</label>
+      <div class="seg" id="map-mode-seg">
+        <button data-val="alltime" class="on">All time</button>
+        <button data-val="year">By year</button>
+        <button data-val="trajectory">Trajectory</button>
+      </div>
+    </div>
+    <div class="group" id="map-year-group" style="display:none">
+      <label>Year</label>
+      <select id="map-year-select"></select>
+    </div>
     <div class="coverage" id="coverage-headline"></div>
   </div>
 
@@ -687,7 +699,10 @@ let agg = {
 let tractGeometries = null;   // GeoJSON FeatureCollection from TIGERweb (shared by both sources)
 let leafletMap = null;
 let tractLayer = null;
-let mapMonth = null;          // currently displayed "MM/YYYY"
+let mapMode = 'alltime';      // 'alltime' | 'year' | 'trajectory'
+let mapMonth = null;          // currently displayed "MM/YYYY" (trajectory mode)
+let mapYear = null;           // selected year (year mode)
+const TRAJECTORY_HALF_LIFE_MONTHS = 3;  // hotness fades to 50% after 3 months
 
 function shorten(val, prefix) {
   return (val || "").replace(prefix, "D");
@@ -1181,35 +1196,142 @@ function colorForFilings(filings, max) {
   return `rgb(${ch(0)},${ch(1)},${ch(2)})`;
 }
 
-function updateMapColors() {
-  if (!tractLayer || !mapMonth) return;
-  const { data, max } = mapLayer();
-  tractLayer.eachLayer(layer => {
-    const geoid = String(layer.feature.properties.GEOID);
-    const filings = (data[geoid] && data[geoid][mapMonth]) || 0;
-    layer.setStyle({ fillColor: colorForFilings(filings, max) });
-  });
+// Unique years present in the active source's month list, newest first.
+function availableYears() {
+  const { months } = mapLayer();
+  const ys = new Set();
+  for (const m of months) {
+    const yr = m.split('/')[1];
+    if (yr) ys.add(yr);
+  }
+  return [...ys].sort((a, b) => +b - +a);
 }
 
-// Reset the slider's min/max/value to the active source's month range.
-// Called on first map init and whenever the source toggle changes.
-function syncMapSlider() {
-  const { months } = mapLayer();
-  const slider = document.getElementById('map-slider');
+/* Build the active heat frame for the current mapMode.
+   Returns:
+     { values: { geoid: number }, max, label, tooltipFmt(geoid) → string }
+   - alltime:    sum of every month in the source
+   - year:       sum within the selected year
+   - trajectory: exponentially decayed running total at mapMonth.
+                 tract heat(m) = Σ_{i ≤ k} filings_i * decay^(k-i)
+                 with half-life of TRAJECTORY_HALF_LIFE_MONTHS.
+*/
+function mapHeatFrame() {
+  const { data, months } = mapLayer();
+  const sourceLabel = mapSource === 'scraped' ? 'cases' : 'filings';
+
   if (!months.length) {
-    mapMonth = null;
-    slider.min = 0; slider.max = 0; slider.value = 0;
-    document.getElementById('map-month-label').textContent = '—';
-    return;
+    return { values: {}, max: 0, label: '—', tooltipFmt: () => `no data` };
   }
-  // Try to keep the same month across source toggles; fall back to latest.
-  let idx = months.indexOf(mapMonth);
-  if (idx < 0) idx = months.length - 1;
-  mapMonth = months[idx];
-  slider.min = 0;
-  slider.max = months.length - 1;
-  slider.value = idx;
-  document.getElementById('map-month-label').textContent = mapMonth;
+
+  if (mapMode === 'alltime') {
+    const values = {}; let max = 0;
+    for (const g in data) {
+      let s = 0;
+      for (const m in data[g]) s += data[g][m] || 0;
+      values[g] = s;
+      if (s > max) max = s;
+    }
+    const span = `${months[0]} – ${months[months.length - 1]}`;
+    return {
+      values, max, label: `All time · ${span}`,
+      tooltipFmt: g => `${(values[g] || 0).toLocaleString()} ${sourceLabel} (${span})`,
+    };
+  }
+
+  if (mapMode === 'year') {
+    const yr = mapYear;
+    const values = {}; let max = 0;
+    for (const g in data) {
+      let s = 0;
+      for (const m in data[g]) {
+        if (m.endsWith('/' + yr)) s += data[g][m] || 0;
+      }
+      values[g] = s;
+      if (s > max) max = s;
+    }
+    return {
+      values, max, label: `${yr}`,
+      tooltipFmt: g => `${(values[g] || 0).toLocaleString()} ${sourceLabel} in ${yr}`,
+    };
+  }
+
+  // trajectory: exponentially decayed running total up through mapMonth.
+  const k = months.indexOf(mapMonth);
+  if (k < 0) {
+    return { values: {}, max: 0, label: mapMonth || '—', tooltipFmt: () => 'no data' };
+  }
+  const decay = Math.pow(0.5, 1 / TRAJECTORY_HALF_LIFE_MONTHS);
+  const values = {}; const thisMonth = {}; let max = 0;
+  for (const g in data) {
+    let s = 0;
+    for (let i = 0; i <= k; i++) {
+      const m = months[i];
+      const v = data[g][m];
+      if (v) s += v * Math.pow(decay, k - i);
+    }
+    values[g] = s;
+    thisMonth[g] = data[g][months[k]] || 0;
+    if (s > max) max = s;
+  }
+  return {
+    values, max, label: `Trajectory → ${mapMonth} (½-life ${TRAJECTORY_HALF_LIFE_MONTHS} mo)`,
+    tooltipFmt: g => {
+      const cur = thisMonth[g] || 0;
+      const trail = values[g] || 0;
+      return `${mapMonth}: <strong>${cur}</strong> ${sourceLabel}<br>trajectory heat: ${trail.toFixed(1)}`;
+    },
+  };
+}
+
+function updateMapColors() {
+  if (!tractLayer) return;
+  const frame = mapHeatFrame();
+  tractLayer.eachLayer(layer => {
+    const geoid = String(layer.feature.properties.GEOID);
+    layer.setStyle({ fillColor: colorForFilings(frame.values[geoid] || 0, frame.max) });
+  });
+  const labelEl = document.getElementById('map-month-label');
+  if (labelEl) labelEl.textContent = frame.label;
+}
+
+// Show only the controls relevant to the current mode, and seed default
+// values (year, month) from the source's available data.
+function syncMapControls() {
+  const { months } = mapLayer();
+  const yearGroup    = document.getElementById('map-year-group');
+  const sliderEl     = document.getElementById('map-slider');
+  const scaleLegend  = document.querySelector('#map-controls .scale-legend');
+
+  // Trajectory: month slider
+  const isTrajectory = mapMode === 'trajectory';
+  sliderEl.style.display = isTrajectory ? '' : 'none';
+  if (scaleLegend) scaleLegend.style.display = isTrajectory || mapMode === 'year' || mapMode === 'alltime' ? '' : 'none';
+
+  if (isTrajectory) {
+    if (!months.length) {
+      mapMonth = null;
+      sliderEl.min = 0; sliderEl.max = 0; sliderEl.value = 0;
+    } else {
+      let idx = months.indexOf(mapMonth);
+      if (idx < 0) idx = months.length - 1;
+      mapMonth = months[idx];
+      sliderEl.min = 0;
+      sliderEl.max = months.length - 1;
+      sliderEl.value = idx;
+    }
+  }
+
+  // By year: dropdown
+  const isYear = mapMode === 'year';
+  yearGroup.style.display = isYear ? '' : 'none';
+  if (isYear) {
+    const years = availableYears();
+    const sel = document.getElementById('map-year-select');
+    sel.innerHTML = years.map(y => `<option value="${y}">${y}</option>`).join('');
+    if (!years.includes(mapYear)) mapYear = years[0] || null;
+    if (mapYear) sel.value = mapYear;
+  }
 }
 
 async function renderMapView() {
@@ -1258,14 +1380,12 @@ async function renderMapView() {
       onEachFeature: (feature, layer) => {
         const geoid = String(feature.properties.GEOID);
         layer.on('mouseover', e => {
-          const { data } = mapLayer();
-          const filings = (data[geoid] && data[geoid][mapMonth]) || 0;
+          const frame = mapHeatFrame();
           const info = agg.tractInfo[geoid];
           const nameLine = info && info.name ? info.name : `Tract ${geoid}`;
           const districtLine = info && info.district ? `<br>${info.district}` : '';
-          const sourceLabel = mapSource === 'scraped' ? 'cases' : 'filings';
           layer.bindTooltip(
-            `<strong>${nameLine}</strong>${districtLine}<br>${mapMonth}: ${filings} ${sourceLabel}`,
+            `<strong>${nameLine}</strong>${districtLine}<br>${frame.tooltipFmt(geoid)}`,
             { sticky: true }
           ).openTooltip(e.latlng);
         });
@@ -1279,12 +1399,16 @@ async function renderMapView() {
     slider.addEventListener('input', e => {
       const { months: ms } = mapLayer();
       mapMonth = ms[parseInt(e.target.value, 10)];
-      document.getElementById('map-month-label').textContent = mapMonth;
+      updateMapColors();
+    });
+
+    document.getElementById('map-year-select').addEventListener('change', e => {
+      mapYear = e.target.value;
       updateMapColors();
     });
   }
 
-  syncMapSlider();
+  syncMapControls();
   status.style.display = 'none';
   controls.style.display = '';
   updateMapColors();
@@ -1570,6 +1694,7 @@ function setVisibility() {
   document.getElementById('map-view').style.display            = isMap       ? '' : 'none';
   document.getElementById('coverage-mode-group').style.display = isCoverage  ? '' : 'none';
   document.getElementById('map-source-group').style.display    = isMap       ? '' : 'none';
+  document.getElementById('map-mode-group').style.display      = isMap       ? '' : 'none';
 }
 
 function render() {
@@ -1606,7 +1731,17 @@ function bindViewControls() {
       mapSource = b.dataset.val;
       document.querySelectorAll('#map-source-seg button').forEach(x => x.classList.toggle('on', x === b));
       if (viewMode === 'map') {
-        syncMapSlider();
+        syncMapControls();
+        updateMapColors();
+      }
+    });
+  });
+  document.querySelectorAll('#map-mode-seg button').forEach(b => {
+    b.addEventListener('click', () => {
+      mapMode = b.dataset.val;
+      document.querySelectorAll('#map-mode-seg button').forEach(x => x.classList.toggle('on', x === b));
+      if (viewMode === 'map') {
+        syncMapControls();
         updateMapColors();
       }
     });
