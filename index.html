@@ -73,6 +73,63 @@ h1 {
 .bg-sync { font-size: 10px; color: var(--dim); margin-top: 4px; text-align: right; font-style: italic; }
 .bg-sync.active { color: var(--amber); }
 
+.header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.login-btn {
+  font-family: var(--mono); font-size: 11px;
+  padding: 4px 14px;
+  color: var(--gold); background: transparent;
+  border: 1px solid var(--gold-dim); border-radius: 3px;
+  cursor: pointer; letter-spacing: 0.04em;
+}
+.login-btn:hover { background: rgba(196,164,74,0.10); }
+.login-btn.unlocked { color: var(--green); border-color: var(--green); }
+.login-btn.unlocked:hover { background: rgba(74,186,138,0.10); }
+
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.65);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 2000;
+}
+.modal {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 6px; padding: 22px 22px 18px;
+  width: 320px; max-width: 92vw;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+}
+.modal h3 {
+  font-family: var(--serif); font-size: 16px;
+  color: #f5f0e0; font-weight: 400; margin-bottom: 14px;
+}
+.modal input[type=password] {
+  width: 100%; padding: 8px 12px;
+  font-family: var(--mono); font-size: 12px;
+  color: var(--text); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 4px; outline: none;
+}
+.modal input[type=password]:focus { border-color: var(--gold-dim); }
+.login-error {
+  margin-top: 8px; min-height: 14px;
+  font-size: 11px; color: var(--red);
+}
+.modal-actions {
+  display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px;
+}
+.modal-actions button {
+  font-family: var(--mono); font-size: 11px;
+  padding: 6px 14px; border-radius: 3px; cursor: pointer;
+}
+.btn-cancel {
+  background: transparent; color: var(--muted);
+  border: 1px solid var(--border);
+}
+.btn-cancel:hover { color: var(--text); border-color: var(--muted); }
+.btn-primary {
+  background: var(--gold); color: #1a1814;
+  border: 1px solid var(--gold); font-weight: 500;
+}
+.btn-primary:hover { background: #d4b25a; }
+.btn-primary[disabled] { opacity: 0.5; cursor: wait; }
+
 .stats-row {
   display: grid; grid-template-columns: 1fr 1fr;
   gap: 16px; padding: 16px 24px;
@@ -407,11 +464,24 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
       <h1>Nashville Eviction Tracker</h1>
       <div class="subtitle" id="subtitle"></div>
     </div>
-    <div>
+    <div class="header-right">
+      <button id="login-btn" class="login-btn" type="button" onclick="onLoginButtonClick()">Login</button>
       <div class="updated" id="updated"></div>
       <div class="bg-sync" id="bg-sync"></div>
     </div>
   </header>
+
+  <div id="login-modal" class="modal-overlay" style="display:none" role="dialog" aria-modal="true" aria-label="Login">
+    <form id="login-form" class="modal" onsubmit="event.preventDefault(); submitLogin();">
+      <h3>Login</h3>
+      <input type="password" id="login-password" placeholder="Password" autocomplete="current-password">
+      <div class="login-error" id="login-error" role="alert"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn-cancel" onclick="closeLoginModal()">Cancel</button>
+        <button type="submit" class="btn-primary" id="login-submit">Unlock</button>
+      </div>
+    </form>
+  </div>
 
   <div class="stats-row">
     <div class="stat-card">
@@ -450,8 +520,8 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
     <div class="group" id="map-source-group" style="display:none">
       <label>Source</label>
       <div class="seg" id="map-source-seg">
-        <button data-val="princeton" class="on">Princeton (2020–21)</button>
-        <button data-val="scraped">Scraped (live)</button>
+        <button data-val="princeton" class="on">Princeton data</button>
+        <button data-val="scraped">Local scrape</button>
       </div>
     </div>
     <div class="coverage" id="coverage-headline"></div>
@@ -582,10 +652,11 @@ async function loadData() {
     const data = await loadCases();
 
     const cases = data.cases || {};
+    // Keep ENC: values verbatim so they can be decrypted after login. The
+    // display layer hides them until the user unlocks.
     allRows = Object.entries(cases).map(([docket, c]) => ({
       docket,
       ...c,
-      Defendant_1: (c.Defendant_1 || "").startsWith("ENC:") ? "—" : c.Defendant_1 || "",
     }));
 
     rebuildLocalAggregates();
@@ -1330,11 +1401,16 @@ function renderRecordPanel(docket) {
     let v = r[k];
     let cls = 'val';
     let display;
+    let encAttr = '';
     if (v == null || v === '') { display = '—'; cls += ' empty'; }
-    else if (typeof v === 'string' && v.startsWith('ENC:')) { display = 'encrypted'; cls += ' enc'; }
+    else if (isEncrypted(v)) {
+      encAttr = ` data-enc="${escapeAttr(v)}"`;
+      if (isUnlocked()) { display = 'decrypting…'; cls += ' enc'; }
+      else { display = '—'; cls += ' empty'; }
+    }
     else if (typeof v === 'object') { display = JSON.stringify(v, null, 2); }
     else display = String(v);
-    return `<div class="rp-row">
+    return `<div class="rp-row"${encAttr}>
       <span class="lbl">${escapeHtml(k)}</span>
       <span class="${cls}">${escapeHtml(display)}</span>
     </div>`;
@@ -1351,6 +1427,175 @@ function renderRecordPanel(docket) {
     <div class="rp-fields">${rowHtml}</div>`;
   panel.classList.add('open');
   panel.setAttribute('aria-hidden', 'false');
+
+  // After the panel is in the DOM, kick off async decryption for any
+  // ENC: rows. Each row gets patched independently when its plaintext
+  // resolves; cached hits resolve almost instantly.
+  if (isUnlocked()) {
+    panel.querySelectorAll('.rp-row[data-enc]').forEach(async (row) => {
+      const enc = row.getAttribute('data-enc');
+      const plain = await decryptValue(enc, unlockKeyPassword);
+      // The user may have closed the panel or opened a different record
+      // while the promise was in flight — bail if so.
+      if (!document.body.contains(row)) return;
+      const valEl = row.querySelector('.val');
+      if (plain != null) {
+        valEl.textContent = plain;
+        valEl.className = 'val';
+      } else {
+        valEl.textContent = 'decrypt failed';
+        valEl.className = 'val empty';
+      }
+    });
+  }
+}
+
+/* ───────────────────────── Login / decryption ─────────────────────
+   ENC: values are assumed to be base64( salt[16] || iv[12] || ciphertext )
+   with the key derived via PBKDF2-SHA256 (100k iterations, 256-bit AES-GCM).
+   If the producer uses different params, only the four constants and the
+   slice offsets below need to change.
+
+   The plaintext is held only in memory and never persisted. Closing the
+   tab or pressing the Logout button purges the password and the cache. */
+
+const PBKDF2_ITERATIONS = 100000;
+const PBKDF2_HASH       = 'SHA-256';
+const AES_KEY_LENGTH    = 256;
+const SALT_BYTES        = 16;
+const IV_BYTES          = 12;
+
+let unlockKeyPassword = null;             // raw password held in memory only
+const decryptCache    = new Map();        // ENC:... → plaintext | '__FAIL__'
+const SENTINEL_FAIL   = '__FAIL__';
+
+function base64ToBytes(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+async function deriveAesKey(password, salt) {
+  const baseKey = await crypto.subtle.importKey(
+    'raw', new TextEncoder().encode(password),
+    'PBKDF2', false, ['deriveKey']
+  );
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS, hash: PBKDF2_HASH },
+    baseKey,
+    { name: 'AES-GCM', length: AES_KEY_LENGTH },
+    false, ['decrypt']
+  );
+}
+
+function isEncrypted(v) {
+  return typeof v === 'string' && v.startsWith('ENC:');
+}
+
+async function decryptValue(encStr, password) {
+  if (!isEncrypted(encStr)) return encStr;
+  if (decryptCache.has(encStr)) {
+    const v = decryptCache.get(encStr);
+    return v === SENTINEL_FAIL ? null : v;
+  }
+  try {
+    const bytes = base64ToBytes(encStr.slice(4));
+    if (bytes.length < SALT_BYTES + IV_BYTES + 1) throw new Error('blob too short');
+    const salt = bytes.slice(0, SALT_BYTES);
+    const iv   = bytes.slice(SALT_BYTES, SALT_BYTES + IV_BYTES);
+    const ct   = bytes.slice(SALT_BYTES + IV_BYTES);
+    const key  = await deriveAesKey(password, salt);
+    const pt   = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+    const out  = new TextDecoder().decode(pt);
+    decryptCache.set(encStr, out);
+    return out;
+  } catch (e) {
+    decryptCache.set(encStr, SENTINEL_FAIL);
+    return null;
+  }
+}
+
+function isUnlocked() { return unlockKeyPassword != null; }
+
+function firstEncryptedValue() {
+  for (const r of allRows) {
+    for (const k in r) if (isEncrypted(r[k])) return r[k];
+  }
+  return null;
+}
+
+function updateLoginButton() {
+  const btn = document.getElementById('login-btn');
+  if (isUnlocked()) {
+    btn.textContent = 'Logout';
+    btn.classList.add('unlocked');
+  } else {
+    btn.textContent = 'Login';
+    btn.classList.remove('unlocked');
+  }
+}
+
+function onLoginButtonClick() {
+  if (isUnlocked()) { logout(); return; }
+  openLoginModal();
+}
+
+function openLoginModal() {
+  const modal = document.getElementById('login-modal');
+  document.getElementById('login-password').value = '';
+  document.getElementById('login-error').textContent = '';
+  document.getElementById('login-submit').disabled = false;
+  modal.style.display = 'flex';
+  setTimeout(() => document.getElementById('login-password').focus(), 0);
+}
+
+function closeLoginModal() {
+  document.getElementById('login-modal').style.display = 'none';
+}
+
+async function submitLogin() {
+  const password = document.getElementById('login-password').value;
+  const errEl = document.getElementById('login-error');
+  const submitBtn = document.getElementById('login-submit');
+  if (!password) { errEl.textContent = 'Enter a password.'; return; }
+
+  const probe = firstEncryptedValue();
+  if (!probe) {
+    // Nothing encrypted to verify against — accept and move on.
+    unlockKeyPassword = password;
+    closeLoginModal();
+    updateLoginButton();
+    return;
+  }
+
+  errEl.textContent = 'Checking…';
+  submitBtn.disabled = true;
+  try {
+    // Don't pollute the cache with a possibly-wrong attempt.
+    decryptCache.delete(probe);
+    const result = await decryptValue(probe, password);
+    if (result == null) {
+      decryptCache.delete(probe);
+      errEl.textContent = 'Invalid password.';
+      submitBtn.disabled = false;
+      return;
+    }
+    unlockKeyPassword = password;
+    closeLoginModal();
+    updateLoginButton();
+    if (selectedRecordDocket) renderRecordPanel(selectedRecordDocket);
+  } catch (e) {
+    errEl.textContent = 'Decryption error: ' + e.message;
+    submitBtn.disabled = false;
+  }
+}
+
+function logout() {
+  unlockKeyPassword = null;
+  decryptCache.clear();
+  updateLoginButton();
+  if (selectedRecordDocket) renderRecordPanel(selectedRecordDocket);
 }
 
 /* ───────────────────────── Update polling ─────────────────────────
@@ -1409,7 +1654,6 @@ async function applyCasesUpdate() {
   const newRows = Object.entries(cases).map(([docket, c]) => ({
     docket,
     ...c,
-    Defendant_1: (c.Defendant_1 || '').startsWith('ENC:') ? '—' : c.Defendant_1 || '',
   }));
 
   let added = 0, changed = 0;
@@ -1578,6 +1822,8 @@ document.addEventListener("click", e => {
 
 document.addEventListener("keydown", e => {
   if (e.key !== "Escape") return;
+  const modal = document.getElementById("login-modal");
+  if (modal && modal.style.display !== "none") { closeLoginModal(); return; }
   if (selectedRecordDocket) { closeRecordPanel(); return; }
   if (selectedTract) { closeTractPanel(); }
 });
