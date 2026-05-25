@@ -10,11 +10,19 @@
 <link rel="preconnect" href="https://n8n.intelechia.com" crossorigin>
 <link rel="preconnect" href="https://tigerweb.geo.census.gov" crossorigin>
 <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- pako is only needed on the cold-cache path (gzip inflate of cases.json).
+     Warm refreshes hit OPFS first, so we preload it but don't block the
+     parser on it — downloadCases() awaits loadScript(PAKO_URL). -->
+<link rel="preload" as="script" href="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js">
 <link rel="preload" as="script" href="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js">
 <link rel="preload" as="style"  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<!-- Google Fonts via preload + onload swap so the stylesheet fetch doesn't
+     block first paint. font-display:swap (already in the URL) handles FOUT. -->
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:wght@400;600&display=swap" onload="this.rel='stylesheet'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:wght@400;600&display=swap"></noscript>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:wght@400;600&display=swap');
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -1013,6 +1021,7 @@ function loadStyle(href) {
   });
 }
 
+const PAKO_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js';
 const PAPAPARSE_URL = 'https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js';
 const LEAFLET_JS_URL = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
 const LEAFLET_CSS_URL = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
@@ -1203,8 +1212,11 @@ function shorten(val, prefix) {
    the GitHub commit sha and diff-merge in the background. */
 
 async function downloadCases() {
-  const resp = await fetch(CASES_URL);
-  let data = await resp.json();
+  // Kick the network fetch and the pako script load in parallel — pako is
+  // preloaded so loadScript usually resolves before the body arrives.
+  const fetchPromise = fetch(CASES_URL).then(r => r.json());
+  const [data0] = await Promise.all([fetchPromise, loadScript(PAKO_URL)]);
+  let data = data0;
   if (data.format === "gzip+base64" && data.data) {
     const bin = Uint8Array.from(atob(data.data), c => c.charCodeAt(0));
     const raw = pako.inflate(bin, { to: "string" });
