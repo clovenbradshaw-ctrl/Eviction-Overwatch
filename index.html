@@ -755,13 +755,11 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   white-space: nowrap; margin-left: auto;
 }
 
-/* Provenance footer — every external source disclosed */
-#provenance-footer {
-  margin-top: 32px; padding: 20px 24px 32px;
-  border-top: 1px solid var(--border);
-  background: #100f0c;
+/* Sources view — every external source disclosed */
+#sources-view {
+  padding: 20px 24px 40px;
 }
-#provenance-footer .prov-title {
+#sources-view .prov-title {
   font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em;
   color: var(--muted); margin-bottom: 12px;
 }
@@ -839,6 +837,7 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
         <button data-val="districts">Districts</button>
         <button data-val="coverage">Coverage</button>
         <button data-val="map">Map</button>
+        <button data-val="sources">Sources</button>
       </div>
     </div>
     <div class="group" id="coverage-mode-group" style="display:none">
@@ -918,10 +917,10 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
     <div class="map-status" id="map-status">Loading map…</div>
   </div>
 
-  <footer id="provenance-footer">
+  <div id="sources-view" style="display:none">
     <div class="prov-title">Data Sources · provenance</div>
     <div id="provenance-list"></div>
-  </footer>
+  </div>
 </div>
 
 <div id="error" style="display:none"></div>
@@ -947,7 +946,6 @@ const CACHE_VERSION = 1;
 const CACHE_FILES = {
   cases:     'cases.v1.json',
   princeton: 'princeton.v1.json',
-  acs:       'acs.v1.json',
   tiger:     'tiger.v1.json',
 };
 
@@ -1038,10 +1036,6 @@ function whenIdle(fn, timeout = 1500) {
    footer can show exactly what was fetched, when, and how many rows came
    back. Update via markSource(...) on each fetch. */
 
-const ACS_YEAR = 2022;  // ACS 5-year vintage we query (2018–2022 averages)
-const ACS_RACE_URL = `https://api.census.gov/data/${ACS_YEAR}/acs/acs5`
-  + `?get=NAME,B02001_001E,B02001_002E,B02001_003E,B02001_004E,B02001_005E,B02001_006E,B02001_007E,B02001_008E,B03003_003E`
-  + `&for=tract:*&in=state:47%20county:037`;
 const TIGER_TRACT_URL = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWMS_Current/MapServer/8/query?'
   + 'where=' + encodeURIComponent("STATE='47' AND COUNTY='037'")
   + '&outFields=GEOID&returnGeometry=true&f=geojson';
@@ -1065,12 +1059,6 @@ const sources = {
     name: 'Metro Social Services — Council district demographics',
     url: MSS_DEMOGRAPHICS_URL,
     notes: 'Per-district population, age, race/ethnicity, education, income, poverty, employment, and housing cost-burden. Pre-aggregated to the post-2021 districts by MSS Strategic Planning, Dec 2023, sourcing ACS 2017–2021 5-year estimates.',
-    status: 'pending', fetchedAt: null, rows: null, error: null,
-  },
-  acs: {
-    name: `US Census ACS 5-year (${ACS_YEAR}) — race & ethnicity by tract`,
-    url: ACS_RACE_URL,
-    notes: 'Tables B02001 (race) and B03003 (Hispanic origin) for Davidson County (47/037). Used as a tract-level fallback when the MSS district file is unavailable.',
     status: 'pending', fetchedAt: null, rows: null, error: null,
   },
   tiger: {
@@ -1157,7 +1145,7 @@ let sortDir = -1;
 let filters = {};
 let activeDropdown = null;
 
-let viewMode = 'cases';       // 'cases' | 'coverage' | 'map'
+let viewMode = 'cases';       // 'cases' | 'districts' | 'coverage' | 'map' | 'sources'
 let coverageMode = 'district';// 'district' | 'tract'
 let coverageDir  = 'desc';    // 'desc' = newest on left, 'asc' = oldest on left
 let mapSource = 'princeton';  // 'princeton' | 'scraped'
@@ -1186,7 +1174,6 @@ let agg = {
   princetonDistrict: {},      // { "5":   { "MM/YYYY": filings } }
   localMonths:     [],        // sorted asc, derived from allRows
   princetonMonths: [],        // sorted asc, derived from princetonRows
-  tractRace:       {},        // { GEOID: { total, white, black, native, asian, pacific, other, multiple, hispanic, name } }
   districtDemographics: {},   // { "5": { population, median_age, age, race_ethnicity, education, income, poverty, employment, housing } }  (MSS)
   countyTotals:    null,      // Davidson Co. comparison values from the MSS file
 };
@@ -1259,7 +1246,6 @@ async function loadData() {
 
       kickBackgroundSync();
       kickMssDemographicsSync();
-      kickCensusRaceSync();
       startUpdatePolling();
       whenIdle(() => revalidateCases());
       return;
@@ -1272,7 +1258,6 @@ async function loadData() {
 
     kickBackgroundSync();
     kickMssDemographicsSync();
-    kickCensusRaceSync();
     startUpdatePolling();
 
     // Persist as soon as we're idle so the next refresh hits the warm
@@ -1632,7 +1617,7 @@ function median(arr) {
 
 function updateCoverageHeadline() {
   const el = document.getElementById('coverage-headline');
-  if (viewMode === 'cases' || viewMode === 'districts') { el.textContent = ''; return; }
+  if (viewMode === 'cases' || viewMode === 'districts' || viewMode === 'sources') { el.textContent = ''; return; }
   if (!princetonRows) {
     el.innerHTML = '<span style="color:var(--dim)">Fetching Princeton CSV…</span>';
     return;
@@ -2934,8 +2919,7 @@ function showDistrictProfile(district) {
   const county = agg.countyTotals;
 
   // MSS-derived district context: income, poverty, housing cost burden,
-  // employment. None of this is in the ACS tract aggregation we already
-  // compute, so this is purely additive.
+  // employment.
   let demoSection = '';
   if (mss) {
     const fmtUsd = n => n != null ? '$' + Math.round(n).toLocaleString() : '—';
@@ -3020,8 +3004,7 @@ function showDistrictProfile(district) {
     demoSection = `<div class="profile-section"><h3>District Demographics</h3><div class="profile-empty">MSS demographics fetch failed: ${esc(sources.mss.error || '')}</div></div>`;
   }
 
-  // Race & ethnicity: prefer MSS percentages (district-level, exact) and
-  // only fall back to the ACS tract aggregation if MSS isn't loaded.
+  // Race & ethnicity: rendered from MSS percentages (district-level, exact).
   let raceSection;
   if (mss && mss.race_ethnicity) {
     const re = mss.race_ethnicity;
@@ -3051,42 +3034,11 @@ function showDistrictProfile(district) {
       </div>
     </div>`;
   } else {
-    const race = aggregateDistrictRace(a.district);
-    if (!race) {
-      const s = sources.acs.status;
-      const msg = s === 'pending' ? 'Fetching Census ACS data…'
-        : s === 'failed' ? `Census ACS fetch failed: ${esc(sources.acs.error || '')}`
-        : 'No tracts mapped to this district yet.';
-      raceSection = `<div class="profile-section"><h3>Race &amp; Ethnicity</h3><div class="profile-empty">${msg}</div></div>`;
-    } else {
-      const pct = (n, t) => t > 0 ? (n / t * 100).toFixed(1) : '0.0';
-      const bar = (n, t) => `<div style="width:${t > 0 ? (n/t*100).toFixed(2) : 0}%"></div>`;
-      const row = (label, n) => `<div class="race-row">
-        <div class="label-cell">${label}</div>
-        <div class="bar-cell">${bar(n, race.total)}</div>
-        <div class="num-cell">${n.toLocaleString()} · ${pct(n, race.total)}%</div>
-      </div>`;
-      raceSection = `<div class="profile-section">
-        <h3>Race &amp; Ethnicity (district population, tract-aggregated)</h3>
-        <div class="race-bars">
-          ${row('White alone', race.white)}
-          ${row('Black or African American alone', race.black)}
-          ${row('Asian alone', race.asian)}
-          ${row('American Indian / Alaska Native alone', race.native)}
-          ${row('Native Hawaiian / Pacific Islander alone', race.pacific)}
-          ${row('Some other race alone', race.other)}
-          ${row('Two or more races', race.multiple)}
-          <div class="race-overlap"></div>
-          ${row('Hispanic or Latino (any race)', race.hispanic)}
-        </div>
-        <div class="race-source-note">
-          Total population: <strong>${race.total.toLocaleString()}</strong> · ${race.tractsMatched} of ${race.tractsKnown} known tracts matched.
-          Aggregated from tracts in this district. Source:
-          <a href="${esc(sources.acs.url)}" target="_blank" rel="noopener">US Census ACS 5-year (${ACS_YEAR}), tables B02001 + B03003</a>.
-          Hispanic/Latino is an ethnicity that overlaps with the race categories above, so it is shown separately and is not part of the sum.
-        </div>
-      </div>`;
-    }
+    const s = sources.mss.status;
+    const msg = s === 'pending' ? 'Fetching MSS district demographics…'
+      : s === 'failed' ? `MSS demographics fetch failed: ${esc(sources.mss.error || '')}`
+      : 'No demographics on file for this district.';
+    raceSection = `<div class="profile-section"><h3>Race &amp; Ethnicity</h3><div class="profile-empty">${msg}</div></div>`;
   }
 
   const profileHtml = `
@@ -3210,12 +3162,14 @@ function setVisibility() {
   const isDistricts = viewMode === 'districts';
   const isCoverage  = viewMode === 'coverage';
   const isMap       = viewMode === 'map';
+  const isSources   = viewMode === 'sources';
   document.getElementById('local-toolbar').style.display      = isCases     ? '' : 'none';
   document.getElementById('table-header').style.display       = isCases     ? '' : 'none';
   document.getElementById('local-table-wrap').style.display   = isCases     ? '' : 'none';
   document.getElementById('districts-view').style.display     = isDistricts ? '' : 'none';
   document.getElementById('grid-view').style.display          = isCoverage  ? '' : 'none';
   document.getElementById('map-view').style.display           = isMap       ? '' : 'none';
+  document.getElementById('sources-view').style.display       = isSources   ? '' : 'none';
   document.getElementById('coverage-mode-group').style.display = isCoverage ? '' : 'none';
   document.getElementById('coverage-dir-group').style.display  = isCoverage ? '' : 'none';
   document.getElementById('map-source-group').style.display    = isMap      ? '' : 'none';
@@ -3232,6 +3186,8 @@ function render() {
     renderCoverageGrid();
   } else if (viewMode === 'map') {
     renderMapView();
+  } else if (viewMode === 'sources') {
+    renderProvenance();
   }
   updateCoverageHeadline();
 }
@@ -3474,44 +3430,6 @@ function downloadCsv(text, filename) {
   URL.revokeObjectURL(url);
 }
 
-/* ───────────────────────── Census ACS race data ─────────────────────────
-   Fetched once per session direct from api.census.gov through the n8n CORS
-   proxy. We pull tables B02001 (race) and B03003 (Hispanic origin) for every
-   tract in Davidson County, then aggregate up to council districts using the
-   tract→district mapping that's already in agg.tractToDistrict.
-   Nothing is persisted; the data lives only in memory. */
-
-async function fetchCensusRaceRows() {
-  const r = await fetch(pxProxy(ACS_RACE_URL));
-  if (!r.ok) throw new Error(`ACS HTTP ${r.status}`);
-  const data = await r.json();
-  if (!Array.isArray(data) || !data.length) throw new Error('ACS: empty response');
-  const headers = data[0];
-  const idx = {};
-  headers.forEach((h, i) => { idx[h] = i; });
-  const need = ['NAME','B02001_001E','B02001_002E','B02001_003E','B02001_004E','B02001_005E','B02001_006E','B02001_007E','B02001_008E','B03003_003E','state','county','tract'];
-  for (const k of need) if (idx[k] == null) throw new Error(`ACS: missing column ${k}`);
-  const out = {};
-  for (let i = 1; i < data.length; i++) {
-    const row = data[i];
-    const geoid = String(row[idx.state]) + String(row[idx.county]) + String(row[idx.tract]);
-    const num = v => { const n = +v; return Number.isFinite(n) && n >= 0 ? n : 0; };
-    out[geoid] = {
-      name:     row[idx.NAME],
-      total:    num(row[idx['B02001_001E']]),
-      white:    num(row[idx['B02001_002E']]),
-      black:    num(row[idx['B02001_003E']]),
-      native:   num(row[idx['B02001_004E']]),
-      asian:    num(row[idx['B02001_005E']]),
-      pacific:  num(row[idx['B02001_006E']]),
-      other:    num(row[idx['B02001_007E']]),
-      multiple: num(row[idx['B02001_008E']]),
-      hispanic: num(row[idx['B03003_003E']]),
-    };
-  }
-  return out;
-}
-
 /* Metro Social Services district demographics — pre-aggregated by district,
    so much cheaper and more accurate than summing tract data ourselves. Lives
    on the same plain-text repo as cases.json so no CORS proxy needed. */
@@ -3534,68 +3452,6 @@ async function kickMssDemographicsSync() {
     bgStatus(`MSS fetch failed: ${e.message}`, false);
     setTimeout(() => bgStatus(''), 5000);
   }
-}
-
-// ACS 5-year tables move once a year. Revalidate at most weekly.
-const ACS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-
-async function kickCensusRaceSync() {
-  let usedCache = false;
-  try {
-    const cached = await opfsCache.get(CACHE_FILES.acs);
-    if (cached && cached.tractRace && typeof cached.tractRace === 'object') {
-      agg.tractRace = cached.tractRace;
-      const n = Object.keys(agg.tractRace).length;
-      markSource('acs', { status: 'ok', rows: n, fromCache: true });
-      usedCache = true;
-      if (Date.now() - (cached.savedAt || 0) < ACS_TTL_MS) return;
-    }
-
-    bgStatus('Fetching Census ACS race data…', true);
-    const tractRace = await fetchCensusRaceRows();
-    agg.tractRace = tractRace;
-    const n = Object.keys(tractRace).length;
-    markSource('acs', { status: 'ok', rows: n });
-    console.info(`[eo] ACS ${ACS_YEAR}: ${n} tracts loaded`);
-    opfsCache.put(CACHE_FILES.acs, { tractRace });
-    bgStatus(`ACS: ${n} tracts loaded (live)`, false);
-    setTimeout(() => bgStatus(''), 3000);
-  } catch (e) {
-    console.warn('Census ACS fetch failed:', e);
-    if (!usedCache) markSource('acs', { status: 'failed', error: e.message });
-    bgStatus(`ACS fetch failed: ${e.message}`, false);
-    setTimeout(() => bgStatus(''), 5000);
-  }
-}
-
-/* Sum up race counts across every tract mapped to a given council district.
-   Returns null if the data isn't loaded yet, or if no tracts in our cases
-   ever appeared in this district. The aggregate is by population, not by
-   case count — this describes the district's demographic profile. */
-function aggregateDistrictRace(district) {
-  if (!agg.tractRace || !Object.keys(agg.tractRace).length) return null;
-  const tractIds = [];
-  for (const g in agg.tractToDistrict) {
-    if (agg.tractToDistrict[g].council_district === district) tractIds.push(g);
-  }
-  if (!tractIds.length) return null;
-  const sum = { total: 0, white: 0, black: 0, native: 0, asian: 0, pacific: 0, other: 0, multiple: 0, hispanic: 0 };
-  let matched = 0;
-  for (const g of tractIds) {
-    const r = agg.tractRace[g];
-    if (!r) continue;
-    matched++;
-    sum.total    += r.total;
-    sum.white    += r.white;
-    sum.black    += r.black;
-    sum.native   += r.native;
-    sum.asian    += r.asian;
-    sum.pacific  += r.pacific;
-    sum.other    += r.other;
-    sum.multiple += r.multiple;
-    sum.hispanic += r.hispanic;
-  }
-  return { ...sum, tractsMatched: matched, tractsKnown: tractIds.length };
 }
 
 /* ───────────────────────── Boot ───────────────────────── */
