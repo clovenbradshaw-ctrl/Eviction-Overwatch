@@ -663,6 +663,43 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   color: var(--gold); font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
+#timeline-view .tl-section-head {
+  margin: 24px 0 8px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+#timeline-view .tl-section-head h3 {
+  font-family: var(--serif); font-weight: 400; font-size: 16px;
+  color: var(--text); letter-spacing: -0.01em;
+}
+#timeline-view .tl-section-sub { font-size: 11px; color: var(--muted); }
+#timeline-view .tl-attorneys-wrap { overflow-x: auto; }
+#timeline-view table.tl-attorneys {
+  width: 100%; min-width: 720px;
+  border-collapse: collapse;
+}
+#timeline-view table.tl-attorneys th,
+#timeline-view table.tl-attorneys td {
+  padding: 6px 12px; font-size: 11px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+#timeline-view table.tl-attorneys thead th {
+  text-align: left; color: var(--dim); font-weight: 500;
+  text-transform: uppercase; letter-spacing: 0.08em; font-size: 10px;
+  background: #181712;
+  position: sticky; top: 0;
+}
+#timeline-view table.tl-attorneys th.num,
+#timeline-view table.tl-attorneys td.num {
+  text-align: right; font-variant-numeric: tabular-nums;
+}
+#timeline-view table.tl-attorneys td.atty-name { color: var(--gold); }
+#timeline-view table.tl-attorneys td.money { color: var(--text); }
+#timeline-view table.tl-attorneys tbody tr { cursor: pointer; }
+#timeline-view table.tl-attorneys tbody tr:hover td { background: rgba(196,164,74,0.06); }
+#timeline-view .tl-atty-footnote {
+  padding: 8px 12px; font-size: 10px; color: var(--dim);
+}
 
 /* District profile modal (separate from main's .modal-overlay system) */
 .dp-backdrop {
@@ -948,12 +985,12 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
     <div class="group">
       <label>View</label>
       <div class="seg" id="view-seg">
-        <button data-val="cases" class="on">Cases</button>
+        <button data-val="timeline" class="on">Timeline</button>
+        <button data-val="cases">Cases</button>
         <button data-val="districts">Districts</button>
-        <button data-val="timeline">Timeline</button>
-        <button data-val="coverage">Coverage</button>
         <button data-val="map">Map</button>
         <button data-val="sources">Sources</button>
+        <button data-val="coverage">Data alignment</button>
       </div>
     </div>
     <div class="group" id="timeline-district-group" style="display:none">
@@ -1288,7 +1325,7 @@ let sortDir = -1;
 let filters = {};
 let activeDropdown = null;
 
-let viewMode = 'cases';       // 'cases' | 'districts' | 'timeline' | 'coverage' | 'map' | 'sources'
+let viewMode = 'timeline';    // 'timeline' | 'cases' | 'districts' | 'map' | 'sources' | 'coverage'
 let coverageMode = 'district';// 'district' | 'tract'
 let coverageDir  = 'desc';    // 'desc' = newest on left, 'asc' = oldest on left
 let mapSource = 'princeton';  // 'princeton' | 'scraped'
@@ -2099,9 +2136,100 @@ function renderTimelineView() {
   </svg>`;
 
   root.innerHTML = sourceNote + headline +
-    `<div class="tl-chart-wrap">${svg}<div class="tl-tooltip" id="tl-tooltip"></div></div>`;
+    `<div class="tl-chart-wrap">${svg}<div class="tl-tooltip" id="tl-tooltip"></div></div>` +
+    renderAttorneyLeaderboardHtml();
 
   bindTimelineHover();
+  bindAttorneyRowClicks();
+}
+
+/* Per-attorney totals from the scraped cases (allRows). Princeton has no
+   attorney field, so this table is always sourced from cases.json — but the
+   district selector still filters it, so the leaderboard responds to the
+   same toggle that drives the chart. */
+function aggregateAttorneysForTimeline() {
+  const want = timelineDistrict === 'all' ? null : timelineDistrict;
+  const out = {};
+  for (const r of allRows) {
+    const a = r.Attorney;
+    if (!a || a === ', PRS') continue;
+    if (want !== null) {
+      const d = normalizeDistrict(r.council_district);
+      if (d !== want) continue;
+    }
+    const slot = out[a] || (out[a] = { name: a, cases: 0, withJudgment: 0, totalJudgment: 0 });
+    slot.cases++;
+    if (r.judgment_amount != null && Number.isFinite(r.judgment_amount)) {
+      slot.withJudgment++;
+      slot.totalJudgment += r.judgment_amount;
+    }
+  }
+  const months = agg.localMonths || [];
+  const minDate = months.length ? months[0] : null;
+  const maxDate = months.length ? months[months.length - 1] : null;
+  return { attorneys: Object.values(out), minDate, maxDate };
+}
+
+function renderAttorneyLeaderboardHtml() {
+  const { attorneys, minDate, maxDate } = aggregateAttorneysForTimeline();
+  attorneys.sort((a, b) => b.totalJudgment - a.totalJudgment || b.cases - a.cases);
+
+  const districtLabel = timelineDistrict === 'all' ? 'All districts' : `District ${timelineDistrict}`;
+  const rangeLabel = (minDate && maxDate)
+    ? `${monthShortLabel(minDate)} – ${monthShortLabel(maxDate)}`
+    : 'all available scraped cases';
+
+  const esc = escapeHtmlSafe;
+  const totalCases = attorneys.reduce((s, a) => s + a.cases, 0);
+  const totalDollars = attorneys.reduce((s, a) => s + a.totalJudgment, 0);
+  const totalWithJ   = attorneys.reduce((s, a) => s + a.withJudgment, 0);
+
+  let body = '';
+  if (!attorneys.length) {
+    body = `<div class="tl-empty" style="padding:24px">No attorneys in scraped cases for ${esc(districtLabel)}.</div>`;
+  } else {
+    body = `<table class="tl-attorneys"><thead><tr>
+      <th>Attorney</th>
+      <th class="num" title="Total scraped cases for this attorney within the selected district scope. ${esc(SRC_SCRAPED)}">Cases</th>
+      <th class="num" title="Cases for this attorney that have a judgment dollar amount on file. ${esc(SRC_DERIVED)}">With $</th>
+      <th class="num" title="Running total of judgment dollars awarded across this attorney's cases in scope. ${esc(SRC_DERIVED)}">Total $ awarded</th>
+      <th class="num" title="Average judgment dollar amount per case that has a judgment on file. ${esc(SRC_DERIVED)}">Avg $/case w/ $</th>
+    </tr></thead><tbody>`;
+    for (const a of attorneys.slice(0, 50)) {
+      const avg = a.withJudgment ? a.totalJudgment / a.withJudgment : null;
+      const display = String(a.name).split(',')[0];
+      body += `<tr data-attorney="${escapeAttr(a.name)}" title="Click to view this attorney's cases in the Cases tab.">`
+        + `<td class="atty-name">${esc(display)}</td>`
+        + `<td class="num">${a.cases.toLocaleString()}</td>`
+        + `<td class="num">${a.withJudgment.toLocaleString()}</td>`
+        + `<td class="num money">${a.totalJudgment > 0 ? formatMoney(a.totalJudgment) : '—'}</td>`
+        + `<td class="num money">${avg != null ? formatMoney(avg) : '—'}</td>`
+        + `</tr>`;
+    }
+    body += `</tbody></table>`;
+    if (attorneys.length > 50) {
+      body += `<div class="tl-atty-footnote">Showing top 50 of ${attorneys.length} attorneys.</div>`;
+    }
+  }
+
+  return `<div class="tl-section-head">
+      <h3>Attorneys · ${esc(districtLabel)}</h3>
+      <div class="tl-section-sub" title="${esc(SRC_SCRAPED)}">From scraped court records · ${esc(rangeLabel)} · ${totalCases.toLocaleString()} cases · ${totalWithJ.toLocaleString()} with a judgment $ · ${totalDollars > 0 ? formatMoney(totalDollars) : '$0'} total awarded</div>
+    </div>
+    <div class="tl-attorneys-wrap">${body}</div>`;
+}
+
+function bindAttorneyRowClicks() {
+  const tbody = document.querySelector('#timeline-view .tl-attorneys tbody');
+  if (!tbody) return;
+  tbody.addEventListener('click', (e) => {
+    const tr = e.target.closest('tr');
+    if (!tr || !tr.dataset.attorney) return;
+    viewMode = 'cases';
+    document.querySelectorAll('#view-seg button').forEach(b =>
+      b.classList.toggle('on', b.dataset.val === 'cases'));
+    setFilter('Attorney', tr.dataset.attorney);
+  });
 }
 
 function bindTimelineHover() {
