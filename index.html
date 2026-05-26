@@ -1208,6 +1208,14 @@ function fmtFetchedAt(iso) {
   return d.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
 }
 
+function fmtUpdatedAt(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d)) return String(iso).split('T')[0] || '—';
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 function renderProvenance() {
   const root = document.getElementById('provenance-list');
   if (!root) return;
@@ -1374,7 +1382,7 @@ function applyInitialCases(data) {
 
   document.getElementById("loading").style.display = "none";
   document.getElementById("app").style.display = "block";
-  document.getElementById("updated").textContent = "Updated " + (data.updated_at || "—").split("T")[0];
+  document.getElementById("updated").textContent = "Updated " + fmtUpdatedAt(data.updated_at);
 
   updateSubtitle();
   buildStats();
@@ -3184,7 +3192,7 @@ async function applyCasesUpdate() {
   rebuildLocalAggregates();
   if (princetonRows) rebuildPrincetonAggregates();
 
-  document.getElementById('updated').textContent = 'Updated ' + (data.updated_at || '—').split('T')[0];
+  document.getElementById('updated').textContent = 'Updated ' + fmtUpdatedAt(data.updated_at);
   updateSubtitle();
   buildStats();
   render();
