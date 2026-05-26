@@ -330,6 +330,31 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 .dot-dismissed { background: var(--dismissed); }
 .dot-other { background: #3b82f6; }
 
+.scrape-pill {
+  display: inline-block; padding: 2px 8px; border-radius: 10px;
+  font-size: 10px; font-weight: 600; line-height: 1.4;
+  white-space: nowrap; cursor: pointer; user-select: none;
+}
+.scrape-pill:hover { filter: brightness(1.2); }
+.scrape-pill.pill-stable        { background: rgba( 74,186,138,.18); color: var(--green);    border: 1px solid rgba( 74,186,138,.45); }
+.scrape-pill.pill-processing-2  { background: rgba(232,167, 53,.18); color: var(--amber);    border: 1px solid rgba(232,167, 53,.45); }
+.scrape-pill.pill-processing-1  { background: rgba(251,146, 60,.18); color: #fb923c;         border: 1px solid rgba(251,146, 60,.45); }
+.scrape-pill.pill-skimmed       { background: rgba(232, 93, 58,.18); color: var(--red);      border: 1px solid rgba(232, 93, 58,.45); }
+
+td.last-sync { color: var(--dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.scrape-legend { width: 460px; max-width: 92vw; }
+.scrape-legend h3 { margin-bottom: 4px; }
+.scrape-legend .legend-sub { font-size: 11px; color: var(--muted); margin-bottom: 14px; }
+.scrape-legend .legend-row {
+  display: grid; grid-template-columns: 110px 1fr; gap: 10px;
+  padding: 8px 0; border-top: 1px solid var(--border); align-items: start;
+}
+.scrape-legend .legend-row:first-of-type { border-top: none; }
+.scrape-legend .legend-row.is-current { background: rgba(196,164,74,0.08); border-radius: 4px; padding: 8px; }
+.scrape-legend .legend-desc { font-size: 11px; color: var(--muted); line-height: 1.5; }
+.scrape-legend .legend-actions { margin-top: 14px; text-align: right; }
+
 #error { color: #ef4444; text-align: center; padding: 40px; }
 
 /* Aggregated grid view (Princeton / Delta) */
@@ -921,6 +946,17 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
     </div>
   </header>
 
+  <div id="scrape-status-modal" class="modal-overlay" style="display:none" role="dialog" aria-modal="true" aria-label="Scrape status legend" onclick="if (event.target === this) closeScrapeStatusInfo()">
+    <div class="modal scrape-legend">
+      <h3>Scrape status</h3>
+      <div class="legend-sub">How fully each case has been read from the court record, and whether more updates are expected.</div>
+      <div id="scrape-legend-body"></div>
+      <div class="legend-actions">
+        <button type="button" class="btn-primary" onclick="closeScrapeStatusInfo()">Close</button>
+      </div>
+    </div>
+  </div>
+
   <div id="login-modal" class="modal-overlay" style="display:none" role="dialog" aria-modal="true" aria-label="Login">
     <form id="login-form" class="modal" onsubmit="event.preventDefault(); submitLogin();">
       <h3>Login</h3>
@@ -1248,6 +1284,44 @@ function renderProvenance() {
 // Source-attribution tooltips shared across views. Keep these in sync with the
 // `sources` map above — these strings are what users see when hovering any
 // column header, stat, or label.
+// Scrape state — derived per case from { status, enriched }. "Closed" means
+// the court no longer expects activity (anything other than PENDING);
+// "fully read" means the scraper finished pulling every field (enriched flag).
+const SCRAPE_STATUS_META = {
+  'stable': {
+    label: 'stable',
+    desc: 'Closed case, every field read from the court record. No further scraping expected.',
+  },
+  'processing-2': {
+    label: 'processing 2',
+    desc: 'Closed, but only the high-level docket fields have been read. The detailed scrape is still queued.',
+  },
+  'processing-1': {
+    label: 'processing 1',
+    desc: 'Fully read, but the case is still pending — fields may change on the next sync.',
+  },
+  'skimmed': {
+    label: 'skimmed',
+    desc: 'Only the high-level docket fields have been read, and the case is still pending. Most likely to change.',
+  },
+};
+const SCRAPE_STATUS_ORDER = ['stable', 'processing-2', 'processing-1', 'skimmed'];
+const SCRAPE_STATUS_TIP =
+  'Scrape state for this case — click any pill in the column for the full legend.\n' +
+  '• stable (green): closed + fully read\n' +
+  '• processing 2 (amber): closed, only high-level fields read\n' +
+  '• processing 1 (orange): fully read, still pending\n' +
+  '• skimmed (red): only high-level fields, still pending';
+
+function computeScrapeStatus(r) {
+  const pending = r.status === 'PENDING';
+  const fullyRead = !!r.enriched;
+  if (!pending &&  fullyRead) return 'stable';
+  if (!pending && !fullyRead) return 'processing-2';
+  if ( pending &&  fullyRead) return 'processing-1';
+  return 'skimmed';
+}
+
 const SRC_SCRAPED   = 'Source: scraped cases.json (circuitclerk.nashville.gov, via clovenbradshaw-ctrl/plain-text).';
 const SRC_GEOCODED  = 'Source: geocoded from the case address during scrape (cases.json).';
 const SRC_DERIVED   = 'Source: derived locally from scraped cases.json fields.';
@@ -1278,6 +1352,10 @@ const COLUMNS = [
     tip: 'US congressional district. ' + SRC_GEOCODED },
   { key: "judgment_amount", label: "Judgment $", numeric: true, align: "right",
     tip: 'Judgment dollar amount, extracted from judgment records on the case. ' + SRC_DERIVED },
+  { key: "last_checked", label: "Last sync",
+    tip: 'When the scraper last checked this case against the court record (to the minute, local time). ' + SRC_SCRAPED },
+  { key: "scrape_status", label: "Scrape",
+    tip: SCRAPE_STATUS_TIP },
 ];
 
 // Declared before FILTER_FIELDS so the order: reference below resolves.
@@ -1599,6 +1677,7 @@ function renderLocalTable() {
   const rows = getFiltered();
   const sortColDef = COLUMNS.find(c => c.key === sortCol);
   const isDateCol = sortCol === "file_date";
+  const isIsoCol  = sortCol === "last_checked";
   const isNumCol = !!(sortColDef && sortColDef.numeric);
   const parseDate = v => {
     const m = String(v || "").match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
@@ -1608,6 +1687,15 @@ function renderLocalTable() {
     if (isDateCol) {
       const at = parseDate(a[sortCol]);
       const bt = parseDate(b[sortCol]);
+      const aBad = Number.isNaN(at), bBad = Number.isNaN(bt);
+      if (aBad && bBad) return 0;
+      if (aBad) return 1;
+      if (bBad) return -1;
+      return at < bt ? -sortDir : at > bt ? sortDir : 0;
+    }
+    if (isIsoCol) {
+      const at = Date.parse(a[sortCol] || '');
+      const bt = Date.parse(b[sortCol] || '');
       const aBad = Number.isNaN(at), bBad = Number.isNaN(bt);
       if (aBad && bBad) return 0;
       if (aBad) return 1;
@@ -1657,6 +1745,16 @@ function caseRowHtml(r) {
       return amt == null
         ? `<td class="money">—</td>`
         : `<td class="money">${formatMoney(amt)}</td>`;
+    }
+    if (c.key === "last_checked") {
+      return `<td class="last-sync">${escapeHtml(fmtUpdatedAt(r.last_checked))}</td>`;
+    }
+    if (c.key === "scrape_status") {
+      const key = r.scrape_status || 'skimmed';
+      const meta = SCRAPE_STATUS_META[key];
+      return `<td><span class="scrape-pill pill-${key}" `
+        + `onclick="event.stopPropagation(); showScrapeStatusInfo('${key}')" `
+        + `title="Click for the full scrape-status legend">${escapeHtml(meta.label)}</span></td>`;
     }
     let v = r[c.key] || "";
     if (c.key === "Attorney" && v === ", PRS") v = "pro se";
@@ -2491,6 +2589,7 @@ function enrichCaseRows(rows) {
   for (const r of rows) {
     r.judgment_amount = extractJudgmentAmount(r);
     r.judgment_bucket = bucketJudgmentAmount(r.judgment_amount);
+    r.scrape_status   = computeScrapeStatus(r);
   }
 }
 
@@ -3669,6 +3768,23 @@ function bindRowClicks() {
     if (!tr || !tr.dataset.docket) return;
     openRecordPanel(tr.dataset.docket);
   });
+}
+
+function showScrapeStatusInfo(currentKey) {
+  const body = document.getElementById('scrape-legend-body');
+  body.innerHTML = SCRAPE_STATUS_ORDER.map(key => {
+    const meta = SCRAPE_STATUS_META[key];
+    const isCurrent = key === currentKey ? ' is-current' : '';
+    return `<div class="legend-row${isCurrent}">
+      <span class="scrape-pill pill-${key}" style="cursor:default">${escapeHtml(meta.label)}</span>
+      <div class="legend-desc">${escapeHtml(meta.desc)}</div>
+    </div>`;
+  }).join('');
+  document.getElementById('scrape-status-modal').style.display = 'flex';
+}
+
+function closeScrapeStatusInfo() {
+  document.getElementById('scrape-status-modal').style.display = 'none';
 }
 
 function bindViewControls() {
