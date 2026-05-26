@@ -1202,6 +1202,14 @@ let mapSource = 'princeton';  // 'princeton' | 'scraped'
 let selectedTract = null;     // GEOID of currently-open tract panel
 let selectedRecordDocket = null; // docket of currently-open case panel
 
+// Paginated table render. Rendering thousands of rows into one innerHTML
+// crashed mobile browsers; we now paint TABLE_PAGE_SIZE rows at a time and
+// append more as a sentinel row scrolls into view.
+const TABLE_PAGE_SIZE = 200;
+let tableSortedRows = [];
+let tableVisibleCount = 0;
+let tableSentinelObserver = null;
+
 // Update-polling state. Captured once after the initial load, then
 // re-compared every 5 min against the latest commit on cases.json.
 const CASES_REPO_OWNER = 'clovenbradshaw-ctrl';
@@ -1465,7 +1473,9 @@ function doSort(col) {
 }
 
 function getFiltered() {
-  let rows = allRows;
+  // .slice() so the subsequent sort in renderLocalTable() doesn't mutate
+  // allRows when no filter/search is active.
+  let rows = allRows.slice();
   Object.entries(filters).forEach(([field, val]) => {
     if (val === "(empty)") rows = rows.filter(r => !r[field]);
     else rows = rows.filter(r => r[field] === val);
@@ -1527,29 +1537,77 @@ function renderLocalTable() {
       ? `${allRows.length.toLocaleString()} scraped cases`
       : `${rows.length.toLocaleString()} of ${allRows.length.toLocaleString()} scraped cases`;
 
+  tableSortedRows = rows;
+  tableVisibleCount = Math.min(TABLE_PAGE_SIZE, rows.length);
   const tbody = document.getElementById("tbody");
-  tbody.innerHTML = rows.map(r => {
-    const dotClass = r.status === "PENDING" ? "dot-pending"
-      : (r.status === "DISMISSED" || r.status === "NONSUIT") ? "dot-dismissed"
-      : "dot-other";
-    const sel = selectedRecordDocket === r.docket ? ' class="selected"' : '';
-    return `<tr data-docket="${escapeAttr(r.docket)}"${sel}>` + COLUMNS.map(c => {
-      if (c.key === "judgment_amount") {
-        const amt = r.judgment_amount;
-        return amt == null
-          ? `<td class="money">—</td>`
-          : `<td class="money">${formatMoney(amt)}</td>`;
-      }
-      let v = r[c.key] || "";
-      if (c.key === "Attorney" && v === ", PRS") v = "pro se";
-      if (c.key === "docket") return `<td><span class="docket">${v}</span></td>`;
-      if (c.key === "status") return `<td><span class="dot ${dotClass}"></span>${v}</td>`;
-      if (c.key === "council_district") v = shorten(v, "Council District ");
-      if (c.key === "state_house_district") v = shorten(v, "State House District ");
-      if (c.key === "us_congressional_district") v = shorten(v, "US Congressional District ");
-      return `<td>${v}</td>`;
-    }).join("") + "</tr>";
-  }).join("");
+  tbody.innerHTML = rows.slice(0, tableVisibleCount).map(caseRowHtml).join("");
+  attachTableSentinel();
+}
+
+function caseRowHtml(r) {
+  const dotClass = r.status === "PENDING" ? "dot-pending"
+    : (r.status === "DISMISSED" || r.status === "NONSUIT") ? "dot-dismissed"
+    : "dot-other";
+  const sel = selectedRecordDocket === r.docket ? ' class="selected"' : '';
+  return `<tr data-docket="${escapeAttr(r.docket)}"${sel}>` + COLUMNS.map(c => {
+    if (c.key === "judgment_amount") {
+      const amt = r.judgment_amount;
+      return amt == null
+        ? `<td class="money">—</td>`
+        : `<td class="money">${formatMoney(amt)}</td>`;
+    }
+    let v = r[c.key] || "";
+    if (c.key === "Attorney" && v === ", PRS") v = "pro se";
+    if (c.key === "docket") return `<td><span class="docket">${v}</span></td>`;
+    if (c.key === "status") return `<td><span class="dot ${dotClass}"></span>${v}</td>`;
+    if (c.key === "council_district") v = shorten(v, "Council District ");
+    if (c.key === "state_house_district") v = shorten(v, "State House District ");
+    if (c.key === "us_congressional_district") v = shorten(v, "US Congressional District ");
+    return `<td>${v}</td>`;
+  }).join("") + "</tr>";
+}
+
+function attachTableSentinel() {
+  if (tableSentinelObserver) {
+    tableSentinelObserver.disconnect();
+    tableSentinelObserver = null;
+  }
+  const old = document.getElementById("table-sentinel");
+  if (old) old.remove();
+  if (tableVisibleCount >= tableSortedRows.length) return;
+
+  const tbody = document.getElementById("tbody");
+  const tr = document.createElement("tr");
+  tr.id = "table-sentinel";
+  tr.innerHTML = `<td colspan="${COLUMNS.length}" style="text-align:center;padding:12px;color:var(--dim);font-style:italic">Loading more rows…</td>`;
+  tbody.appendChild(tr);
+
+  tableSentinelObserver = new IntersectionObserver(entries => {
+    if (entries[0].isIntersecting) appendMoreTableRows();
+  }, { rootMargin: "400px" });
+  tableSentinelObserver.observe(tr);
+}
+
+function appendMoreTableRows() {
+  if (tableSentinelObserver) {
+    tableSentinelObserver.disconnect();
+    tableSentinelObserver = null;
+  }
+  const sentinel = document.getElementById("table-sentinel");
+  if (sentinel) sentinel.remove();
+
+  const start = tableVisibleCount;
+  const end = Math.min(start + TABLE_PAGE_SIZE, tableSortedRows.length);
+  if (end <= start) return;
+
+  const html = tableSortedRows.slice(start, end).map(caseRowHtml).join("");
+  const tbody = document.getElementById("tbody");
+  const tmp = document.createElement("tbody");
+  tmp.innerHTML = html;
+  while (tmp.firstChild) tbody.appendChild(tmp.firstChild);
+
+  tableVisibleCount = end;
+  attachTableSentinel();
 }
 
 /* ───────────────────────── Aggregations for the toggle ───────────────────────── */
@@ -3577,7 +3635,15 @@ document.addEventListener("keydown", e => {
   if (selectedTract) { closeTractPanel(); }
 });
 
-document.getElementById("search").addEventListener("input", render);
+// Debounced so each keystroke doesn't re-sort + re-render the full table —
+// the difference is dramatic on mobile.
+(function () {
+  let t = null;
+  document.getElementById("search").addEventListener("input", () => {
+    clearTimeout(t);
+    t = setTimeout(render, 200);
+  });
+})();
 loadData();
 </script>
 </body>
