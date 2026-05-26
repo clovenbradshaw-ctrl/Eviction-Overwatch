@@ -700,6 +700,77 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 #timeline-view .tl-atty-footnote {
   padding: 8px 12px; font-size: 10px; color: var(--dim);
 }
+#timeline-view .tl-chips {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  margin: 4px 0 10px;
+  align-items: center;
+}
+#timeline-view .tl-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px; font-size: 11px;
+  color: var(--gold); border: 1px solid var(--gold-dim);
+  border-radius: 12px; background: rgba(196,164,74,0.06);
+  cursor: pointer;
+}
+#timeline-view .tl-chip:hover { background: rgba(196,164,74,0.14); }
+#timeline-view .tl-chip-x { color: var(--muted); font-weight: bold; }
+#timeline-view .tl-chip-clear {
+  padding: 3px 10px; font-size: 11px;
+  color: var(--muted); border: 1px solid var(--border);
+  border-radius: 12px; background: transparent;
+  font-family: var(--mono); cursor: pointer;
+}
+#timeline-view .tl-chip-clear:hover { color: var(--text); border-color: var(--muted); }
+#timeline-view .tl-princeton-wrap { overflow-x: auto; }
+#timeline-view table.tl-princeton-tbl {
+  width: 100%; min-width: 480px;
+  border-collapse: collapse;
+}
+#timeline-view table.tl-princeton-tbl th,
+#timeline-view table.tl-princeton-tbl td {
+  padding: 6px 12px; font-size: 11px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+#timeline-view table.tl-princeton-tbl thead th {
+  text-align: left; color: var(--dim); font-weight: 500;
+  text-transform: uppercase; letter-spacing: 0.08em; font-size: 10px;
+  background: #181712;
+}
+#timeline-view table.tl-princeton-tbl th.num,
+#timeline-view table.tl-princeton-tbl td.num {
+  text-align: right; font-variant-numeric: tabular-nums;
+}
+#timeline-view a.tl-sort {
+  color: inherit; text-decoration: none; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 4px;
+}
+#timeline-view a.tl-sort:hover { color: var(--text); }
+#timeline-view a.tl-sort .arrow { color: var(--gold); }
+#timeline-view a.tl-pivot {
+  color: var(--text); cursor: pointer;
+  border-bottom: 1px dotted var(--gold-dim);
+  text-decoration: none;
+}
+#timeline-view a.tl-pivot:hover { color: var(--gold); border-bottom-color: var(--gold); }
+#timeline-view .tl-more {
+  padding: 12px; text-align: center;
+}
+#timeline-view .tl-more-btn {
+  padding: 5px 14px; font-size: 11px;
+  font-family: var(--mono); color: var(--gold);
+  background: transparent; border: 1px solid var(--gold-dim);
+  border-radius: 3px; cursor: pointer;
+}
+#timeline-view .tl-more-btn:hover { background: rgba(196,164,74,0.10); }
+
+/* Pivot affordance for the cases table cells. */
+#tbody td.pivot { position: relative; }
+#tbody td.pivot .pivot-link {
+  cursor: pointer;
+  border-bottom: 1px dotted var(--gold-dim);
+}
+#tbody td.pivot .pivot-link:hover { color: var(--gold); border-bottom-color: var(--gold); }
 
 /* District profile modal (separate from main's .modal-overlay system) */
 .dp-backdrop {
@@ -1330,6 +1401,10 @@ let coverageMode = 'district';// 'district' | 'tract'
 let coverageDir  = 'desc';    // 'desc' = newest on left, 'asc' = oldest on left
 let mapSource = 'princeton';  // 'princeton' | 'scraped'
 let timelineDistrict = 'all'; // 'all' or normalized district key ("1", "5", …)
+let princetonMonthFilter = null;   // null or "MM/YYYY"
+let princetonSortCol = 'filings';  // 'district' | 'month' | 'filings'
+let princetonSortDir = -1;         // 1 asc, -1 desc
+let princetonVisible = 100;        // pagination: rows currently rendered
 let selectedTract = null;     // GEOID of currently-open tract panel
 let selectedRecordDocket = null; // docket of currently-open case panel
 
@@ -1675,6 +1750,10 @@ function renderLocalTable() {
   attachTableSentinel();
 }
 
+// Columns whose cell values pivot the table to a single-value filter
+// when clicked. Keep aligned with FILTER_FIELDS so setFilter accepts them.
+const PIVOTABLE_COLS = new Set(['Plaintiff_1', 'Attorney', 'council_district']);
+
 function caseRowHtml(r) {
   const dotClass = r.status === "PENDING" ? "dot-pending"
     : (r.status === "DISMISSED" || r.status === "NONSUIT") ? "dot-dismissed"
@@ -1694,6 +1773,10 @@ function caseRowHtml(r) {
     if (c.key === "council_district") v = shorten(v, "Council District ");
     if (c.key === "state_house_district") v = shorten(v, "State House District ");
     if (c.key === "us_congressional_district") v = shorten(v, "US Congressional District ");
+    if (PIVOTABLE_COLS.has(c.key) && r[c.key]) {
+      // raw value goes on the data-attribute; cell renders the (shortened) display.
+      return `<td class="pivot"><span class="pivot-link" data-pivot-field="${c.key}" data-pivot-val="${escapeAttr(r[c.key])}" title="Click to pivot — filter the table to this ${c.label.toLowerCase()}">${v}</span></td>`;
+    }
     return `<td>${v}</td>`;
   }).join("") + "</tr>";
 }
@@ -2137,10 +2220,163 @@ function renderTimelineView() {
 
   root.innerHTML = sourceNote + headline +
     `<div class="tl-chart-wrap">${svg}<div class="tl-tooltip" id="tl-tooltip"></div></div>` +
+    renderPrincetonTableHtml() +
     renderAttorneyLeaderboardHtml();
 
   bindTimelineHover();
+  bindPrincetonTableClicks();
   bindAttorneyRowClicks();
+}
+
+/* Flatten Princeton's per-district / per-month aggregate into long-format
+   rows so the table can sort + pivot off any column. Skips zero-filing
+   buckets (sparse months that the source never reports). */
+function buildPrincetonRows() {
+  const out = [];
+  for (const d in agg.princetonDistrict) {
+    const m = agg.princetonDistrict[d];
+    for (const month in m) {
+      const v = m[month];
+      if (v == null || v === 0) continue;
+      out.push({ district: d, month, filings: v });
+    }
+  }
+  return out;
+}
+
+function pivotPrincetonByDistrict(d) {
+  // Reuses the existing district-toggle state so the chart and table react together.
+  timelineDistrict = d;
+  const sel = document.getElementById('timeline-district-select');
+  if (sel) sel.value = d;
+  princetonVisible = 100;
+  render();
+}
+
+function pivotPrincetonByMonth(m) {
+  princetonMonthFilter = (princetonMonthFilter === m) ? null : m;
+  princetonVisible = 100;
+  render();
+}
+
+function clearPrincetonFilters() {
+  timelineDistrict = 'all';
+  princetonMonthFilter = null;
+  princetonVisible = 100;
+  const sel = document.getElementById('timeline-district-select');
+  if (sel) sel.value = 'all';
+  render();
+}
+
+function renderPrincetonTableHtml() {
+  const rows = buildPrincetonRows().filter(r =>
+    (timelineDistrict === 'all' || r.district === timelineDistrict)
+    && (!princetonMonthFilter || r.month === princetonMonthFilter)
+  );
+
+  rows.sort((a, b) => {
+    let av, bv;
+    if (princetonSortCol === 'district') {
+      av = parseInt(a.district, 10); bv = parseInt(b.district, 10);
+      if (isNaN(av) || isNaN(bv)) { av = a.district; bv = b.district; }
+    } else if (princetonSortCol === 'month') {
+      // Sort by year+month string so "01/2021" > "12/2020" works.
+      av = a.month.split('/').reverse().join(''); bv = b.month.split('/').reverse().join('');
+    } else {
+      av = a.filings; bv = b.filings;
+    }
+    if (av < bv) return -princetonSortDir;
+    if (av > bv) return  princetonSortDir;
+    return 0;
+  });
+
+  const total = rows.reduce((s, r) => s + r.filings, 0);
+  const visible = Math.min(princetonVisible, rows.length);
+  const arrow = col => princetonSortCol === col
+    ? `<span class="arrow">${princetonSortDir === 1 ? '↑' : '↓'}</span>` : '';
+
+  // Active filter chips
+  const chips = [];
+  if (timelineDistrict !== 'all') {
+    chips.push(`<span class="tl-chip" data-clear="district">District ${escapeHtmlSafe(timelineDistrict)} <span class="tl-chip-x">×</span></span>`);
+  }
+  if (princetonMonthFilter) {
+    chips.push(`<span class="tl-chip" data-clear="month">${escapeHtmlSafe(monthShortLabel(princetonMonthFilter))} <span class="tl-chip-x">×</span></span>`);
+  }
+  const chipsBar = chips.length
+    ? `<div class="tl-chips">${chips.join('')}<button type="button" class="tl-chip-clear" data-clear="all">Clear all</button></div>`
+    : '';
+
+  let body;
+  if (!rows.length) {
+    body = `<div class="tl-empty" style="padding:24px">No Princeton rows match the current filters.</div>`;
+  } else {
+    let trs = '';
+    for (let i = 0; i < visible; i++) {
+      const r = rows[i];
+      trs += `<tr>`
+        + `<td><a class="tl-pivot" data-pivot="district" data-val="${escapeAttr(r.district)}">D${escapeHtmlSafe(r.district)}</a></td>`
+        + `<td><a class="tl-pivot" data-pivot="month" data-val="${escapeAttr(r.month)}">${escapeHtmlSafe(monthShortLabel(r.month))}</a></td>`
+        + `<td class="num">${r.filings.toLocaleString()}</td>`
+        + `</tr>`;
+    }
+    body = `<table class="tl-princeton-tbl"><thead><tr>
+      <th><a class="tl-sort" data-sort="district">District${arrow('district')}</a></th>
+      <th><a class="tl-sort" data-sort="month">Month${arrow('month')}</a></th>
+      <th class="num"><a class="tl-sort" data-sort="filings">Filings${arrow('filings')}</a></th>
+    </tr></thead><tbody>${trs}</tbody></table>`;
+    if (visible < rows.length) {
+      body += `<div class="tl-more"><button type="button" class="tl-more-btn" data-more="1">Show more (${(rows.length - visible).toLocaleString()} remaining)</button></div>`;
+    }
+  }
+
+  return `<div class="tl-section-head">
+    <h3>Princeton filings · breakdown</h3>
+    <div class="tl-section-sub" title="${escapeAttr(SRC_PRINCETON)}">Click any District or Month value to pivot · ${rows.length.toLocaleString()} rows · ${total.toLocaleString()} filings in scope</div>
+  </div>
+  ${chipsBar}
+  <div class="tl-princeton-wrap">${body}</div>`;
+}
+
+function bindPrincetonTableClicks() {
+  const root = document.getElementById('timeline-view');
+  if (!root) return;
+  // Pivot-cell clicks
+  root.querySelectorAll('a.tl-pivot').forEach(a => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      const kind = a.dataset.pivot, val = a.dataset.val;
+      if (kind === 'district') pivotPrincetonByDistrict(val);
+      else if (kind === 'month') pivotPrincetonByMonth(val);
+    });
+  });
+  // Column sort clicks
+  root.querySelectorAll('a.tl-sort').forEach(a => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      const col = a.dataset.sort;
+      if (princetonSortCol === col) princetonSortDir *= -1;
+      else { princetonSortCol = col; princetonSortDir = col === 'filings' ? -1 : 1; }
+      render();
+    });
+  });
+  // Chip removal
+  root.querySelectorAll('[data-clear]').forEach(el => {
+    el.addEventListener('click', () => {
+      const k = el.dataset.clear;
+      if (k === 'district') pivotPrincetonByDistrict('all');
+      else if (k === 'month') { princetonMonthFilter = null; render(); }
+      else if (k === 'all') clearPrincetonFilters();
+    });
+  });
+  // Show more
+  const more = root.querySelector('[data-more]');
+  if (more) {
+    more.addEventListener('click', () => {
+      princetonVisible += 100;
+      render();
+    });
+  }
 }
 
 /* Per-attorney totals from the scraped cases (allRows). Princeton has no
@@ -3785,6 +4021,14 @@ function render() {
 
 function bindRowClicks() {
   document.getElementById('tbody').addEventListener('click', (e) => {
+    // A pivot-link cell short-circuits row selection so a click on the
+    // value filters the table instead of opening the record panel.
+    const pivot = e.target.closest('.pivot-link');
+    if (pivot && pivot.dataset.pivotField) {
+      e.stopPropagation();
+      setFilter(pivot.dataset.pivotField, pivot.dataset.pivotVal);
+      return;
+    }
     const tr = e.target.closest('tr');
     if (!tr || !tr.dataset.docket) return;
     openRecordPanel(tr.dataset.docket);
