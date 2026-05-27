@@ -1063,8 +1063,12 @@ const CASES_URL = "https://raw.githubusercontent.com/clovenbradshaw-ctrl/plain-t
    blob in an IDB record.
 
    Bump CACHE_VERSION whenever the on-disk shape of a cached entry
-   changes; mismatched versions are treated as cache misses. */
-const CACHE_VERSION = 1;
+   changes; mismatched versions are treated as cache misses. v2 invalidates
+   v1 entries that may have been written with a SHA→data mismatch by the
+   pre-SHA-pin fetcher (which could pair a new commit SHA with the
+   previous commit's stale bytes from the Fastly /main/ cache, leaving
+   warm reloads permanently stuck on the old data). */
+const CACHE_VERSION = 2;
 const CACHE_FILES = {
   cases:     'cases.v1.json',
   princeton: 'princeton.v1.json',
