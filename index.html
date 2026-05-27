@@ -1350,10 +1350,21 @@ function shorten(val, prefix) {
    table paints before the network has a chance to answer; then revalidate
    the GitHub commit sha and diff-merge in the background. */
 
-async function downloadCases() {
+// Build a SHA-pinned URL when we know the commit; otherwise use the branch URL.
+// raw.githubusercontent.com sets max-age=300 on the branch path, so without
+// pinning, a fresh "main" download right after a push can return the previous
+// commit's bytes from Fastly. Each commit SHA is a distinct cache key, so the
+// pinned URL gives us exactly the bytes that match the SHA the polling loop
+// just observed.
+function casesUrlForSha(sha) {
+  if (!sha) return CASES_URL;
+  return `https://raw.githubusercontent.com/${CASES_REPO_OWNER}/${CASES_REPO_NAME}/${sha}/${CASES_REPO_PATH}`;
+}
+
+async function downloadCases(sha) {
   // Kick the network fetch and the pako script load in parallel — pako is
   // preloaded so loadScript usually resolves before the body arrives.
-  const fetchPromise = fetch(CASES_URL).then(r => r.json());
+  const fetchPromise = fetch(casesUrlForSha(sha)).then(r => r.json());
   const [data0] = await Promise.all([fetchPromise, loadScript(PAKO_URL)]);
   let data = data0;
   if (data.format === "gzip+base64" && data.data) {
@@ -1440,7 +1451,7 @@ async function revalidateCases() {
   if (latest === casesSha) return;
   bgStatus('Updates detected — fetching…', true);
   try {
-    await applyCasesUpdate();
+    await applyCasesUpdate(latest);
     casesSha = latest;
   } catch (e) {
     console.warn('[eo] revalidate failed:', e);
@@ -1792,6 +1803,21 @@ function sortMonthsAsc(arr) {
     const [am, ay] = a.split('/'); const [bm, by] = b.split('/');
     return (ay + am).localeCompare(by + bm);
   });
+}
+
+// Format a sorted-asc array of "MM/YYYY" keys as a human-readable range.
+// Used in the Districts table column headers so the dates shown reflect
+// what's actually in the data rather than a hardcoded label.
+const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function formatMonthRange(months) {
+  if (!months || !months.length) return '';
+  const fmt = m => {
+    const [mm, yyyy] = m.split('/');
+    return `${MONTH_ABBR[+mm - 1]} ${yyyy}`;
+  };
+  const a = fmt(months[0]);
+  const b = fmt(months[months.length - 1]);
+  return a === b ? a : `${a} – ${b}`;
 }
 
 // Full union of months across both sources (oldest→newest). Showing every
@@ -3147,7 +3173,7 @@ async function checkForCasesUpdate() {
 
   bgStatus('Updates detected — fetching…', true);
   try {
-    await applyCasesUpdate();
+    await applyCasesUpdate(latest);
     casesSha = latest;
   } catch (e) {
     console.warn('[eo] update apply failed:', e);
@@ -3156,11 +3182,13 @@ async function checkForCasesUpdate() {
   }
 }
 
-async function applyCasesUpdate() {
-  const data = await downloadCases();
-  // Stash the fresh blob so the next reload starts from the new version.
-  const sha = await fetchLatestCasesSha().catch(() => casesSha);
-  opfsCache.put(CACHE_FILES.cases, { data, sha });
+async function applyCasesUpdate(sha) {
+  // Pin the download to the SHA the poller just observed, so a stale
+  // raw.githubusercontent.com cache on /main/cases.json can't hand us the
+  // previous commit's bytes (which would make us store the new SHA against
+  // old data and silently drop the update).
+  const data = await downloadCases(sha);
+  opfsCache.put(CACHE_FILES.cases, { data, sha: sha || casesSha });
   const cases = data.cases || {};
   const oldByDocket = Object.fromEntries(allRows.map(r => [r.docket, r]));
   const newRows = Object.entries(cases).map(([docket, c]) => ({
@@ -3276,14 +3304,19 @@ function renderDistrictsView() {
     return t;
   };
 
-  let html = `<div class="districts-source-note" title="${escapeAttr('Scraped = current per-case court records (one row per docket). Princeton = aggregated monthly filing totals 2020–21 (no dockets). Same kind of evictions counted two different ways, in different time windows — never sum the two columns. ' + SRC_SCRAPED + ' ' + SRC_PRINCETON)}">
-    <strong>Cases (Scraped)</strong> and <strong>Filings (Princeton 2020–21)</strong> are <strong>two independent counts of the same kind of evictions</strong> — different sources, different time windows. <strong>Do not add them.</strong>
+  const scrapedRange   = formatMonthRange(agg.localMonths);
+  const princetonRange = formatMonthRange(agg.princetonMonths);
+  const scrapedSuffix   = scrapedRange   ? ` ${scrapedRange}`   : '';
+  const princetonSuffix = princetonRange ? ` ${princetonRange}` : '';
+
+  let html = `<div class="districts-source-note" title="${escapeAttr(`Scraped = current per-case court records (one row per docket). Princeton = aggregated monthly filing totals${princetonSuffix ? ' (' + princetonRange + ')' : ''} (no dockets). Same kind of evictions counted two different ways, in different time windows — never sum the two columns. ` + SRC_SCRAPED + ' ' + SRC_PRINCETON)}">
+    <strong>Cases (Scraped${scrapedSuffix})</strong> and <strong>Filings (Princeton${princetonSuffix})</strong> are <strong>two independent counts of the same kind of evictions</strong> — different sources, different time windows. <strong>Do not add them.</strong>
   </div>
   <table><thead><tr>
     <th title="Metro Nashville council district. ${escapeAttr(SRC_GEOCODED)}">District</th>
     <th title="Council member for the district. ${escapeAttr(SRC_GEOCODED)}">Council Rep</th>
-    <th class="num" title="Total cases in the scraped court records (recent filings). Independent count from Princeton — do not sum. ${escapeAttr(SRC_SCRAPED)}">Cases (Scraped)</th>
-    <th class="num" title="Total filings from Princeton Eviction Lab CSV, summed across all available months (2020–2021). Independent count from Scraped — do not sum. ${escapeAttr(SRC_PRINCETON)}">Filings (Princeton 2020–21)</th>
+    <th class="num" title="Total cases in the scraped court records${scrapedRange ? ' (' + scrapedRange + ')' : ''}. Independent count from Princeton — do not sum. ${escapeAttr(SRC_SCRAPED)}">Cases (Scraped${scrapedSuffix})</th>
+    <th class="num" title="Total filings from Princeton Eviction Lab CSV, summed across all available months${princetonRange ? ' (' + princetonRange + ')' : ''}. Independent count from Scraped — do not sum. ${escapeAttr(SRC_PRINCETON)}">Filings (Princeton${princetonSuffix})</th>
     <th class="num" title="Cases currently in PENDING status. ${escapeAttr(SRC_SCRAPED)}">Pending</th>
     <th class="num" title="Cases with DISMISSED or NONSUIT status. ${escapeAttr(SRC_SCRAPED)}">Dismissed</th>
     <th class="num" title="Distinct census tracts touched by scraped cases in this district. ${escapeAttr(SRC_DERIVED)}">Tracts</th>
@@ -3295,7 +3328,7 @@ function renderDistrictsView() {
       + `<td class="district-label" title="${escapeAttr(SRC_GEOCODED)}">${shorten(a.district, 'Council District ')}</td>`
       + `<td class="rep" title="${escapeAttr(SRC_GEOCODED)}">${escapeHtmlSafe(a.rep) || '—'}</td>`
       + `<td class="num" title="Scraped count. ${escapeAttr(SRC_SCRAPED)}">${a.cases}</td>`
-      + `<td class="num" title="${pTot == null ? 'No Princeton data for this district yet (fetch may still be pending).' : 'Princeton 2020–21 total. ' + escapeAttr(SRC_PRINCETON)}">${pTot == null ? '—' : pTot.toLocaleString()}</td>`
+      + `<td class="num" title="${pTot == null ? 'No Princeton data for this district yet (fetch may still be pending).' : `Princeton${princetonSuffix} total. ` + escapeAttr(SRC_PRINCETON)}">${pTot == null ? '—' : pTot.toLocaleString()}</td>`
       + `<td class="num" title="Pending count from scraped status. ${escapeAttr(SRC_SCRAPED)}">${a.pending}</td>`
       + `<td class="num" title="Dismissed/Nonsuit count from scraped status. ${escapeAttr(SRC_SCRAPED)}">${a.dismissed}</td>`
       + `<td class="num" title="Distinct census tracts in scraped cases. ${escapeAttr(SRC_DERIVED)}">${a.tracts.size}</td>`
