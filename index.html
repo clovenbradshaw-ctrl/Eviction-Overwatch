@@ -1484,31 +1484,18 @@ async function loadChainCases() {
   const seen = new Set();
   let cutoff = null, latestTs = null;
 
-  // Prefer the static hydration snapshot served from this repo: one CDN-cached
-  // round-trip stands in for the archive.org aggregate search and the genesis
-  // download, leaving only the blocks added since the snapshot was cut to fold.
-  const snap = await loadSnapshot();
-  if (snap) {
-    Object.assign(state, snap.cases);
-    (snap.seenIds || []).forEach(id => seen.add(id));
-    cutoff = snap.cutoff || null;
-    latestTs = snap.updated_at || latestTs;
-  } else {
-    // No snapshot — fall back to archive.org. Latest aggregate first: a
-    // resolved-state snapshot, the bulk of state in one file. None exist yet
-    // (< 10 days in), but fold it once they do.
-    const aggs = await findBlocks(AGGREGATE_SUBJECT).catch(() => []);
-    if (aggs.length) {
-      const h = await foldBlock(aggs[0].identifier, state);
-      seen.add(aggs[0].identifier);
-      cutoff = aggs[0].addeddate || null;
-      latestTs = (h && h.ts) || aggs[0].addeddate || latestTs;
-    }
+  // No GitHub snapshot to seed from (loadData handles that, painting it first).
+  // Latest aggregate first: a resolved-state snapshot, the bulk of state in one
+  // file. None exist yet (< 10 days in), but fold it once they do.
+  const aggs = await findBlocks(AGGREGATE_SUBJECT).catch(() => []);
+  if (aggs.length) {
+    const h = await foldBlock(aggs[0].identifier, state);
+    seen.add(aggs[0].identifier);
+    cutoff = aggs[0].addeddate || null;
+    latestTs = (h && h.ts) || aggs[0].addeddate || latestTs;
   }
 
   // Every chain block newer than the baseline, oldest-first (ops are ordered).
-  // The seen-id guard skips blocks already folded into the snapshot even if the
-  // addeddate cutoff is fuzzy, so nothing gets double-counted or missed.
   const chain = await findBlocks(CHAIN_SUBJECT);
   const fresh = chain
     .filter(b => !seen.has(b.identifier))
@@ -1565,7 +1552,33 @@ async function loadData() {
       return;
     }
 
-    // Cold path — rebuild the full state from the chain.
+    // Cold path. Prefer the static GitHub hydration snapshot: paint it right
+    // away (one same-origin request, no chain walk), then fold any newer
+    // archive.org blocks in the background — same instant-first-paint UX as the
+    // warm path. The `seenIds` we seed mean syncChain only fetches blocks added
+    // since the snapshot was cut.
+    const snap = await loadSnapshot();
+    if (snap) {
+      casesUpdatedAt = snap.updated_at || null;
+      seenBlockIds = new Set(snap.seenIds || []);
+      applyInitialCases(snap);
+      markSource('cases', { status: 'ok', rows: allRows.length });
+
+      kickBackgroundSync();
+      kickMssDemographicsSync();
+      startUpdatePolling();
+
+      // Persist now so the next visit is warm even if no new blocks land; then
+      // fold whatever the chain has gained since the snapshot and repaint.
+      whenIdle(() => opfsCache.put(CACHE_FILES.cases, {
+        data: { cases: snap.cases, updated_at: snap.updated_at },
+        seenIds: snap.seenIds,
+      }));
+      whenIdle(() => syncChain());
+      return;
+    }
+
+    // No snapshot — rebuild the full state from the archive.org chain.
     const data = await loadChainCases();
     casesUpdatedAt = data.updated_at || null;
     seenBlockIds = new Set(data.seenIds || []);
