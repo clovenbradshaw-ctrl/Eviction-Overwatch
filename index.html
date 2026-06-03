@@ -5,15 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Nashville Eviction Tracker</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%231a1810'/%3E%3Ctext x='50%25' y='54%25' font-family='Georgia,serif' font-size='44' font-weight='700' text-anchor='middle' dominant-baseline='middle' fill='%23c9a961'%3E%E2%9A%96%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://archive.org" crossorigin>
 <link rel="preconnect" href="https://n8n.intelechia.com" crossorigin>
 <link rel="preconnect" href="https://tigerweb.geo.census.gov" crossorigin>
 <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
 <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<!-- pako is only needed on the cold-cache path (gzip inflate of cases.json).
-     Warm refreshes hit OPFS first, so we preload it but don't block the
-     parser on it — downloadCases() awaits loadScript(PAKO_URL). -->
-<link rel="preload" as="script" href="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js">
 <link rel="preload" as="script" href="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js">
 <link rel="preload" as="style"  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <!-- Google Fonts via preload + onload swap so the stylesheet fetch doesn't
@@ -1046,25 +1043,98 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 <div id="error" style="display:none"></div>
 
 <script>
-// Case state lives on Google Drive now, fronted by an n8n read endpoint that
-// returns a JSON envelope { ok, filename, content } keyed by filename. The
-// `content` field is exactly what GitHub raw used to hand back for the file.
-// (District demographics are served from this repo — see MSS_DEMOGRAPHICS_URL.)
-const SITE_READ_BASE = "https://n8n.intelechia.com/webhook/site/read-cases?filename=";
-const CASES_URL = SITE_READ_BASE + encodeURIComponent("cases.json");
+/* ───────────────────────── archive.org EO chain ─────────────────────────
+   Case state lives on archive.org as an append-only "chain" of blocks, each a
+   JSONL file inside its own item. Discovery is two metadata searches (no
+   central index): aggregates (periodic resolved-state snapshots) and chain
+   blocks (per-cycle deltas). Within a block, line 0 is a header
+   ({_block:true, block_index, ts, prev_hash, …}); lines 1+ are EO
+   transformations {op, docket, data|changes|to_status}. The genesis block
+   carries the full baseline as INS rows — including the ENC: defendant fields
+   the client decrypts after unlock. (District demographics are served from
+   this repo — see MSS_DEMOGRAPHICS_URL.) */
+const IA_SEARCH   = 'https://archive.org/advancedsearch.php';
+const IA_METADATA = 'https://archive.org/metadata';
+const IA_DOWNLOAD = 'https://archive.org/download';
+const CHAIN_SUBJECT     = 'nashville-evictions-chain';
+const AGGREGATE_SUBJECT = 'nashville-evictions-aggregate';
+// Shown in the provenance panel as the canonical source link.
+const CASES_URL = 'https://archive.org/search?query=' + encodeURIComponent(`subject:"${CHAIN_SUBJECT}"`);
 
-// Read a migrated file through the endpoint and unwrap the envelope, returning
-// the file body. A missing file comes back as HTTP 404 with a JSON body
-// { ok:false, error, filename } rather than GitHub raw's plain-text 404.
-async function fetchSiteFile(filename) {
-  const resp = await fetch(SITE_READ_BASE + encodeURIComponent(filename));
-  let body = null;
-  try { body = await resp.json(); } catch (_) { /* fall through to status check */ }
-  if (!resp.ok || !body || body.ok === false) {
-    const detail = (body && body.error) ? body.error : `HTTP ${resp.status}`;
-    throw new Error(`${filename}: ${detail}`);
+async function fetchJson(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`HTTP ${r.status}: ${url}`);
+  return r.json();
+}
+
+// All archive.org items tagged with `subject`, newest-first (addeddate desc).
+async function findBlocks(subject) {
+  const url = new URL(IA_SEARCH);
+  url.searchParams.set('q', `subject:"${subject}"`);
+  ['identifier', 'date', 'subject', 'title', 'addeddate'].forEach(f => url.searchParams.append('fl[]', f));
+  url.searchParams.append('sort[]', 'addeddate desc');
+  url.searchParams.set('rows', '500');
+  url.searchParams.set('output', 'json');
+  const j = await fetchJson(url.toString());
+  return (j.response && j.response.docs) || [];
+}
+
+// Fold one EO transformation into a { docket: case } dict.
+//   INS — insert/replace the full record (genesis + brand-new cases)
+//   DEF — apply each changed field's `.new` value (untouched baseline fields,
+//         e.g. the defendant name, survive because we merge rather than replace)
+//   SEG — status change (the reference reducer writes `Status`; this app's
+//         records use lowercase `status`, so we normalise to that)
+//   CON — enrichment confirmed
+//   NUL/EVA/REC — observations only, no state mutation
+function applyOp(state, t) {
+  if (!t || !t.docket) return;
+  const d = t.docket;
+  switch (t.op) {
+    case 'INS':
+      state[d] = { ...t.data };
+      break;
+    case 'DEF': {
+      const c = state[d] || (state[d] = {});
+      for (const [k, v] of Object.entries(t.changes || {})) {
+        c[k] = (v && typeof v === 'object' && 'new' in v) ? v.new : v;
+      }
+      break;
+    }
+    case 'SEG':
+      (state[d] || (state[d] = {})).status = t.to_status;
+      break;
+    case 'CON':
+      (state[d] || (state[d] = {})).enriched = true;
+      break;
+    default:
+      break;
   }
-  return body.content;
+}
+function applyOps(state, ops) { for (const t of ops) applyOp(state, t); return state; }
+
+// Resolve an item id to its .jsonl block and fold every op into `state`.
+// Parses line-by-line via indexOf rather than split(), so we don't hold a
+// ~70k-element array of substrings on top of the block text. Returns the header.
+async function foldBlock(identifier, state) {
+  const meta = await fetchJson(`${IA_METADATA}/${identifier}`);
+  const file = (meta.files || []).find(f => f.name && f.name.endsWith('.jsonl'));
+  if (!file) throw new Error(`no .jsonl file in item ${identifier}`);
+  const r = await fetch(`${IA_DOWNLOAD}/${identifier}/${file.name}`);
+  if (!r.ok) throw new Error(`download ${identifier}: HTTP ${r.status}`);
+  const text = await r.text();
+  let header = null, pos = 0, nl;
+  const handle = (line) => {
+    const s = line.trim();
+    if (!s) return;
+    let obj;
+    try { obj = JSON.parse(s); } catch (_) { return; }
+    if (obj._block) { header = obj; return; }
+    applyOp(state, obj);
+  };
+  while ((nl = text.indexOf('\n', pos)) >= 0) { handle(text.slice(pos, nl)); pos = nl + 1; }
+  handle(text.slice(pos));
+  return header;
 }
 
 /* ───────────────────────── OPFS binary cache ─────────────────────────
@@ -1080,12 +1150,11 @@ async function fetchSiteFile(filename) {
    blob in an IDB record.
 
    Bump CACHE_VERSION whenever the on-disk shape of a cached entry
-   changes; mismatched versions are treated as cache misses. v3 invalidates
-   v2 entries: those hold cases.json bytes fetched from GitHub raw (keyed by
-   commit SHA) before the move to Google Drive via n8n. GitHub had been
-   frozen with stale data while writes silently failed, so evicting those
-   entries forces a fresh pull of the current state from Drive. */
-const CACHE_VERSION = 3;
+   changes; mismatched versions are treated as cache misses. v4 changes the
+   cases entry to the archive.org chain shape — { data:{cases,updated_at},
+   seenIds:[…] } — so it can't read the older n8n/Drive payloads; evicting
+   them forces a clean rebuild from the chain. */
+const CACHE_VERSION = 4;
 const CACHE_FILES = {
   cases:     'cases.v1.json',
   princeton: 'princeton.v1.json',
@@ -1162,7 +1231,6 @@ function loadStyle(href) {
   });
 }
 
-const PAKO_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js';
 const PAPAPARSE_URL = 'https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js';
 const LEAFLET_JS_URL = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
 const LEAFLET_CSS_URL = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
@@ -1195,7 +1263,7 @@ const sources = {
   cases: {
     name: 'Nashville eviction cases',
     url: CASES_URL,
-    notes: 'Court records compiled from circuitclerk.nashville.gov, served from Google Drive via an n8n read endpoint (JSON envelope; content optionally gzip + base64-wrapped). Polled every 15 minutes for updates.',
+    notes: 'Court records compiled from circuitclerk.nashville.gov, published to archive.org as an append-only chain of JSONL blocks (EO notation). The app discovers blocks via archive.org search and folds them into the current state; polled every 5 minutes for new blocks.',
     status: 'pending', fetchedAt: null, rows: null, error: null,
   },
   princeton: {
@@ -1267,7 +1335,7 @@ function renderProvenance() {
 // Source-attribution tooltips shared across views. Keep these in sync with the
 // `sources` map above — these strings are what users see when hovering any
 // column header, stat, or label.
-const SRC_SCRAPED   = 'Source: scraped cases.json (circuitclerk.nashville.gov, served via n8n from Google Drive).';
+const SRC_SCRAPED   = 'Source: scraped court records (circuitclerk.nashville.gov), published to the archive.org evictions chain.';
 const SRC_GEOCODED  = 'Source: geocoded from the case address during scrape (cases.json).';
 const SRC_DERIVED   = 'Source: derived locally from scraped cases.json fields.';
 const SRC_PRINCETON = 'Source: Princeton Eviction Lab monthly filings CSV (2020–2021, evictionlab.org).';
@@ -1331,13 +1399,14 @@ let tableSortedRows = [];
 let tableVisibleCount = 0;
 let tableSentinelObserver = null;
 
-// Update-polling state. The cases.json content carries an `updated_at` stamp
-// (refreshed on each scraper write); we capture it after the initial load and
-// re-compare on each poll. The n8n endpoint has no cheap metadata/HEAD check,
-// so a poll downloads the file and diffs it — the scraper only writes every
-// ~25–30 min, so we poll gently to stay friendly to the self-hosted instance.
-const POLL_INTERVAL_MS = 15 * 60 * 1000;
-let casesUpdatedAt = null;
+// Update-polling state. We poll the archive.org chain search every interval and
+// fold any blocks we haven't seen yet onto the live state. Search indexing lags
+// ~30–60 min behind upload, so this catches new cycles within the hour; the
+// search call is cheap (only genuinely-new blocks get downloaded).
+const POLL_INTERVAL_MS = 5 * 60 * 1000;
+let casesState = {};                 // authoritative { docket: caseRecord }
+let seenBlockIds = new Set();        // archive.org item ids already folded in
+let casesUpdatedAt = null;           // newest block ts/addeddate folded in
 let updatePollHandle = null;
 
 // Princeton CSV — fetched live from evictionlab.org each session, never persisted.
@@ -1371,29 +1440,47 @@ function shorten(val, prefix) {
 }
 
 /* ───────────────────────── Load data ─────────────────────────
-   Cold path: download cases.json through the n8n endpoint, inflate the
-   gzip+base64 content, parse, stash the result in OPFS.
-   Warm path: read the prior inflated JSON straight out of OPFS so the
-   table paints before the network has a chance to answer; then revalidate
-   against the content's `updated_at` stamp and diff-merge in the
-   background. */
+   Cold path: discover the chain (latest aggregate + every newer chain block),
+   fold them in order into the full case state, stash the result in OPFS.
+   Warm path: render the prior resolved state straight out of OPFS so the
+   table paints before the network answers; then poll for blocks we haven't
+   folded yet and apply them in the background. */
 
-async function downloadCases() {
-  // Read cases.json through the endpoint and run the gzip+base64 inflate on
-  // the unwrapped content. The fetch and the pako script load go in parallel —
-  // pako is preloaded so loadScript usually resolves before the body arrives.
-  const [content] = await Promise.all([fetchSiteFile("cases.json"), loadScript(PAKO_URL)]);
-  let data = content;
-  if (data && data.format === "gzip+base64" && data.data) {
-    const bin = Uint8Array.from(atob(data.data), c => c.charCodeAt(0));
-    const raw = pako.inflate(bin, { to: "string" });
-    data = JSON.parse(raw);
+// Cold load: rebuild the full case state from the chain.
+// → { cases:{docket:rec}, updated_at, seenIds:[…] }
+async function loadChainCases() {
+  const state = {};
+  const seen = new Set();
+  let cutoff = null, latestTs = null;
+
+  // Latest aggregate first — a resolved-state snapshot, the bulk of state in
+  // one file. None exist yet (< 10 days in), but fold it once they do.
+  const aggs = await findBlocks(AGGREGATE_SUBJECT).catch(() => []);
+  if (aggs.length) {
+    const h = await foldBlock(aggs[0].identifier, state);
+    seen.add(aggs[0].identifier);
+    cutoff = aggs[0].addeddate || null;
+    latestTs = (h && h.ts) || aggs[0].addeddate || latestTs;
   }
-  return data;
+
+  // Every chain block newer than that aggregate, oldest-first (ops are ordered).
+  const chain = await findBlocks(CHAIN_SUBJECT);
+  const fresh = chain
+    .filter(b => !cutoff || (b.addeddate || '') > cutoff)
+    .sort((a, b) => (a.addeddate || '').localeCompare(b.addeddate || ''));
+  for (const b of fresh) {
+    const h = await foldBlock(b.identifier, state);
+    seen.add(b.identifier);
+    latestTs = (h && h.ts) || b.addeddate || latestTs;
+  }
+
+  if (!Object.keys(state).length) throw new Error('no cases found in the chain');
+  return { cases: state, updated_at: latestTs, seenIds: [...seen] };
 }
 
 function applyInitialCases(data) {
   const cases = data.cases || {};
+  casesState = cases;                 // the dict incremental chain folds mutate
   // Keep ENC: values verbatim so they can be decrypted after login. The
   // display layer hides them until the user unlocks.
   allRows = Object.entries(cases).map(([docket, c]) => ({ docket, ...c }));
@@ -1418,22 +1505,24 @@ async function loadData() {
   try {
     const cached = await opfsCache.get(CACHE_FILES.cases);
     if (cached && cached.data) {
-      // Warm path — render from disk immediately, revalidate in the
-      // background. Network is still hit, but UI is already interactive.
+      // Warm path — render the resolved state from disk immediately, then poll
+      // for newer chain blocks in the background. UI is interactive at once.
       casesUpdatedAt = (cached.data && cached.data.updated_at) || null;
+      seenBlockIds = new Set(cached.seenIds || []);
       applyInitialCases(cached.data);
       markSource('cases', { status: 'ok', rows: allRows.length, fromCache: true });
 
       kickBackgroundSync();
       kickMssDemographicsSync();
       startUpdatePolling();
-      whenIdle(() => syncCasesFromEndpoint());
+      whenIdle(() => syncChain());
       return;
     }
 
-    // Cold path — full download.
-    const data = await downloadCases();
+    // Cold path — rebuild the full state from the chain.
+    const data = await loadChainCases();
     casesUpdatedAt = data.updated_at || null;
+    seenBlockIds = new Set(data.seenIds || []);
     applyInitialCases(data);
     markSource('cases', { status: 'ok', rows: allRows.length });
 
@@ -1441,10 +1530,12 @@ async function loadData() {
     kickMssDemographicsSync();
     startUpdatePolling();
 
-    // Persist as soon as we're idle so the next refresh hits the warm path.
-    // `updated_at` rides inside `data`, so the diff-on-poll has everything it
-    // needs straight from the cache — no separate version key to capture.
-    whenIdle(() => opfsCache.put(CACHE_FILES.cases, { data }));
+    // Persist the resolved state + which blocks are folded in, so the next
+    // refresh hits the warm path and the poll only fetches genuinely-new blocks.
+    whenIdle(() => opfsCache.put(CACHE_FILES.cases, {
+      data: { cases: data.cases, updated_at: data.updated_at },
+      seenIds: data.seenIds,
+    }));
   } catch (e) {
     markSource('cases', { status: 'failed', error: e.message });
     document.getElementById("loading").style.display = "none";
@@ -1453,28 +1544,57 @@ async function loadData() {
   }
 }
 
-// Pull the current cases.json from the endpoint and, if its `updated_at`
-// moved since what we have live, diff-merge it in. Shared by the one-shot
-// warm-path revalidation and the periodic poll. The endpoint has no cheap
-// change check, so this downloads the full file — callers gate it behind a
-// timer (or run it once on warm load).
-async function syncCasesFromEndpoint() {
-  let data;
+// Incremental refresh: fetch any chain blocks we haven't folded yet and apply
+// them to the live state in order. Cheap — the search returns metadata only,
+// and only brand-new blocks get downloaded. Shared by the warm-path kick and
+// the periodic poll.
+async function syncChain() {
+  let chain;
   try {
-    data = await downloadCases();
+    chain = await findBlocks(CHAIN_SUBJECT);
   } catch (e) {
-    console.warn('[eo] cases sync failed:', e.message);
+    console.warn('[eo] chain poll failed:', e.message);
     return;
   }
-  const latest = data.updated_at || null;
-  if (latest === casesUpdatedAt) return;   // unchanged (or no stamp to compare)
+  const fresh = chain
+    .filter(b => !seenBlockIds.has(b.identifier))
+    .sort((a, b) => (a.addeddate || '').localeCompare(b.addeddate || ''));
+  if (!fresh.length) return;
+
   bgStatus('Updates detected — applying…', true);
   try {
-    applyCasesUpdate(data);
-    casesUpdatedAt = latest;
+    let folded = 0;
+    for (const b of fresh) {
+      const h = await foldBlock(b.identifier, casesState);
+      seenBlockIds.add(b.identifier);
+      casesUpdatedAt = (h && h.ts) || b.addeddate || casesUpdatedAt;
+      folded++;
+    }
+    // Rebuild the render rows from the updated state and repaint.
+    allRows = Object.entries(casesState).map(([docket, c]) => ({ docket, ...c }));
+    enrichCaseRows(allRows);
+    rebuildLocalAggregates();
+    if (princetonRows) rebuildPrincetonAggregates();
+
+    document.getElementById('updated').textContent = 'Updated ' + (casesUpdatedAt || '—').split('T')[0];
+    updateSubtitle();
+    buildStats();
+    render();
+    if (selectedRecordDocket && casesState[selectedRecordDocket]) {
+      renderRecordPanel(selectedRecordDocket);
+    } else if (selectedRecordDocket) {
+      closeRecordPanel();
+    }
+
+    opfsCache.put(CACHE_FILES.cases, {
+      data: { cases: casesState, updated_at: casesUpdatedAt },
+      seenIds: [...seenBlockIds],
+    });
+    bgStatus(`Folded ${folded} new block${folded === 1 ? '' : 's'}`, false);
+    setTimeout(() => bgStatus(''), 6000);
   } catch (e) {
-    console.warn('[eo] update apply failed:', e);
-    bgStatus(`Update fetch failed: ${e.message}`, false);
+    console.warn('[eo] chain apply failed:', e);
+    bgStatus(`Update failed: ${e.message}`, false);
     setTimeout(() => bgStatus(''), 5000);
   }
 }
@@ -2977,18 +3097,26 @@ ${note}
 
      version(1=0x80) || timestamp(8) || iv(16) || ciphertext || hmac(32)
 
-   The 32-byte PBKDF2-SHA256 output (salt=b'caselink-eviction-scraper',
-   480k iterations) is split: first 16 bytes = HMAC-SHA256 signing key,
-   last 16 bytes = AES-128-CBC encryption key. PKCS7 padding on the
-   plaintext is handled automatically by SubtleCrypto's AES-CBC mode.
+   The 32-byte PBKDF2-HMAC-SHA256 output is split: first 16 bytes =
+   HMAC-SHA256 signing key, last 16 bytes = AES-128-CBC encryption key.
+   PKCS7 padding is handled automatically by SubtleCrypto's AES-CBC mode.
+
+   The scraper's PBKDF2 params changed across versions, so KEY_CONFIGS
+   lists every (salt, iterations) we know and decryptValue tries each:
+   Fernet's HMAC identifies which one a given token was sealed with. The
+   archive.org chain (scraper DER_4) uses salt 'caselink-v1' / 100k;
+   older data used 'caselink-eviction-scraper' / 480k.
 
    The plaintext is held only in memory and never persisted. Closing
    the tab or pressing the Logout button purges the password and the
    cache. */
 
-const PBKDF2_ITERATIONS = 480000;
 const PBKDF2_HASH       = 'SHA-256';
-const PBKDF2_SALT       = new TextEncoder().encode('caselink-eviction-scraper');
+// Tried in order; the first whose HMAC verifies wins (newest config first).
+const KEY_CONFIGS = [
+  { salt: 'caselink-v1',               iterations: 100000 },
+  { salt: 'caselink-eviction-scraper', iterations: 480000 },
+];
 const FERNET_VERSION    = 0x80;
 const FERNET_IV_BYTES   = 16;
 const FERNET_HMAC_BYTES = 32;
@@ -3010,9 +3138,11 @@ function base64UrlToBytes(b64) {
   return out;
 }
 
-function deriveFernetKeys(password) {
-  // Cache the promise so parallel callers share one PBKDF2 derivation.
-  let p = keyCache.get(password);
+function deriveFernetKeys(password, cfg) {
+  // Cache the promise per (config, password) so parallel callers share one
+  // PBKDF2 derivation and we pay each config's cost at most once.
+  const cacheKey = `${cfg.iterations}:${cfg.salt}:${password}`;
+  let p = keyCache.get(cacheKey);
   if (p) return p;
   p = (async () => {
     const baseKey = await crypto.subtle.importKey(
@@ -3020,8 +3150,8 @@ function deriveFernetKeys(password) {
       'PBKDF2', false, ['deriveBits']
     );
     const bits = await crypto.subtle.deriveBits(
-      { name: 'PBKDF2', salt: PBKDF2_SALT,
-        iterations: PBKDF2_ITERATIONS, hash: PBKDF2_HASH },
+      { name: 'PBKDF2', salt: new TextEncoder().encode(cfg.salt),
+        iterations: cfg.iterations, hash: PBKDF2_HASH },
       baseKey, 256
     );
     const raw = new Uint8Array(bits);
@@ -3035,8 +3165,8 @@ function deriveFernetKeys(password) {
     );
     return { sign: signKey, enc: encKey };
   })();
-  keyCache.set(password, p);
-  p.catch(() => keyCache.delete(password));
+  keyCache.set(cacheKey, p);
+  p.catch(() => keyCache.delete(cacheKey));
   return p;
 }
 
@@ -3064,14 +3194,17 @@ async function decryptValue(encStr, password) {
     const iv     = bytes.subarray(9, 9 + FERNET_IV_BYTES);
     const ct     = bytes.subarray(FERNET_HEADER_BYTES, signedLen);
 
-    const { sign, enc } = await deriveFernetKeys(password);
-    const ok = await crypto.subtle.verify({ name: 'HMAC' }, sign, mac, signed);
-    if (!ok) throw new Error('hmac mismatch');
-
-    const pt = await crypto.subtle.decrypt({ name: 'AES-CBC', iv }, enc, ct);
-    const out = new TextDecoder().decode(pt);
-    decryptCache.set(encStr, out);
-    return out;
+    // Try each known key config; the HMAC verify identifies the right one.
+    for (const cfg of KEY_CONFIGS) {
+      const { sign, enc } = await deriveFernetKeys(password, cfg);
+      const ok = await crypto.subtle.verify({ name: 'HMAC' }, sign, mac, signed);
+      if (!ok) continue;
+      const pt = await crypto.subtle.decrypt({ name: 'AES-CBC', iv }, enc, ct);
+      const out = new TextDecoder().decode(pt);
+      decryptCache.set(encStr, out);
+      return out;
+    }
+    throw new Error('no key config verified');
   } catch (e) {
     decryptCache.set(encStr, SENTINEL_FAIL);
     return null;
@@ -3162,61 +3295,13 @@ function logout() {
 }
 
 /* ───────────────────────── Update polling ─────────────────────────
-   Once per session we download the full cases.json. After that we poll the
-   endpoint every POLL_INTERVAL_MS; each poll re-downloads the file and
-   diff-merges only when its `updated_at` stamp has moved (see
-   syncCasesFromEndpoint). There's no lightweight metadata check, so we keep
-   the cadence gentle — the scraper only writes every ~25–30 min. */
-
-function applyCasesUpdate(data) {
-  // `data` is the already-downloaded, inflated cases payload. Persist it so a
-  // reload hits the warm path, then diff it against what's on screen.
-  opfsCache.put(CACHE_FILES.cases, { data });
-  const cases = data.cases || {};
-  const oldByDocket = Object.fromEntries(allRows.map(r => [r.docket, r]));
-  const newRows = Object.entries(cases).map(([docket, c]) => ({
-    docket,
-    ...c,
-  }));
-
-  let added = 0, changed = 0;
-  const newDockets = new Set();
-  for (const r of newRows) {
-    newDockets.add(r.docket);
-    const old = oldByDocket[r.docket];
-    if (!old) { added++; continue; }
-    if (JSON.stringify(old) !== JSON.stringify(r)) changed++;
-  }
-  let removed = 0;
-  for (const d in oldByDocket) if (!newDockets.has(d)) removed++;
-
-  allRows = newRows;
-  enrichCaseRows(allRows);
-  rebuildLocalAggregates();
-  if (princetonRows) rebuildPrincetonAggregates();
-
-  document.getElementById('updated').textContent = 'Updated ' + (data.updated_at || '—').split('T')[0];
-  updateSubtitle();
-  buildStats();
-  render();
-  // If the currently-open record still exists, refresh its panel content.
-  if (selectedRecordDocket && newDockets.has(selectedRecordDocket)) {
-    renderRecordPanel(selectedRecordDocket);
-  } else if (selectedRecordDocket) {
-    closeRecordPanel();
-  }
-
-  const parts = [];
-  if (added)   parts.push(`+${added} new`);
-  if (changed) parts.push(`~${changed} updated`);
-  if (removed) parts.push(`-${removed} removed`);
-  bgStatus(parts.length ? parts.join(' · ') : 'Refreshed (no record changes)', false);
-  setTimeout(() => bgStatus(''), 6000);
-}
+   After the initial load we poll the chain every POLL_INTERVAL_MS and fold any
+   blocks we haven't seen yet (see syncChain). The genesis/aggregate is fetched
+   once; from then on only the small per-cycle deltas come down the wire. */
 
 function startUpdatePolling() {
   if (updatePollHandle) clearInterval(updatePollHandle);
-  updatePollHandle = setInterval(syncCasesFromEndpoint, POLL_INTERVAL_MS);
+  updatePollHandle = setInterval(syncChain, POLL_INTERVAL_MS);
 }
 
 /* ───────────────────────── Districts view + profile ───────────────────────── */
