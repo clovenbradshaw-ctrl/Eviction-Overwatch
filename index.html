@@ -5,8 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Nashville Eviction Tracker</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%231a1810'/%3E%3Ctext x='50%25' y='54%25' font-family='Georgia,serif' font-size='44' font-weight='700' text-anchor='middle' dominant-baseline='middle' fill='%23c9a961'%3E%E2%9A%96%3C/text%3E%3C/svg%3E">
-<link rel="preconnect" href="https://raw.githubusercontent.com" crossorigin>
-<link rel="preconnect" href="https://api.github.com" crossorigin>
 <link rel="preconnect" href="https://n8n.intelechia.com" crossorigin>
 <link rel="preconnect" href="https://tigerweb.geo.census.gov" crossorigin>
 <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
@@ -1048,7 +1046,26 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 <div id="error" style="display:none"></div>
 
 <script>
-const CASES_URL = "https://raw.githubusercontent.com/clovenbradshaw-ctrl/plain-text/main/cases.json";
+// Case state lives on Google Drive now, fronted by an n8n read endpoint that
+// returns a JSON envelope { ok, filename, content } keyed by filename. The
+// `content` field is exactly what GitHub raw used to hand back for the file.
+// (District demographics are served from this repo — see MSS_DEMOGRAPHICS_URL.)
+const SITE_READ_BASE = "https://n8n.intelechia.com/webhook/site/read-cases?filename=";
+const CASES_URL = SITE_READ_BASE + encodeURIComponent("cases.json");
+
+// Read a migrated file through the endpoint and unwrap the envelope, returning
+// the file body. A missing file comes back as HTTP 404 with a JSON body
+// { ok:false, error, filename } rather than GitHub raw's plain-text 404.
+async function fetchSiteFile(filename) {
+  const resp = await fetch(SITE_READ_BASE + encodeURIComponent(filename));
+  let body = null;
+  try { body = await resp.json(); } catch (_) { /* fall through to status check */ }
+  if (!resp.ok || !body || body.ok === false) {
+    const detail = (body && body.error) ? body.error : `HTTP ${resp.status}`;
+    throw new Error(`${filename}: ${detail}`);
+  }
+  return body.content;
+}
 
 /* ───────────────────────── OPFS binary cache ─────────────────────────
    Pay the network cost once. On warm loads each dataset is hydrated from
@@ -1063,12 +1080,12 @@ const CASES_URL = "https://raw.githubusercontent.com/clovenbradshaw-ctrl/plain-t
    blob in an IDB record.
 
    Bump CACHE_VERSION whenever the on-disk shape of a cached entry
-   changes; mismatched versions are treated as cache misses. v2 invalidates
-   v1 entries that may have been written with a SHA→data mismatch by the
-   pre-SHA-pin fetcher (which could pair a new commit SHA with the
-   previous commit's stale bytes from the Fastly /main/ cache, leaving
-   warm reloads permanently stuck on the old data). */
-const CACHE_VERSION = 2;
+   changes; mismatched versions are treated as cache misses. v3 invalidates
+   v2 entries: those hold cases.json bytes fetched from GitHub raw (keyed by
+   commit SHA) before the move to Google Drive via n8n. GitHub had been
+   frozen with stale data while writes silently failed, so evicting those
+   entries forces a fresh pull of the current state from Drive. */
+const CACHE_VERSION = 3;
 const CACHE_FILES = {
   cases:     'cases.v1.json',
   princeton: 'princeton.v1.json',
@@ -1165,14 +1182,20 @@ function whenIdle(fn, timeout = 1500) {
 const TIGER_TRACT_URL = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWMS_Current/MapServer/8/query?'
   + 'where=' + encodeURIComponent("STATE='47' AND COUNTY='037'")
   + '&outFields=GEOID&returnGeometry=true&f=geojson';
-const MSS_DEMOGRAPHICS_URL =
-  'https://raw.githubusercontent.com/clovenbradshaw-ctrl/plain-text/main/nashville_council_district_demographics.json';
+// District demographics live in this repo now. Population + race/ethnicity were
+// extracted from the 2026 MSS "Know Your Community" report (ACS 2023); the other
+// measures are carried from the 2023 edition (ACS 2017–2021). MSS_REPORT_URL is
+// the public report we cite as the source; MSS_DEMOGRAPHICS_URL is the in-repo
+// file the app actually fetches (same-origin, no CORS).
+const MSS_REPORT_URL =
+  'https://www.nashville.gov/sites/default/files/2026-02/Social-Services-Know-Your-Community-Report-2026.pdf';
+const MSS_DEMOGRAPHICS_URL = 'data/nashville_council_district_demographics.json';
 
 const sources = {
   cases: {
     name: 'Nashville eviction cases',
     url: CASES_URL,
-    notes: 'Court records compiled from circuitclerk.nashville.gov, gzipped + base64-wrapped in a GitHub-hosted JSON. Polled every 5 minutes for updates.',
+    notes: 'Court records compiled from circuitclerk.nashville.gov, served from Google Drive via an n8n read endpoint (JSON envelope; content optionally gzip + base64-wrapped). Polled every 15 minutes for updates.',
     status: 'pending', fetchedAt: null, rows: null, error: null,
   },
   princeton: {
@@ -1183,8 +1206,8 @@ const sources = {
   },
   mss: {
     name: 'Metro Social Services — Council district demographics',
-    url: MSS_DEMOGRAPHICS_URL,
-    notes: 'Per-district population, age, race/ethnicity, education, income, poverty, employment, and housing cost-burden. Pre-aggregated to the post-2021 districts by MSS Strategic Planning, Dec 2023, sourcing ACS 2017–2021 5-year estimates.',
+    url: MSS_REPORT_URL,
+    notes: 'Per-district population, age, race/ethnicity, education, income, poverty, employment, and housing cost-burden, pre-aggregated to the post-2021 districts. Population and race/ethnicity are from MSS "Know Your Community" 2026 (ACS 2023 5-year estimates); the remaining measures are carried from the 2023 edition (ACS 2017–2021). Extracted into this repo from the linked report.',
     status: 'pending', fetchedAt: null, rows: null, error: null,
   },
   tiger: {
@@ -1244,11 +1267,11 @@ function renderProvenance() {
 // Source-attribution tooltips shared across views. Keep these in sync with the
 // `sources` map above — these strings are what users see when hovering any
 // column header, stat, or label.
-const SRC_SCRAPED   = 'Source: scraped cases.json (circuitclerk.nashville.gov, via clovenbradshaw-ctrl/plain-text).';
+const SRC_SCRAPED   = 'Source: scraped cases.json (circuitclerk.nashville.gov, served via n8n from Google Drive).';
 const SRC_GEOCODED  = 'Source: geocoded from the case address during scrape (cases.json).';
 const SRC_DERIVED   = 'Source: derived locally from scraped cases.json fields.';
 const SRC_PRINCETON = 'Source: Princeton Eviction Lab monthly filings CSV (2020–2021, evictionlab.org).';
-const SRC_MSS       = 'Source: Metro Social Services district demographics (ACS 2017–2021 5-year estimates).';
+const SRC_MSS       = 'Source: Metro Social Services, Know Your Community 2026 (population & race/ethnicity from ACS 2023; other measures from ACS 2017–2021).';
 const SRC_TIGER     = 'Source: US Census TIGERweb tract polygons (Davidson County).';
 
 const COLUMNS = [
@@ -1308,13 +1331,13 @@ let tableSortedRows = [];
 let tableVisibleCount = 0;
 let tableSentinelObserver = null;
 
-// Update-polling state. Captured once after the initial load, then
-// re-compared every 5 min against the latest commit on cases.json.
-const CASES_REPO_OWNER = 'clovenbradshaw-ctrl';
-const CASES_REPO_NAME  = 'plain-text';
-const CASES_REPO_PATH  = 'cases.json';
-const POLL_INTERVAL_MS = 5 * 60 * 1000;
-let casesSha = null;
+// Update-polling state. The cases.json content carries an `updated_at` stamp
+// (refreshed on each scraper write); we capture it after the initial load and
+// re-compare on each poll. The n8n endpoint has no cheap metadata/HEAD check,
+// so a poll downloads the file and diffs it — the scraper only writes every
+// ~25–30 min, so we poll gently to stay friendly to the self-hosted instance.
+const POLL_INTERVAL_MS = 15 * 60 * 1000;
+let casesUpdatedAt = null;
 let updatePollHandle = null;
 
 // Princeton CSV — fetched live from evictionlab.org each session, never persisted.
@@ -1348,30 +1371,20 @@ function shorten(val, prefix) {
 }
 
 /* ───────────────────────── Load data ─────────────────────────
-   Cold path: download cases.json (gzip+base64-wrapped), inflate, parse,
-   stash the result in OPFS.
+   Cold path: download cases.json through the n8n endpoint, inflate the
+   gzip+base64 content, parse, stash the result in OPFS.
    Warm path: read the prior inflated JSON straight out of OPFS so the
    table paints before the network has a chance to answer; then revalidate
-   the GitHub commit sha and diff-merge in the background. */
+   against the content's `updated_at` stamp and diff-merge in the
+   background. */
 
-// Build a SHA-pinned URL when we know the commit; otherwise use the branch URL.
-// raw.githubusercontent.com sets max-age=300 on the branch path, so without
-// pinning, a fresh "main" download right after a push can return the previous
-// commit's bytes from Fastly. Each commit SHA is a distinct cache key, so the
-// pinned URL gives us exactly the bytes that match the SHA the polling loop
-// just observed.
-function casesUrlForSha(sha) {
-  if (!sha) return CASES_URL;
-  return `https://raw.githubusercontent.com/${CASES_REPO_OWNER}/${CASES_REPO_NAME}/${sha}/${CASES_REPO_PATH}`;
-}
-
-async function downloadCases(sha) {
-  // Kick the network fetch and the pako script load in parallel — pako is
-  // preloaded so loadScript usually resolves before the body arrives.
-  const fetchPromise = fetch(casesUrlForSha(sha)).then(r => r.json());
-  const [data0] = await Promise.all([fetchPromise, loadScript(PAKO_URL)]);
-  let data = data0;
-  if (data.format === "gzip+base64" && data.data) {
+async function downloadCases() {
+  // Read cases.json through the endpoint and run the gzip+base64 inflate on
+  // the unwrapped content. The fetch and the pako script load go in parallel —
+  // pako is preloaded so loadScript usually resolves before the body arrives.
+  const [content] = await Promise.all([fetchSiteFile("cases.json"), loadScript(PAKO_URL)]);
+  let data = content;
+  if (data && data.format === "gzip+base64" && data.data) {
     const bin = Uint8Array.from(atob(data.data), c => c.charCodeAt(0));
     const raw = pako.inflate(bin, { to: "string" });
     data = JSON.parse(raw);
@@ -1407,19 +1420,20 @@ async function loadData() {
     if (cached && cached.data) {
       // Warm path — render from disk immediately, revalidate in the
       // background. Network is still hit, but UI is already interactive.
-      casesSha = cached.sha || null;
+      casesUpdatedAt = (cached.data && cached.data.updated_at) || null;
       applyInitialCases(cached.data);
       markSource('cases', { status: 'ok', rows: allRows.length, fromCache: true });
 
       kickBackgroundSync();
       kickMssDemographicsSync();
       startUpdatePolling();
-      whenIdle(() => revalidateCases());
+      whenIdle(() => syncCasesFromEndpoint());
       return;
     }
 
     // Cold path — full download.
     const data = await downloadCases();
+    casesUpdatedAt = data.updated_at || null;
     applyInitialCases(data);
     markSource('cases', { status: 'ok', rows: allRows.length });
 
@@ -1427,17 +1441,10 @@ async function loadData() {
     kickMssDemographicsSync();
     startUpdatePolling();
 
-    // Persist as soon as we're idle so the next refresh hits the warm
-    // path. The previous version gated the OPFS write on the commits-API
-    // sha fetch finishing — a quick second refresh before that resolved
-    // meant the user re-downloaded from scratch. The sha is captured in
-    // parallel and re-persisted once it lands.
-    whenIdle(() => opfsCache.put(CACHE_FILES.cases, { data, sha: null }));
-    fetchLatestCasesSha().then(sha => {
-      if (!sha) return;
-      casesSha = sha;
-      whenIdle(() => opfsCache.put(CACHE_FILES.cases, { data, sha }));
-    }).catch(() => {});
+    // Persist as soon as we're idle so the next refresh hits the warm path.
+    // `updated_at` rides inside `data`, so the diff-on-poll has everything it
+    // needs straight from the cache — no separate version key to capture.
+    whenIdle(() => opfsCache.put(CACHE_FILES.cases, { data }));
   } catch (e) {
     markSource('cases', { status: 'failed', error: e.message });
     document.getElementById("loading").style.display = "none";
@@ -1446,19 +1453,27 @@ async function loadData() {
   }
 }
 
-// Warm-path revalidation: if the GitHub commit sha moved since we cached,
-// pull the new file and diff-merge into the live state.
-async function revalidateCases() {
-  const latest = await fetchLatestCasesSha().catch(() => null);
-  if (!latest) return;
-  if (!casesSha) { casesSha = latest; return; }
-  if (latest === casesSha) return;
-  bgStatus('Updates detected — fetching…', true);
+// Pull the current cases.json from the endpoint and, if its `updated_at`
+// moved since what we have live, diff-merge it in. Shared by the one-shot
+// warm-path revalidation and the periodic poll. The endpoint has no cheap
+// change check, so this downloads the full file — callers gate it behind a
+// timer (or run it once on warm load).
+async function syncCasesFromEndpoint() {
+  let data;
   try {
-    await applyCasesUpdate(latest);
-    casesSha = latest;
+    data = await downloadCases();
   } catch (e) {
-    console.warn('[eo] revalidate failed:', e);
+    console.warn('[eo] cases sync failed:', e.message);
+    return;
+  }
+  const latest = data.updated_at || null;
+  if (latest === casesUpdatedAt) return;   // unchanged (or no stamp to compare)
+  bgStatus('Updates detected — applying…', true);
+  try {
+    applyCasesUpdate(data);
+    casesUpdatedAt = latest;
+  } catch (e) {
+    console.warn('[eo] update apply failed:', e);
     bgStatus(`Update fetch failed: ${e.message}`, false);
     setTimeout(() => bgStatus(''), 5000);
   }
@@ -3147,52 +3162,16 @@ function logout() {
 }
 
 /* ───────────────────────── Update polling ─────────────────────────
-   Once per session we download the full cases.json. After that we hit
-   the GitHub commits API for cases.json every 5 minutes; if its sha
-   moved, we re-fetch and diff-merge. Unauthenticated calls are capped
-   at 60/hr per IP — 12/hr per session leaves comfortable headroom. */
+   Once per session we download the full cases.json. After that we poll the
+   endpoint every POLL_INTERVAL_MS; each poll re-downloads the file and
+   diff-merges only when its `updated_at` stamp has moved (see
+   syncCasesFromEndpoint). There's no lightweight metadata check, so we keep
+   the cadence gentle — the scraper only writes every ~25–30 min. */
 
-const CASES_COMMITS_API =
-  `https://api.github.com/repos/${CASES_REPO_OWNER}/${CASES_REPO_NAME}/commits` +
-  `?path=${encodeURIComponent(CASES_REPO_PATH)}&per_page=1`;
-
-async function fetchLatestCasesSha() {
-  const r = await fetch(CASES_COMMITS_API, { headers: { 'Accept': 'application/vnd.github+json' } });
-  if (!r.ok) throw new Error(`commits HTTP ${r.status}`);
-  const arr = await r.json();
-  return Array.isArray(arr) && arr.length ? arr[0].sha : null;
-}
-
-async function checkForCasesUpdate() {
-  let latest;
-  try {
-    latest = await fetchLatestCasesSha();
-  } catch (e) {
-    console.warn('[eo] update poll failed:', e.message);
-    return;
-  }
-  if (!latest) return;
-  if (!casesSha) { casesSha = latest; return; }
-  if (latest === casesSha) return;
-
-  bgStatus('Updates detected — fetching…', true);
-  try {
-    await applyCasesUpdate(latest);
-    casesSha = latest;
-  } catch (e) {
-    console.warn('[eo] update apply failed:', e);
-    bgStatus(`Update fetch failed: ${e.message}`, false);
-    setTimeout(() => bgStatus(''), 5000);
-  }
-}
-
-async function applyCasesUpdate(sha) {
-  // Pin the download to the SHA the poller just observed, so a stale
-  // raw.githubusercontent.com cache on /main/cases.json can't hand us the
-  // previous commit's bytes (which would make us store the new SHA against
-  // old data and silently drop the update).
-  const data = await downloadCases(sha);
-  opfsCache.put(CACHE_FILES.cases, { data, sha: sha || casesSha });
+function applyCasesUpdate(data) {
+  // `data` is the already-downloaded, inflated cases payload. Persist it so a
+  // reload hits the warm path, then diff it against what's on screen.
+  opfsCache.put(CACHE_FILES.cases, { data });
   const cases = data.cases || {};
   const oldByDocket = Object.fromEntries(allRows.map(r => [r.docket, r]));
   const newRows = Object.entries(cases).map(([docket, c]) => ({
@@ -3237,7 +3216,7 @@ async function applyCasesUpdate(sha) {
 
 function startUpdatePolling() {
   if (updatePollHandle) clearInterval(updatePollHandle);
-  updatePollHandle = setInterval(checkForCasesUpdate, POLL_INTERVAL_MS);
+  updatePollHandle = setInterval(syncCasesFromEndpoint, POLL_INTERVAL_MS);
 }
 
 /* ───────────────────────── Districts view + profile ───────────────────────── */
@@ -3466,8 +3445,9 @@ function showDistrictProfile(district) {
           </div>
         </div>
         <div class="race-source-note">
-          Source: <a href="${esc(sources.mss.url)}" target="_blank" rel="noopener">Metro Social Services, Know Your Community 2023</a>
-          (ACS 2017–2021 5-year estimates, post-2021 council boundaries).
+          Source: <a href="${esc(sources.mss.url)}" target="_blank" rel="noopener">Metro Social Services, Know Your Community 2026</a>.
+          Population is from ACS 2023; income, poverty, housing, employment and age are from ACS 2017–2021
+          (post-2021 council boundaries) pending the 2026 refresh.
           County comparison shown where available — red means worse-than-county on this measure.
         </div>
       </div>`;
@@ -3502,7 +3482,7 @@ function showDistrictProfile(district) {
       </div>
       <div class="race-source-note">
         Total population: <strong>${pop.toLocaleString()}</strong>. Counts approximated as population × percentage.
-        Source: <a href="${esc(sources.mss.url)}" target="_blank" rel="noopener">Metro Social Services 2023</a> (ACS 2017–2021).
+        Source: <a href="${esc(sources.mss.url)}" target="_blank" rel="noopener">Metro Social Services, Know Your Community 2026</a> (ACS 2023 5-year estimates, table DP05).
         Hispanic/Latino is an ethnicity that overlaps the race categories above, shown separately.
       </div>
     </div>`;
