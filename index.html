@@ -1061,10 +1061,41 @@ const AGGREGATE_SUBJECT = 'nashville-evictions-aggregate';
 // Shown in the provenance panel as the canonical source link.
 const CASES_URL = 'https://archive.org/search?query=' + encodeURIComponent(`subject:"${CHAIN_SUBJECT}"`);
 
+/* Fast cold-start baseline. A resolved snapshot of case state committed to
+   this repo and served same-origin (GitHub Pages / a plain CDN), so the first
+   load doesn't pay the archive.org aggregate search + ~70k-row genesis
+   download. It's just a pre-folded aggregate living next to the app instead of
+   on archive.org. Shape:
+       { cases:{docket:rec}, updated_at, cutoff, seenIds:[…] }
+   `cutoff` is the archive.org addeddate of the newest block already folded into
+   the snapshot and `seenIds` are those block ids — together they let the client
+   fold only genuinely-newer chain blocks on top. Regenerate it with
+   tools/build-cases-snapshot.mjs. */
+const SNAPSHOT_URL = 'data/cases.json';
+
 async function fetchJson(url) {
   const r = await fetch(url);
   if (!r.ok) throw new Error(`HTTP ${r.status}: ${url}`);
   return r.json();
+}
+
+// Read the static hydration snapshot. Returns null (silently) when the file is
+// absent or malformed, so the archive.org-only cold path still works.
+async function loadSnapshot() {
+  try {
+    const r = await fetch(SNAPSHOT_URL, { cache: 'no-cache' });
+    if (!r.ok) return null;
+    const j = await r.json();
+    if (!j || !j.cases || typeof j.cases !== 'object' || !Object.keys(j.cases).length) return null;
+    return {
+      cases: j.cases,
+      updated_at: j.updated_at || null,
+      cutoff: j.cutoff || null,
+      seenIds: Array.isArray(j.seenIds) ? j.seenIds : [],
+    };
+  } catch (_) {
+    return null;
+  }
 }
 
 // All archive.org items tagged with `subject`, newest-first (addeddate desc).
@@ -1453,19 +1484,34 @@ async function loadChainCases() {
   const seen = new Set();
   let cutoff = null, latestTs = null;
 
-  // Latest aggregate first — a resolved-state snapshot, the bulk of state in
-  // one file. None exist yet (< 10 days in), but fold it once they do.
-  const aggs = await findBlocks(AGGREGATE_SUBJECT).catch(() => []);
-  if (aggs.length) {
-    const h = await foldBlock(aggs[0].identifier, state);
-    seen.add(aggs[0].identifier);
-    cutoff = aggs[0].addeddate || null;
-    latestTs = (h && h.ts) || aggs[0].addeddate || latestTs;
+  // Prefer the static hydration snapshot served from this repo: one CDN-cached
+  // round-trip stands in for the archive.org aggregate search and the genesis
+  // download, leaving only the blocks added since the snapshot was cut to fold.
+  const snap = await loadSnapshot();
+  if (snap) {
+    Object.assign(state, snap.cases);
+    (snap.seenIds || []).forEach(id => seen.add(id));
+    cutoff = snap.cutoff || null;
+    latestTs = snap.updated_at || latestTs;
+  } else {
+    // No snapshot — fall back to archive.org. Latest aggregate first: a
+    // resolved-state snapshot, the bulk of state in one file. None exist yet
+    // (< 10 days in), but fold it once they do.
+    const aggs = await findBlocks(AGGREGATE_SUBJECT).catch(() => []);
+    if (aggs.length) {
+      const h = await foldBlock(aggs[0].identifier, state);
+      seen.add(aggs[0].identifier);
+      cutoff = aggs[0].addeddate || null;
+      latestTs = (h && h.ts) || aggs[0].addeddate || latestTs;
+    }
   }
 
-  // Every chain block newer than that aggregate, oldest-first (ops are ordered).
+  // Every chain block newer than the baseline, oldest-first (ops are ordered).
+  // The seen-id guard skips blocks already folded into the snapshot even if the
+  // addeddate cutoff is fuzzy, so nothing gets double-counted or missed.
   const chain = await findBlocks(CHAIN_SUBJECT);
   const fresh = chain
+    .filter(b => !seen.has(b.identifier))
     .filter(b => !cutoff || (b.addeddate || '') > cutoff)
     .sort((a, b) => (a.addeddate || '').localeCompare(b.addeddate || ''));
   for (const b of fresh) {
