@@ -1313,13 +1313,14 @@ async function foldBlock(identifier, state) {
    blob in an IDB record.
 
    Bump CACHE_VERSION whenever the on-disk shape of a cached entry
-   changes; mismatched versions are treated as cache misses. v5 evicts states
-   resolved by the old oldest-first fold so they're rebuilt by the newest-first,
-   first-write-wins hydration (identical final state, but a clean reset is
-   cheap insurance). The cases entry shape is { data:{cases,updated_at},
-   seenIds:[…] }. Immutable per-block JSONL is cached separately and forever
-   (see blockStore), keyed by identifier — not versioned here. */
-const CACHE_VERSION = 5;
+   changes; mismatched versions are treated as cache misses. v6 evicts thin
+   states resolved when the aggregate was used *instead of* the GitHub snapshot
+   (so most scraped fields and the historical bulk were missing); they're rebuilt
+   with the snapshot always folded as the base floor. The cases entry shape is
+   { data:{cases,updated_at}, seenIds:[…] }. Immutable per-block JSONL is cached
+   separately and forever (see blockStore), keyed by identifier — not versioned
+   here. */
+const CACHE_VERSION = 6;
 const CACHE_FILES = {
   cases:     'cases.v1.json',
   princeton: 'princeton.v1.json',
@@ -1782,27 +1783,37 @@ async function coldHydrate(onProgress) {
     onProgress && onProgress(state, updatedAt);
   }
 
-  // 3 — base fill (merged last, first-write-wins so the chain always wins).
-  // Prefer an aggregate snapshot once the chain has one (newer than the frozen
-  // GitHub file by definition); else the GitHub snapshot; else the genesis
-  // block on archive.org.
-  let base;
+  // 3 — base fill, applied as ordered overlays (first-write-wins, so the chain
+  // from steps 1–2 always wins and each overlay only fills what's still
+  // untouched). The aggregate is the resolved state of the CHAIN ALONE: it
+  // carries newer enrichment (council_district, …) and status, but NOT the base
+  // scraped record — Plaintiff/Attorney/address/judgments live only in the
+  // genesis. So the frozen GitHub snapshot must ALWAYS backfill underneath it;
+  // using the aggregate *instead of* the snapshot drops those columns (and the
+  // Top Attorneys panel) and most of the historical case set. Order: aggregate
+  // (newer, wins) first, then the snapshot floor (genesis on archive.org only if
+  // GitHub is unreachable).
+  const overlays = [];
   try {
     const aggs = await findBlocks(AGGREGATE_SUBJECT).catch(() => []);
     if (aggs.length) {
       const { ops } = parseBlockLines(await blockText(aggs[0].identifier));
-      base = {};
-      for (const t of ops) if (t.op === 'INS' && t.docket) base[t.docket] = { ...t.data };
+      const agg = {};
+      for (const t of ops) if (t.op === 'INS' && t.docket) agg[t.docket] = { ...t.data };
       seen.add(aggs[0].identifier);
       if (!updatedAt) updatedAt = aggs[0].addeddate || null;
-    } else {
-      base = await loadSnapshotCases();
+      overlays.push(agg);
     }
   } catch (e) {
-    console.warn('[eo] snapshot fetch failed, falling back to genesis:', e.message);
-    base = await loadGenesisCases();
+    console.warn('[eo] aggregate fetch failed, using snapshot only:', e.message);
   }
-  fillUntouched(state, touched, base);
+  try {
+    overlays.push(await loadSnapshotCases());
+  } catch (e) {
+    console.warn('[eo] snapshot fetch failed, falling back to genesis:', e.message);
+    overlays.push(await loadGenesisCases());
+  }
+  for (const base of overlays) fillUntouched(state, touched, base);
   onProgress && onProgress(state, updatedAt);
 
   if (!Object.keys(state).length) throw new Error('no cases found (chain + snapshot both empty)');
