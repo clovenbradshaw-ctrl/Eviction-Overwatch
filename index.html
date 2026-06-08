@@ -1294,6 +1294,21 @@ function fillUntouched(state, touched, base) {
   }
 }
 
+// Does a { docket: record } base actually carry the scraped court record, or
+// only enrichment? An aggregate projection has district/status fields but no
+// Plaintiff/Attorney/file_date — those live in the genesis and the GitHub
+// snapshot. Sampling a few records is enough to tell a full base from a thin
+// one, which is how coldHydrate decides whether it still needs the snapshot
+// floor.
+function hasScrapedRecord(base) {
+  let n = 0;
+  for (const rec of Object.values(base || {})) {
+    if (rec && (rec.Plaintiff_1 || rec.Attorney || rec.file_date)) return true;
+    if (++n >= 50) break;
+  }
+  return false;
+}
+
 // Resolve an item id and fold every op FORWARD into `state` (refresh path).
 async function foldBlock(identifier, state) {
   const { header, ops } = parseBlockLines(await blockText(identifier));
@@ -1783,38 +1798,61 @@ async function coldHydrate(onProgress) {
     onProgress && onProgress(state, updatedAt);
   }
 
-  // 3 — base fill (merged last, first-write-wins so the chain always wins).
-  // Prefer an aggregate snapshot once the chain has one (newer than the frozen
-  // GitHub file by definition); else the GitHub snapshot; else the genesis
-  // block on archive.org.
-  let base;
+  // 3 — base fill, layered first-write-wins (the chain from steps 1–2 already
+  // won; each base only fills fields still untouched). Preferred base is the v2
+  // consolidated genesis — one hardcoded fetch on archive.org, no search-index
+  // lag — else a live aggregate block. But archive.org can be unreachable (CORS,
+  // search lag, item rename) and an aggregate carries enrichment only, not the
+  // scraped record; either way the rows render with blank Plaintiff/Attorney/
+  // address and only a fraction of the cases. So unless the archive.org base
+  // actually brought scraped records, ALWAYS fold the frozen GitHub snapshot
+  // underneath as the floor: it's the one source we can always reach and it
+  // carries the full scraped baseline (~70k records). That guarantees the app
+  // hydrates correctly even when the v2 genesis can't be loaded.
+  const overlays = [];
+
+  // a) preferred: the v2 consolidated genesis block.
   try {
-    // v2: load the hardcoded consolidated genesis directly — one fetch, no
-    // search-index lag. Falls back to a live aggregate search, then the
-    // GitHub snapshot, then the v1 genesis block.
-    const { ops } = parseBlockLines(await blockText(V2_GENESIS_ID));
-    base = {};
-    for (const t of ops) if (t.op === 'INS' && t.docket) base[t.docket] = { ...t.data };
-    seen.add(V2_GENESIS_ID);
-  } catch (e1) {
-    console.warn('[eo] v2 genesis fetch failed, trying aggregate search:', e1.message);
+    const { header, ops } = parseBlockLines(await blockText(V2_GENESIS_ID));
+    const g = {};
+    for (const t of ops) if (t.op === 'INS' && t.docket) g[t.docket] = { ...t.data };
+    if (Object.keys(g).length) {
+      overlays.push(g);
+      seen.add(V2_GENESIS_ID);
+      if (!updatedAt && header) updatedAt = header.ts || header.date || null;
+    }
+  } catch (e) {
+    console.warn('[eo] v2 genesis fetch failed:', e.message);
+  }
+
+  // b) else the newest aggregate block (resolved chain state).
+  if (!overlays.length) {
     try {
       const aggs = await findBlocks(AGGREGATE_SUBJECT).catch(() => []);
       if (aggs.length) {
         const { ops } = parseBlockLines(await blockText(aggs[0].identifier));
-        base = {};
-        for (const t of ops) if (t.op === 'INS' && t.docket) base[t.docket] = { ...t.data };
-        seen.add(aggs[0].identifier);
-        if (!updatedAt) updatedAt = aggs[0].addeddate || null;
-      } else {
-        base = await loadSnapshotCases();
+        const a = {};
+        for (const t of ops) if (t.op === 'INS' && t.docket) a[t.docket] = { ...t.data };
+        if (Object.keys(a).length) {
+          overlays.push(a);
+          seen.add(aggs[0].identifier);
+          if (!updatedAt) updatedAt = aggs[0].addeddate || null;
+        }
       }
-    } catch (e2) {
-      console.warn('[eo] snapshot fetch failed, falling back to genesis:', e2.message);
-      base = await loadGenesisCases();
+    } catch (e) {
+      console.warn('[eo] aggregate search failed:', e.message);
     }
   }
-  fillUntouched(state, touched, base);
+
+  // c) floor: the GitHub snapshot, unless the archive.org base above already
+  //    carries full scraped records (a complete genesis does; a thin aggregate,
+  //    partial block, or failed fetch does not).
+  if (!overlays.some(hasScrapedRecord)) {
+    try { overlays.push(await loadSnapshotCases()); }
+    catch (e) { console.warn('[eo] GitHub snapshot fetch failed:', e.message); }
+  }
+
+  for (const base of overlays) fillUntouched(state, touched, base);
   onProgress && onProgress(state, updatedAt);
 
   if (!Object.keys(state).length) throw new Error('no cases found (chain + snapshot both empty)');
