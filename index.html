@@ -1093,8 +1093,8 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 const IA_SEARCH   = 'https://archive.org/advancedsearch.php';
 const IA_METADATA = 'https://archive.org/metadata';
 const IA_DOWNLOAD = 'https://archive.org/download';
-const CHAIN_SUBJECT     = 'nashville-evictions-chain';
-const AGGREGATE_SUBJECT = 'nashville-evictions-aggregate';
+const CHAIN_SUBJECT     = 'nashville-evictions-chain-v2';
+const AGGREGATE_SUBJECT = 'nashville-evictions-aggregate-v2';
 // Shown in the provenance panel as the canonical source link.
 const CASES_URL = 'https://archive.org/search?query=' + encodeURIComponent(`subject:"${CHAIN_SUBJECT}"`);
 
@@ -1113,7 +1113,8 @@ async function fetchJson(url) {
    cache it forever. If GitHub ever disappears the genesis block on archive.org
    holds the identical case set, so we fall back to it. */
 const SNAPSHOT_URL = 'https://raw.githubusercontent.com/clovenbradshaw-ctrl/plain-text/main/cases.json';
-const GENESIS_ID   = 'a61f8987-b709-46d7-b814-9ad5446ad549';
+const GENESIS_ID   = 'a61f8987-b709-46d7-b814-9ad5446ad549';  // v1 genesis, fallback only
+const V2_GENESIS_ID = 'nashville-evictions-v2-genesis';        // consolidated v2 baseline
 
 // base64 → gunzip → string, via the platform DecompressionStream (no pako).
 async function gunzipBase64(b64) {
@@ -1136,7 +1137,7 @@ async function loadSnapshotCases() {
 // Fallback when GitHub is unreachable: rebuild the same baseline from the
 // genesis block on archive.org (one big block of INS ops).
 async function loadGenesisCases() {
-  const { ops } = parseBlockLines(await blockText(GENESIS_ID));
+  const { ops } = parseBlockLines(await blockText(V2_GENESIS_ID));
   const cases = {};
   for (const t of ops) if (t.op === 'INS' && t.docket) cases[t.docket] = { ...t.data };
   return cases;
@@ -1313,13 +1314,12 @@ async function foldBlock(identifier, state) {
    blob in an IDB record.
 
    Bump CACHE_VERSION whenever the on-disk shape of a cached entry
-   changes; mismatched versions are treated as cache misses. v6 evicts thin
-   states resolved when the aggregate was used *instead of* the GitHub snapshot
-   (so most scraped fields and the historical bulk were missing); they're rebuilt
-   with the snapshot always folded as the base floor. The cases entry shape is
-   { data:{cases,updated_at}, seenIds:[…] }. Immutable per-block JSONL is cached
-   separately and forever (see blockStore), keyed by identifier — not versioned
-   here. */
+   changes; mismatched versions are treated as cache misses. v5 evicts states
+   resolved by the old oldest-first fold so they're rebuilt by the newest-first,
+   first-write-wins hydration (identical final state, but a clean reset is
+   cheap insurance). The cases entry shape is { data:{cases,updated_at},
+   seenIds:[…] }. Immutable per-block JSONL is cached separately and forever
+   (see blockStore), keyed by identifier — not versioned here. */
 const CACHE_VERSION = 6;
 const CACHE_FILES = {
   cases:     'cases.v1.json',
@@ -1783,37 +1783,38 @@ async function coldHydrate(onProgress) {
     onProgress && onProgress(state, updatedAt);
   }
 
-  // 3 — base fill, applied as ordered overlays (first-write-wins, so the chain
-  // from steps 1–2 always wins and each overlay only fills what's still
-  // untouched). The aggregate is the resolved state of the CHAIN ALONE: it
-  // carries newer enrichment (council_district, …) and status, but NOT the base
-  // scraped record — Plaintiff/Attorney/address/judgments live only in the
-  // genesis. So the frozen GitHub snapshot must ALWAYS backfill underneath it;
-  // using the aggregate *instead of* the snapshot drops those columns (and the
-  // Top Attorneys panel) and most of the historical case set. Order: aggregate
-  // (newer, wins) first, then the snapshot floor (genesis on archive.org only if
-  // GitHub is unreachable).
-  const overlays = [];
+  // 3 — base fill (merged last, first-write-wins so the chain always wins).
+  // Prefer an aggregate snapshot once the chain has one (newer than the frozen
+  // GitHub file by definition); else the GitHub snapshot; else the genesis
+  // block on archive.org.
+  let base;
   try {
-    const aggs = await findBlocks(AGGREGATE_SUBJECT).catch(() => []);
-    if (aggs.length) {
-      const { ops } = parseBlockLines(await blockText(aggs[0].identifier));
-      const agg = {};
-      for (const t of ops) if (t.op === 'INS' && t.docket) agg[t.docket] = { ...t.data };
-      seen.add(aggs[0].identifier);
-      if (!updatedAt) updatedAt = aggs[0].addeddate || null;
-      overlays.push(agg);
+    // v2: load the hardcoded consolidated genesis directly — one fetch, no
+    // search-index lag. Falls back to a live aggregate search, then the
+    // GitHub snapshot, then the v1 genesis block.
+    const { ops } = parseBlockLines(await blockText(V2_GENESIS_ID));
+    base = {};
+    for (const t of ops) if (t.op === 'INS' && t.docket) base[t.docket] = { ...t.data };
+    seen.add(V2_GENESIS_ID);
+  } catch (e1) {
+    console.warn('[eo] v2 genesis fetch failed, trying aggregate search:', e1.message);
+    try {
+      const aggs = await findBlocks(AGGREGATE_SUBJECT).catch(() => []);
+      if (aggs.length) {
+        const { ops } = parseBlockLines(await blockText(aggs[0].identifier));
+        base = {};
+        for (const t of ops) if (t.op === 'INS' && t.docket) base[t.docket] = { ...t.data };
+        seen.add(aggs[0].identifier);
+        if (!updatedAt) updatedAt = aggs[0].addeddate || null;
+      } else {
+        base = await loadSnapshotCases();
+      }
+    } catch (e2) {
+      console.warn('[eo] snapshot fetch failed, falling back to genesis:', e2.message);
+      base = await loadGenesisCases();
     }
-  } catch (e) {
-    console.warn('[eo] aggregate fetch failed, using snapshot only:', e.message);
   }
-  try {
-    overlays.push(await loadSnapshotCases());
-  } catch (e) {
-    console.warn('[eo] snapshot fetch failed, falling back to genesis:', e.message);
-    overlays.push(await loadGenesisCases());
-  }
-  for (const base of overlays) fillUntouched(state, touched, base);
+  fillUntouched(state, touched, base);
   onProgress && onProgress(state, updatedAt);
 
   if (!Object.keys(state).length) throw new Error('no cases found (chain + snapshot both empty)');
