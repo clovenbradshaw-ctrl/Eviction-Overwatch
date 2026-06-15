@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Nashville Eviction Tracker</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%231a1810'/%3E%3Ctext x='50%25' y='54%25' font-family='Georgia,serif' font-size='44' font-weight='700' text-anchor='middle' dominant-baseline='middle' fill='%23c9a961'%3E%E2%9A%96%3C/text%3E%3C/svg%3E">
-<link rel="preconnect" href="https://archive.org" crossorigin>
 <link rel="preconnect" href="https://n8n.intelechia.com" crossorigin>
 <link rel="preconnect" href="https://tigerweb.geo.census.gov" crossorigin>
 <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
@@ -895,39 +894,6 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 .prov-source .prov-meta.failed { color: var(--red); }
 .prov-source .prov-notes { color: var(--muted); font-size: 10px; line-height: 1.4; }
 
-/* Explorer view — the archive.org block chain */
-#explorer-view { padding: 20px 24px 40px; }
-.exp-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
-.exp-head .exp-title { font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
-.exp-head .exp-summary { font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
-.exp-refresh { margin-left: auto; background: var(--surface); color: var(--text); border: 1px solid var(--border);
-  border-radius: 4px; padding: 4px 10px; font-size: 11px; cursor: pointer; font-family: inherit; }
-.exp-refresh:hover { border-color: var(--gold-dim); color: var(--gold); }
-.exp-chain { display: flex; flex-direction: column; }
-.exp-block { position: relative; border: 1px solid var(--border); border-radius: 4px; background: var(--surface);
-  padding: 9px 12px; margin-bottom: 9px; }
-.exp-block::before { content: ''; position: absolute; left: 22px; top: -9px; height: 9px; width: 1px; background: var(--border); }
-.exp-block:first-child::before { display: none; }
-.exp-top { display: flex; align-items: center; gap: 10px; cursor: pointer; }
-.exp-top .exp-caret { color: var(--dim); font-size: 9px; width: 8px; }
-.exp-top .exp-date { font-size: 11px; color: var(--text); font-variant-numeric: tabular-nums; }
-.exp-top .exp-id { font-family: var(--mono); font-size: 10px; color: var(--dim); margin-left: auto; word-break: break-all; }
-.exp-badge { font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; padding: 1px 6px; border-radius: 3px;
-  border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
-.exp-badge.genesis { color: var(--gold); border-color: var(--gold-dim); }
-.exp-badge.aggregate { color: var(--green); border-color: var(--green); }
-.exp-badge.folded { color: var(--green); border-color: var(--green); }
-.exp-detail { margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--border); font-size: 10px;
-  color: var(--muted); line-height: 1.6; display: none; }
-.exp-block.open .exp-detail { display: block; }
-.exp-detail .exp-row { font-family: var(--mono); color: var(--text); }
-.exp-detail .exp-ops { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
-.exp-detail .exp-op { background: var(--bg); border: 1px solid var(--border); border-radius: 3px; padding: 1px 6px;
-  font-family: var(--mono); font-size: 10px; color: var(--text); }
-.exp-detail a { color: var(--text); }
-.exp-detail a:hover { color: var(--gold); }
-.exp-empty, .exp-loading { font-size: 12px; color: var(--muted); padding: 20px 0; }
-.exp-error { font-size: 12px; color: var(--red); padding: 20px 0; }
 </style>
 </head>
 <body>
@@ -983,7 +949,6 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
         <button data-val="coverage">Coverage</button>
         <button data-val="map">Map</button>
         <button data-val="sources">Sources</button>
-        <button data-val="explorer">Explorer</button>
       </div>
     </div>
     <div class="group" id="timeline-district-group" style="display:none">
@@ -1073,247 +1038,42 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
     <div class="prov-title">Data Sources · provenance</div>
     <div id="provenance-list"></div>
   </div>
-
-  <div id="explorer-view" style="display:none"></div>
 </div>
 
 <div id="error" style="display:none"></div>
 
 <script>
-/* ───────────────────────── archive.org EO chain ─────────────────────────
-   Case state lives on archive.org as an append-only "chain" of blocks, each a
-   JSONL file inside its own item. Discovery is two metadata searches (no
-   central index): aggregates (periodic resolved-state snapshots) and chain
-   blocks (per-cycle deltas). Within a block, line 0 is a header
-   ({_block:true, block_index, ts, prev_hash, …}); lines 1+ are EO
-   transformations {op, docket, data|changes|to_status}. The genesis block
-   carries the full baseline as INS rows — including the ENC: defendant fields
-   the client decrypts after unlock. (District demographics are served from
-   this repo — see MSS_DEMOGRAPHICS_URL.) */
-const IA_SEARCH   = 'https://archive.org/advancedsearch.php';
-const IA_METADATA = 'https://archive.org/metadata';
-const IA_DOWNLOAD = 'https://archive.org/download';
-const CHAIN_SUBJECT     = 'nashville-evictions-chain-v2';
-const AGGREGATE_SUBJECT = 'nashville-evictions-aggregate-v2';
-// Shown in the provenance panel as the canonical source link.
-const CASES_URL = 'https://archive.org/search?query=' + encodeURIComponent(`subject:"${CHAIN_SUBJECT}"`);
+/* ───────────────────────── Case feed (n8n snapshot) ─────────────────────────
+   Ingestion is one endpoint now. A single GET returns the entire current case
+   set as newline-delimited JSON — one {docket, op, data} object per line, op
+   always "INS". No auth, CORS open, ~31 MB / ~70k cases, not gzipped. We key
+   off `docket`, take `data`, and replace the whole local set on every fetch
+   (it's a full snapshot, not a diff). The ENC: defendant fields stay verbatim
+   and are decrypted client-side after unlock. (District demographics are still
+   served from this repo — see MSS_DEMOGRAPHICS_URL.) */
+const FEED_URL = 'https://n8n.intelechia.com/webhook/bd94bf54-2728-44f9-918b-ade3bad4608b';
+// Refetch cadence. The body is ~31 MB and the response is cacheable for 60s, so
+// 60s is the floor; court records move slowly, so we poll well above it.
+const FEED_REFETCH_MS = 10 * 60 * 1000;
 
-async function fetchJson(url) {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`HTTP ${r.status}: ${url}`);
-  return r.json();
-}
-
-/* ─────────────── GitHub snapshot + genesis (historical bulk base) ───────────
-   The bulk of the historical record is one frozen file in the plain-text repo:
-   the very cases.json the chain's genesis block was built from. We take the
-   GitHub copy (one CDN request, ~14.5 MB) instead of downloading the ~68 MB
-   genesis from archive.org. It's the *base* — merged last, filling only the
-   fields the newer chain blocks didn't already lock. The file is immutable;
-   cache it forever. If GitHub ever disappears the genesis block on archive.org
-   holds the identical case set, so we fall back to it. */
-const SNAPSHOT_URL = 'https://raw.githubusercontent.com/clovenbradshaw-ctrl/plain-text/main/cases.json';
-const GENESIS_ID   = 'a61f8987-b709-46d7-b814-9ad5446ad549';  // v1 genesis, fallback only
-const V2_GENESIS_ID = 'nashville-evictions-v2-genesis';        // consolidated v2 baseline
-
-// base64 → gunzip → string, via the platform DecompressionStream (no pako).
-async function gunzipBase64(b64) {
-  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
-  return new Response(stream).text();
-}
-
-// The frozen GitHub snapshot → { docket: record }. Handles the legacy
-// {format:'gzip+base64', data} envelope and a plain {cases,…} / bare map.
-async function loadSnapshotCases() {
-  const env = await fetchJson(SNAPSHOT_URL);
-  if (env && env.format === 'gzip+base64' && env.data) {
-    const parsed = JSON.parse(await gunzipBase64(env.data));
-    return parsed.cases || parsed;
-  }
-  return (env && env.cases) || env;
-}
-
-// Fallback when GitHub is unreachable: rebuild the same baseline from the
-// genesis block on archive.org (one big block of INS ops).
-async function loadGenesisCases() {
-  const { ops } = parseBlockLines(await blockText(V2_GENESIS_ID));
+// Fetch the feed and resolve it to { docket: dataRecord }. Each line is one
+// case shaped as a chain INS op; we ignore `op`, key off `docket`, and keep
+// `data` verbatim (ENC: values included — decrypted later, on unlock).
+async function fetchSnapshot() {
+  const r = await fetch(FEED_URL);
+  if (!r.ok) throw new Error(`HTTP ${r.status}: feed`);
+  const text = await r.text();
   const cases = {};
-  for (const t of ops) if (t.op === 'INS' && t.docket) cases[t.docket] = { ...t.data };
-  return cases;
-}
-
-// All archive.org items tagged with `subject`, newest-first (addeddate desc).
-async function findBlocks(subject) {
-  const url = new URL(IA_SEARCH);
-  url.searchParams.set('q', `subject:"${subject}"`);
-  ['identifier', 'date', 'subject', 'title', 'addeddate'].forEach(f => url.searchParams.append('fl[]', f));
-  url.searchParams.append('sort[]', 'addeddate desc');
-  url.searchParams.set('rows', '500');
-  url.searchParams.set('output', 'json');
-  const j = await fetchJson(url.toString());
-  return (j.response && j.response.docs) || [];
-}
-
-// Chain blocks, newest-first, minus the genesis block — its data already lives
-// in the snapshot/base, so folding it from archive.org would be redundant.
-async function findChainBlocks() {
-  const docs = await findBlocks(CHAIN_SUBJECT);
-  return docs.filter(b => {
-    const tags = Array.isArray(b.subject) ? b.subject : [b.subject];
-    return !tags.includes('block-type:genesis');
-  });
-}
-
-/* ─────────────── archive.org block fetch (immutable, OPFS-cached) ───────────
-   Each block is its own item with one JSONL file — plain for small blocks,
-   .jsonl.gz for large ones. Blocks never change once published, so we cache
-   the raw text in OPFS keyed by identifier and hit the network for a given
-   block at most once, ever (across sessions). */
-const blockStore = (() => {
-  const supported = typeof navigator !== 'undefined'
-    && navigator.storage && typeof navigator.storage.getDirectory === 'function';
-  let rootP = null;
-  const root = () => (rootP ||= navigator.storage.getDirectory());
-  async function get(id) {
-    if (!supported) return null;
-    try {
-      const h = await (await root()).getFileHandle(`block-${id}`);
-      return await (await h.getFile()).text();
-    } catch { return null; }
-  }
-  async function put(id, text) {
-    if (!supported) return;
-    try {
-      const h = await (await root()).getFileHandle(`block-${id}`, { create: true });
-      const w = await h.createWritable();
-      await w.write(text);
-      await w.close();
-    } catch (e) { console.warn('[opfs] block put', id, e); }
-  }
-  return { get, put };
-})();
-
-// Fetch a block's raw JSONL text (gunzipping .gz transparently), memoised in
-// OPFS by identifier. Genesis/aggregates ship gzipped; daily blocks may not.
-async function blockText(identifier) {
-  const cached = await blockStore.get(identifier);
-  if (cached != null) return cached;
-  const meta = await fetchJson(`${IA_METADATA}/${identifier}`);
-  const file = (meta.files || []).find(f => f.name && (f.name.endsWith('.jsonl') || f.name.endsWith('.jsonl.gz')));
-  if (!file) throw new Error(`no block file in item ${identifier}`);
-  const r = await fetch(`${IA_DOWNLOAD}/${identifier}/${file.name}`);
-  if (!r.ok) throw new Error(`download ${identifier}: HTTP ${r.status}`);
-  let body = r.body;
-  if (file.name.endsWith('.gz')) body = body.pipeThrough(new DecompressionStream('gzip'));
-  const text = await new Response(body).text();
-  await blockStore.put(identifier, text);
-  return text;
-}
-
-// Split a block into its header (line 0, {_block:true,…}) and ops (lines 1+,
-// in chronological order).
-function parseBlockLines(text) {
-  let header = null; const ops = [];
   for (const line of text.split('\n')) {
-    const s = line.trim();
-    if (!s) continue;
+    if (!line) continue;                  // skip blank / trailing lines
     let obj;
-    try { obj = JSON.parse(s); } catch (_) { continue; }
-    if (obj._block) { header = obj; continue; }
-    ops.push(obj);
+    try { obj = JSON.parse(line); } catch (_) { continue; }
+    const docket = obj.docket || (obj.data && obj.data.docket);
+    if (!docket || !obj.data) continue;
+    cases[docket] = obj.data;
   }
-  return { header, ops };
-}
-
-/* Fold one EO transformation FORWARD (last-write-wins) into a { docket: case }
-   dict. Used on the live-refresh path, where a new block is newer than every-
-   thing held so newer simply overwrites.
-     INS — insert/replace the full record    DEF — apply each change's `.new`
-     SEG — status change (normalised to lowercase `status`)    CON — enriched
-     NUL/EVA/REC/SIG — observations only, no state mutation */
-function applyOp(state, t) {
-  if (!t || !t.docket) return;
-  const d = t.docket;
-  switch (t.op) {
-    case 'INS':
-      state[d] = { ...t.data };
-      break;
-    case 'DEF': {
-      const c = state[d] || (state[d] = {});
-      for (const [k, v] of Object.entries(t.changes || {})) {
-        c[k] = (v && typeof v === 'object' && 'new' in v) ? v.new : v;
-      }
-      break;
-    }
-    case 'SEG':
-      (state[d] || (state[d] = {})).status = t.to_status;
-      break;
-    case 'CON':
-      (state[d] || (state[d] = {})).enriched = true;
-      break;
-    default:
-      break;
-  }
-}
-
-/* First-write-wins variant for initial hydration. We walk the chain
-   newest→oldest (and each block's ops newest→oldest), so once a (docket, field)
-   pair is written it must never be overwritten by older data. Same field
-   mapping as applyOp; `touched` tracks the locked pairs. */
-function applyOpNewestFirst(state, touched, t) {
-  if (!t || !t.docket) return;
-  const d = t.docket;
-  const set = (k, v) => {
-    let s = touched.get(d);
-    if (!s) touched.set(d, s = new Set());
-    if (s.has(k)) return;
-    s.add(k);
-    (state[d] || (state[d] = {}))[k] = v;
-  };
-  switch (t.op) {
-    case 'INS': for (const [k, v] of Object.entries(t.data || {})) set(k, v); break;
-    case 'DEF': for (const [k, v] of Object.entries(t.changes || {})) set(k, (v && typeof v === 'object' && 'new' in v) ? v.new : v); break;
-    case 'SEG': set('status', t.to_status); break;
-    case 'CON': set('enriched', true); break;
-    default: break;
-  }
-}
-
-// Fill any (docket, field) the chain didn't already lock, from a base map of
-// resolved records (GitHub snapshot, genesis, or an aggregate's INS state).
-function fillUntouched(state, touched, base) {
-  for (const [docket, rec] of Object.entries(base || {})) {
-    for (const [k, v] of Object.entries(rec)) {
-      let s = touched.get(docket);
-      if (!s) touched.set(docket, s = new Set());
-      if (s.has(k)) continue;
-      s.add(k);
-      (state[docket] || (state[docket] = {}))[k] = v;
-    }
-  }
-}
-
-// Does a { docket: record } base actually carry the scraped court record, or
-// only enrichment? An aggregate projection has district/status fields but no
-// Plaintiff/Attorney/file_date — those live in the genesis and the GitHub
-// snapshot. Sampling a few records is enough to tell a full base from a thin
-// one, which is how coldHydrate decides whether it still needs the snapshot
-// floor.
-function hasScrapedRecord(base) {
-  let n = 0;
-  for (const rec of Object.values(base || {})) {
-    if (rec && (rec.Plaintiff_1 || rec.Attorney || rec.file_date)) return true;
-    if (++n >= 50) break;
-  }
-  return false;
-}
-
-// Resolve an item id and fold every op FORWARD into `state` (refresh path).
-async function foldBlock(identifier, state) {
-  const { header, ops } = parseBlockLines(await blockText(identifier));
-  for (const t of ops) applyOp(state, t);
-  return header;
+  if (!Object.keys(cases).length) throw new Error('feed returned no cases');
+  return cases;
 }
 
 /* ───────────────────────── OPFS binary cache ─────────────────────────
@@ -1329,13 +1089,10 @@ async function foldBlock(identifier, state) {
    blob in an IDB record.
 
    Bump CACHE_VERSION whenever the on-disk shape of a cached entry
-   changes; mismatched versions are treated as cache misses. v5 evicts states
-   resolved by the old oldest-first fold so they're rebuilt by the newest-first,
-   first-write-wins hydration (identical final state, but a clean reset is
-   cheap insurance). The cases entry shape is { data:{cases,updated_at},
-   seenIds:[…] }. Immutable per-block JSONL is cached separately and forever
-   (see blockStore), keyed by identifier — not versioned here. */
-const CACHE_VERSION = 6;
+   changes; mismatched versions are treated as cache misses. v7 drops the old
+   chain-fold state (the per-block seenIds): the feed is a single full snapshot
+   now, so the cases entry is just { data:{cases,updated_at} }. */
+const CACHE_VERSION = 7;
 const CACHE_FILES = {
   cases:     'cases.v1.json',
   princeton: 'princeton.v1.json',
@@ -1443,8 +1200,8 @@ const MSS_DEMOGRAPHICS_URL = 'data/nashville_council_district_demographics.json'
 const sources = {
   cases: {
     name: 'Nashville eviction cases',
-    url: CASES_URL,
-    notes: 'Court records compiled from circuitclerk.nashville.gov, published to archive.org as an append-only chain of JSONL blocks (EO notation). The app loads the newest chain blocks first, then fills the historical bulk from a frozen GitHub snapshot (the genesis data) for instant hydration. Polled every ~12 minutes for new blocks; browse the chain itself in the Explorer view.',
+    url: FEED_URL,
+    notes: 'Court records compiled from circuitclerk.nashville.gov, served as a single newline-delimited JSON snapshot (~70k cases, one INS op per line). Each fetch returns the full current state; the app replaces its local set and refetches periodically. Defendant names arrive encrypted (ENC:) and are decrypted in the browser after unlock.',
     status: 'pending', fetchedAt: null, rows: null, error: null,
   },
   princeton: {
@@ -1511,150 +1268,12 @@ function renderProvenance() {
   }).join('');
 }
 
-/* ───────────────────────── Explorer view ─────────────────────────
-   Browse the archive.org block chain directly: every block (genesis,
-   aggregates, daily deltas), newest-first, with which ones are folded into the
-   current state. Expanding a block fetches its JSONL (OPFS-cached via the same
-   blockText() the loader uses) and tallies its EO operations. Read-only — this
-   is the chain's own discovery API, the source of truth behind the table. */
-let explorerState = { status: 'idle', blocks: null, error: null, expanded: new Set() };
-let explorerDetailCache = {};
-
-const expEsc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
-  '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
-}[c]));
-
-function explorerBlockKind(b) {
-  const tags = Array.isArray(b.subject) ? b.subject : [b.subject];
-  if (b.identifier === GENESIS_ID || tags.includes('block-type:genesis')) return 'genesis';
-  if (tags.includes(AGGREGATE_SUBJECT) || tags.some(t => /aggregate/i.test(t || ''))) return 'aggregate';
-  return 'daily';
-}
-
-// Full chain (genesis included) + aggregates, de-duped, newest-first.
-async function loadExplorerBlocks() {
-  const [chain, aggs] = await Promise.all([
-    findBlocks(CHAIN_SUBJECT).catch(() => []),
-    findBlocks(AGGREGATE_SUBJECT).catch(() => []),
-  ]);
-  const byId = new Map();
-  for (const b of [...aggs, ...chain]) if (b && b.identifier && !byId.has(b.identifier)) byId.set(b.identifier, b);
-  return [...byId.values()].sort((a, b) => (b.addeddate || '').localeCompare(a.addeddate || ''));
-}
-
-function renderExplorerView() {
-  const host = document.getElementById('explorer-view');
-  if (!host) return;
-
-  // Kick discovery once; re-render when it lands.
-  if (explorerState.status === 'idle') {
-    explorerState.status = 'loading';
-    loadExplorerBlocks().then(blocks => {
-      explorerState.blocks = blocks; explorerState.status = 'ready';
-      if (viewMode === 'explorer') renderExplorerView();
-    }).catch(e => {
-      explorerState.error = e.message; explorerState.status = 'error';
-      if (viewMode === 'explorer') renderExplorerView();
-    });
-  }
-
-  const head = `<div class="exp-head">
-    <span class="exp-title">archive.org block chain</span>
-    <span class="exp-summary" id="exp-summary"></span>
-    <button class="exp-refresh" type="button" onclick="refreshExplorer()">↻ Refresh</button>
-  </div>`;
-
-  if (explorerState.status === 'loading' && !explorerState.blocks) {
-    host.innerHTML = head + `<div class="exp-loading">↻ Discovering blocks on archive.org…</div>`;
-    return;
-  }
-  if (explorerState.status === 'error') {
-    host.innerHTML = head + `<div class="exp-error">✗ ${expEsc(explorerState.error)}</div>`;
-    return;
-  }
-  const blocks = explorerState.blocks || [];
-  if (!blocks.length) {
-    host.innerHTML = head + `<div class="exp-empty">No blocks found yet. archive.org search indexing can lag 30–60 min behind upload.</div>`;
-    return;
-  }
-
-  const rows = blocks.map(b => {
-    const kind = explorerBlockKind(b);
-    const folded = !!(seenBlockIds && seenBlockIds.has(b.identifier));
-    const date = String(b.date || b.addeddate || '').slice(0, 10) || '—';
-    const open = explorerState.expanded.has(b.identifier);
-    const detail = open ? (explorerDetailCache[b.identifier] || '<span class="exp-row">↻ loading…</span>') : '';
-    return `<div class="exp-block${open ? ' open' : ''}">
-      <div class="exp-top" onclick="toggleExplorerBlock('${expEsc(b.identifier)}')">
-        <span class="exp-caret">${open ? '▾' : '▸'}</span>
-        <span class="exp-badge ${kind}">${kind}</span>
-        <span class="exp-date">${expEsc(date)}</span>
-        ${folded ? '<span class="exp-badge folded">folded</span>' : ''}
-        <span class="exp-id">${expEsc(b.identifier)}</span>
-      </div>
-      <div class="exp-detail">${detail}</div>
-    </div>`;
-  }).join('');
-
-  host.innerHTML = head + `<div class="exp-chain">${rows}</div>`;
-  const sum = document.getElementById('exp-summary');
-  if (sum) {
-    const folded = blocks.filter(b => seenBlockIds && seenBlockIds.has(b.identifier)).length;
-    const newest = String((blocks[0] && (blocks[0].date || blocks[0].addeddate)) || '').slice(0, 10) || '—';
-    sum.textContent = `${blocks.length.toLocaleString()} block${blocks.length === 1 ? '' : 's'} · ${folded} folded into current state · newest ${newest}`;
-  }
-}
-
-function refreshExplorer() {
-  explorerState = { status: 'idle', blocks: null, error: null, expanded: explorerState.expanded };
-  explorerDetailCache = {};
-  renderExplorerView();
-}
-
-async function toggleExplorerBlock(id) {
-  if (explorerState.expanded.has(id)) {
-    explorerState.expanded.delete(id);
-    renderExplorerView();
-    return;
-  }
-  explorerState.expanded.add(id);
-  renderExplorerView();                       // paint the open shell + spinner
-  if (explorerDetailCache[id]) return;
-  try {
-    const { header, ops } = parseBlockLines(await blockText(id));
-    explorerDetailCache[id] = explorerBlockDetailHtml(id, header, ops);
-  } catch (e) {
-    explorerDetailCache[id] = `<span class="exp-error">✗ ${expEsc(e.message)}</span>`;
-  }
-  if (viewMode === 'explorer' && explorerState.expanded.has(id)) renderExplorerView();
-}
-
-function explorerBlockDetailHtml(id, header, ops) {
-  const counts = {};
-  for (const t of ops) { const op = (t && t.op) || '?'; counts[op] = (counts[op] || 0) + 1; }
-  const opChips = Object.entries(counts).sort((a, b) => b[1] - a[1])
-    .map(([op, n]) => `<span class="exp-op">${expEsc(op)} ${n.toLocaleString()}</span>`).join('');
-  let meta = '';
-  if (header) {
-    if (header.block_index != null)   meta += `<div class="exp-row">block_index: ${expEsc(header.block_index)}</div>`;
-    if (header.block_type)            meta += `<div class="exp-row">block_type: ${expEsc(header.block_type)}</div>`;
-    if (header.ts || header.date)     meta += `<div class="exp-row">ts: ${expEsc(header.ts || header.date)}</div>`;
-    if (header.prev_archive_id)       meta += `<div class="exp-row">prev: ${expEsc(header.prev_archive_id)}</div>`;
-    if (header.prev_hash)             meta += `<div class="exp-row">prev_hash: ${expEsc(String(header.prev_hash).slice(0, 27))}…</div>`;
-  }
-  const url = `https://archive.org/details/${encodeURIComponent(id)}`;
-  return `${meta}
-    <div class="exp-row">${ops.length.toLocaleString()} op${ops.length === 1 ? '' : 's'}</div>
-    <div class="exp-ops">${opChips}</div>
-    <div style="margin-top:6px"><a href="${expEsc(url)}" target="_blank" rel="noopener">View on archive.org ↗</a></div>`;
-}
-
 /* ───────────────────────── Existing case-table state ───────────────────────── */
 
 // Source-attribution tooltips shared across views. Keep these in sync with the
 // `sources` map above — these strings are what users see when hovering any
 // column header, stat, or label.
-const SRC_SCRAPED   = 'Source: scraped court records (circuitclerk.nashville.gov), published to the archive.org evictions chain.';
+const SRC_SCRAPED   = 'Source: scraped court records (circuitclerk.nashville.gov).';
 const SRC_GEOCODED  = 'Source: geocoded from the case address during scrape (cases.json).';
 const SRC_DERIVED   = 'Source: derived locally from scraped cases.json fields.';
 const SRC_PRINCETON = 'Source: Princeton Eviction Lab monthly filings CSV (2020–2021, evictionlab.org).';
@@ -1718,15 +1337,11 @@ let tableSortedRows = [];
 let tableVisibleCount = 0;
 let tableSentinelObserver = null;
 
-// Update-polling state. We poll the archive.org chain search every interval and
-// fold any blocks we haven't seen yet onto the live state. Search indexing lags
-// ~30–60 min behind upload, so this catches new cycles within the hour; the
-// search call is cheap (only genuinely-new blocks get downloaded).
-const POLL_INTERVAL_MS = 12 * 60 * 1000;   // search indexing lags ~30–60 min; no point polling faster
+// Refetch state. The feed is a full snapshot (not a diff), so each refresh
+// replaces the whole local set wholesale rather than merging deltas.
 let casesState = {};                 // authoritative { docket: caseRecord }
-let seenBlockIds = new Set();        // archive.org item ids already folded in
-let casesUpdatedAt = null;           // newest block ts/addeddate folded in
-let updatePollHandle = null;
+let casesUpdatedAt = null;           // ISO time of the last successful fetch
+let feedRefetchHandle = null;
 
 // Princeton CSV — fetched live from evictionlab.org each session, never persisted.
 let princetonRows = null;     // raw rows: [{ GEOID, month, filings_2020, ... }]
@@ -1759,109 +1374,17 @@ function shorten(val, prefix) {
 }
 
 /* ───────────────────────── Load data ─────────────────────────
-   Two sources, two jobs. The archive.org chain is the living source of truth
-   for everything after the snapshot; the GitHub snapshot is a frozen copy of
-   the historical bulk (the genesis data) for instant hydration.
-
-   Cold path: load the NEWEST chain blocks first (newest→oldest, first-write-
-   wins) so the freshest cases paint before the bulk merge finishes, then fill
-   the historical remainder from the GitHub snapshot. Stash the resolved state
-   in OPFS for next time.
-   Warm path: render the prior resolved state straight out of OPFS, then poll
-   the chain for blocks we haven't folded yet and forward-apply them. */
-
-/* Cold load. Returns the resolved state plus the chain blocks it folded:
-   → { cases:{docket:rec}, updated_at, seenIds:[…] }
-   onProgress(state, updatedAt) fires after every block and after the base fill
-   so the caller can repaint progressively. */
-async function coldHydrate(onProgress) {
-  const state = {};
-  const touched = new Map();          // docket → Set(locked field names)
-  const seen = new Set();
-  let updatedAt = null;
-
-  // 1 + 2 — newest chain blocks first, each block's ops applied newest→oldest,
-  // first-write-wins. Render after each so today's filings hit the screen while
-  // the snapshot is still downloading.
-  let blocks = [];
-  try { blocks = await findChainBlocks(); }
-  catch (e) { console.warn('[eo] chain search failed:', e.message); }
-  for (const b of blocks) {
-    let parsed;
-    try { parsed = parseBlockLines(await blockText(b.identifier)); }
-    catch (e) { console.warn('[eo] block', b.identifier, 'skipped:', e.message); continue; }
-    parsed.ops.reverse();                          // newest op first within the block
-    for (const t of parsed.ops) applyOpNewestFirst(state, touched, t);
-    seen.add(b.identifier);
-    // Blocks arrive newest-first, so the first dated one is the newest overall.
-    if (!updatedAt) updatedAt = (parsed.header && (parsed.header.ts || parsed.header.date)) || b.addeddate || null;
-    onProgress && onProgress(state, updatedAt);
-  }
-
-  // 3 — base fill, layered first-write-wins (the chain from steps 1–2 already
-  // won; each base only fills fields still untouched). Preferred base is the v2
-  // consolidated genesis — one hardcoded fetch on archive.org, no search-index
-  // lag — else a live aggregate block. But archive.org can be unreachable (CORS,
-  // search lag, item rename) and an aggregate carries enrichment only, not the
-  // scraped record; either way the rows render with blank Plaintiff/Attorney/
-  // address and only a fraction of the cases. So unless the archive.org base
-  // actually brought scraped records, ALWAYS fold the frozen GitHub snapshot
-  // underneath as the floor: it's the one source we can always reach and it
-  // carries the full scraped baseline (~70k records). That guarantees the app
-  // hydrates correctly even when the v2 genesis can't be loaded.
-  const overlays = [];
-
-  // a) preferred: the v2 consolidated genesis block.
-  try {
-    const { header, ops } = parseBlockLines(await blockText(V2_GENESIS_ID));
-    const g = {};
-    for (const t of ops) if (t.op === 'INS' && t.docket) g[t.docket] = { ...t.data };
-    if (Object.keys(g).length) {
-      overlays.push(g);
-      seen.add(V2_GENESIS_ID);
-      if (!updatedAt && header) updatedAt = header.ts || header.date || null;
-    }
-  } catch (e) {
-    console.warn('[eo] v2 genesis fetch failed:', e.message);
-  }
-
-  // b) else the newest aggregate block (resolved chain state).
-  if (!overlays.length) {
-    try {
-      const aggs = await findBlocks(AGGREGATE_SUBJECT).catch(() => []);
-      if (aggs.length) {
-        const { ops } = parseBlockLines(await blockText(aggs[0].identifier));
-        const a = {};
-        for (const t of ops) if (t.op === 'INS' && t.docket) a[t.docket] = { ...t.data };
-        if (Object.keys(a).length) {
-          overlays.push(a);
-          seen.add(aggs[0].identifier);
-          if (!updatedAt) updatedAt = aggs[0].addeddate || null;
-        }
-      }
-    } catch (e) {
-      console.warn('[eo] aggregate search failed:', e.message);
-    }
-  }
-
-  // c) floor: the GitHub snapshot, unless the archive.org base above already
-  //    carries full scraped records (a complete genesis does; a thin aggregate,
-  //    partial block, or failed fetch does not).
-  if (!overlays.some(hasScrapedRecord)) {
-    try { overlays.push(await loadSnapshotCases()); }
-    catch (e) { console.warn('[eo] GitHub snapshot fetch failed:', e.message); }
-  }
-
-  for (const base of overlays) fillUntouched(state, touched, base);
-  onProgress && onProgress(state, updatedAt);
-
-  if (!Object.keys(state).length) throw new Error('no cases found (chain + snapshot both empty)');
-  return { cases: state, updated_at: updatedAt, seenIds: [...seen] };
-}
+   One source now: a single GET of the feed returns the entire current case set
+   as newline-delimited JSON (see fetchSnapshot above).
+   Warm path: paint the last snapshot straight out of OPFS for an instant
+   render, then refetch in the background and swap in the fresh set.
+   Cold path: fetch the snapshot, render, persist to OPFS. Either way we then
+   refetch on a slow interval — the feed is a full snapshot, replaced
+   wholesale, never merged. */
 
 function applyInitialCases(data) {
   const cases = data.cases || {};
-  casesState = cases;                 // the dict incremental chain folds mutate
+  casesState = cases;                 // authoritative map; refetchSnapshot swaps it
   // Keep ENC: values verbatim so they can be decrypted after login. The
   // display layer hides them until the user unlocks.
   allRows = Object.entries(cases).map(([docket, c]) => ({ docket, ...c }));
@@ -1884,57 +1407,33 @@ function applyInitialCases(data) {
 
 async function loadData() {
   try {
+    // Warm path — paint the last snapshot straight from OPFS for an instant
+    // render, then refetch in the background to swap in the fresh set.
     const cached = await opfsCache.get(CACHE_FILES.cases);
     if (cached && cached.data) {
-      // Warm path — render the resolved state from disk immediately, then poll
-      // for newer chain blocks in the background. UI is interactive at once.
       casesUpdatedAt = (cached.data && cached.data.updated_at) || null;
-      seenBlockIds = new Set(cached.seenIds || []);
       applyInitialCases(cached.data);
       markSource('cases', { status: 'ok', rows: allRows.length, fromCache: true });
 
       kickBackgroundSync();
       kickMssDemographicsSync();
-      startUpdatePolling();
-      whenIdle(() => syncChain());
+      startFeedRefetch();
+      whenIdle(() => refetchSnapshot());
       return;
     }
 
-    // Cold path — newest chain blocks first (progressive paint), GitHub
-    // snapshot last. The first onProgress reveals the app; later ones repaint.
-    let shown = false;
-    const onProgress = (state, ts) => {
-      casesState = state;
-      casesUpdatedAt = ts;
-      if (!shown) {
-        applyInitialCases({ cases: state, updated_at: ts });
-        shown = true;
-      } else {
-        allRows = Object.entries(state).map(([docket, c]) => ({ docket, ...c }));
-        enrichCaseRows(allRows);
-        rebuildLocalAggregates();
-        document.getElementById('updated').textContent = 'Updated ' + (ts || '—').split('T')[0];
-        updateSubtitle();
-        buildStats();
-        render();
-      }
-    };
-
-    const data = await coldHydrate(onProgress);
-    casesUpdatedAt = data.updated_at || casesUpdatedAt;
-    seenBlockIds = new Set(data.seenIds || []);
-    if (!shown) applyInitialCases(data);   // safety: reveal even if no progress fired
+    // Cold path — fetch the full snapshot once, render it, persist for next time.
+    const cases = await fetchSnapshot();
+    casesUpdatedAt = new Date().toISOString();
+    applyInitialCases({ cases, updated_at: casesUpdatedAt });
     markSource('cases', { status: 'ok', rows: allRows.length });
 
     kickBackgroundSync();
     kickMssDemographicsSync();
-    startUpdatePolling();
+    startFeedRefetch();
 
-    // Persist the resolved state + which chain blocks are folded in, so the next
-    // refresh hits the warm path and the poll only fetches genuinely-new blocks.
     whenIdle(() => opfsCache.put(CACHE_FILES.cases, {
-      data: { cases: data.cases, updated_at: data.updated_at },
-      seenIds: data.seenIds,
+      data: { cases, updated_at: casesUpdatedAt },
     }));
   } catch (e) {
     markSource('cases', { status: 'failed', error: e.message });
@@ -1944,59 +1443,45 @@ async function loadData() {
   }
 }
 
-// Incremental refresh: fetch any chain blocks we haven't folded yet and apply
-// them to the live state in order. Cheap — the search returns metadata only,
-// and only brand-new blocks get downloaded. Shared by the warm-path kick and
-// the periodic poll.
-async function syncChain() {
-  let chain;
+// Full-snapshot refresh: refetch the feed and replace the local set wholesale.
+// The feed is a snapshot, not a diff, so we swap the whole map rather than
+// merging deltas. Runs on the warm-path kick and on the periodic interval.
+async function refetchSnapshot() {
+  let cases;
   try {
-    chain = await findChainBlocks();
+    cases = await fetchSnapshot();
   } catch (e) {
-    console.warn('[eo] chain poll failed:', e.message);
+    console.warn('[feed] refetch failed:', e.message);
     return;
   }
-  // New blocks are newer than everything held, so forward-apply oldest→newest.
-  const fresh = chain
-    .filter(b => !seenBlockIds.has(b.identifier))
-    .sort((a, b) => (a.addeddate || '').localeCompare(b.addeddate || ''));
-  if (!fresh.length) return;
+  const prevCount = Object.keys(casesState).length;
+  casesState = cases;
+  casesUpdatedAt = new Date().toISOString();
+  const newCount = Object.keys(cases).length;
 
-  bgStatus('Updates detected — applying…', true);
-  try {
-    let folded = 0;
-    for (const b of fresh) {
-      const h = await foldBlock(b.identifier, casesState);
-      seenBlockIds.add(b.identifier);
-      casesUpdatedAt = (h && h.ts) || b.addeddate || casesUpdatedAt;
-      folded++;
-    }
-    // Rebuild the render rows from the updated state and repaint.
-    allRows = Object.entries(casesState).map(([docket, c]) => ({ docket, ...c }));
-    enrichCaseRows(allRows);
-    rebuildLocalAggregates();
-    if (princetonRows) rebuildPrincetonAggregates();
+  // Rebuild the render rows from the fresh set and repaint.
+  allRows = Object.entries(cases).map(([docket, c]) => ({ docket, ...c }));
+  enrichCaseRows(allRows);
+  rebuildLocalAggregates();
+  if (princetonRows) rebuildPrincetonAggregates();
 
-    document.getElementById('updated').textContent = 'Updated ' + (casesUpdatedAt || '—').split('T')[0];
-    updateSubtitle();
-    buildStats();
-    render();
-    if (selectedRecordDocket && casesState[selectedRecordDocket]) {
-      renderRecordPanel(selectedRecordDocket);
-    } else if (selectedRecordDocket) {
-      closeRecordPanel();
-    }
+  document.getElementById('updated').textContent = 'Updated ' + (casesUpdatedAt || '—').split('T')[0];
+  updateSubtitle();
+  buildStats();
+  render();
+  if (selectedRecordDocket && casesState[selectedRecordDocket]) {
+    renderRecordPanel(selectedRecordDocket);
+  } else if (selectedRecordDocket) {
+    closeRecordPanel();
+  }
+  markSource('cases', { status: 'ok', rows: allRows.length });
 
-    opfsCache.put(CACHE_FILES.cases, {
-      data: { cases: casesState, updated_at: casesUpdatedAt },
-      seenIds: [...seenBlockIds],
-    });
-    bgStatus(`Folded ${folded} new block${folded === 1 ? '' : 's'}`, false);
+  opfsCache.put(CACHE_FILES.cases, { data: { cases, updated_at: casesUpdatedAt } });
+
+  const delta = newCount - prevCount;
+  if (delta) {
+    bgStatus(`Refreshed — ${newCount.toLocaleString()} cases (${delta > 0 ? '+' : ''}${delta.toLocaleString()})`, false);
     setTimeout(() => bgStatus(''), 6000);
-  } catch (e) {
-    console.warn('[eo] chain apply failed:', e);
-    bgStatus(`Update failed: ${e.message}`, false);
-    setTimeout(() => bgStatus(''), 5000);
   }
 }
 
@@ -3505,18 +2990,18 @@ ${note}
    The scraper's PBKDF2 params changed across versions, so KEY_CONFIGS
    lists every (salt, iterations) we know and decryptValue tries each:
    Fernet's HMAC identifies which one a given token was sealed with. The
-   archive.org chain (scraper DER_4) uses salt 'caselink-v1' / 100k;
-   older data used 'caselink-eviction-scraper' / 480k.
+   feed seals defendant fields with salt 'caselink-eviction-scraper' / 480k;
+   'caselink-v1' / 100k is kept as a fallback for any legacy tokens.
 
    The plaintext is held only in memory and never persisted. Closing
    the tab or pressing the Logout button purges the password and the
    cache. */
 
 const PBKDF2_HASH       = 'SHA-256';
-// Tried in order; the first whose HMAC verifies wins (newest config first).
+// Tried in order; the first whose HMAC verifies wins (current feed config first).
 const KEY_CONFIGS = [
-  { salt: 'caselink-v1',               iterations: 100000 },
   { salt: 'caselink-eviction-scraper', iterations: 480000 },
+  { salt: 'caselink-v1',               iterations: 100000 },
 ];
 const FERNET_VERSION    = 0x80;
 const FERNET_IV_BYTES   = 16;
@@ -3695,14 +3180,13 @@ function logout() {
   if (selectedRecordDocket) renderRecordPanel(selectedRecordDocket);
 }
 
-/* ───────────────────────── Update polling ─────────────────────────
-   After the initial load we poll the chain every POLL_INTERVAL_MS and fold any
-   blocks we haven't seen yet (see syncChain). The genesis/aggregate is fetched
-   once; from then on only the small per-cycle deltas come down the wire. */
+/* ───────────────────────── Feed refetch ─────────────────────────
+   The feed is a full snapshot, so "updates" are just a periodic refetch that
+   replaces the local set wholesale (see refetchSnapshot). */
 
-function startUpdatePolling() {
-  if (updatePollHandle) clearInterval(updatePollHandle);
-  updatePollHandle = setInterval(syncChain, POLL_INTERVAL_MS);
+function startFeedRefetch() {
+  if (feedRefetchHandle) clearInterval(feedRefetchHandle);
+  feedRefetchHandle = setInterval(refetchSnapshot, FEED_REFETCH_MS);
 }
 
 /* ───────────────────────── Districts view + profile ───────────────────────── */
@@ -4125,7 +3609,6 @@ function setVisibility() {
   const isCoverage  = viewMode === 'coverage';
   const isMap       = viewMode === 'map';
   const isSources   = viewMode === 'sources';
-  const isExplorer  = viewMode === 'explorer';
   document.getElementById('local-toolbar').style.display      = isCases     ? '' : 'none';
   document.getElementById('table-header').style.display       = isCases     ? '' : 'none';
   document.getElementById('local-table-wrap').style.display   = isCases     ? '' : 'none';
@@ -4134,7 +3617,6 @@ function setVisibility() {
   document.getElementById('grid-view').style.display          = isCoverage  ? '' : 'none';
   document.getElementById('map-view').style.display           = isMap       ? '' : 'none';
   document.getElementById('sources-view').style.display       = isSources   ? '' : 'none';
-  document.getElementById('explorer-view').style.display      = isExplorer  ? '' : 'none';
   document.getElementById('timeline-district-group').style.display = isTimeline ? '' : 'none';
   document.getElementById('coverage-mode-group').style.display = isCoverage ? '' : 'none';
   document.getElementById('coverage-dir-group').style.display  = isCoverage ? '' : 'none';
@@ -4156,8 +3638,6 @@ function render() {
     renderMapView();
   } else if (viewMode === 'sources') {
     renderProvenance();
-  } else if (viewMode === 'explorer') {
-    renderExplorerView();
   }
   updateCoverageHeadline();
 }
