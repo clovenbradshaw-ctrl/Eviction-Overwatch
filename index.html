@@ -1294,21 +1294,6 @@ function fillUntouched(state, touched, base) {
   }
 }
 
-// Does a { docket: record } base actually carry the scraped court record, or
-// only enrichment? An aggregate projection has district/status fields but no
-// Plaintiff/Attorney/file_date — those live in the genesis and the GitHub
-// snapshot. Sampling a few records is enough to tell a full base from a thin
-// one, which is how coldHydrate decides whether it still needs the snapshot
-// floor.
-function hasScrapedRecord(base) {
-  let n = 0;
-  for (const rec of Object.values(base || {})) {
-    if (rec && (rec.Plaintiff_1 || rec.Attorney || rec.file_date)) return true;
-    if (++n >= 50) break;
-  }
-  return false;
-}
-
 // Resolve an item id and fold every op FORWARD into `state` (refresh path).
 async function foldBlock(identifier, state) {
   const { header, ops } = parseBlockLines(await blockText(identifier));
@@ -1763,12 +1748,31 @@ function shorten(val, prefix) {
    for everything after the snapshot; the GitHub snapshot is a frozen copy of
    the historical bulk (the genesis data) for instant hydration.
 
-   Cold path: load the NEWEST chain blocks first (newest→oldest, first-write-
-   wins) so the freshest cases paint before the bulk merge finishes, then fill
-   the historical remainder from the GitHub snapshot. Stash the resolved state
-   in OPFS for next time.
+   Cold path: start the GitHub snapshot downloading immediately, and in parallel
+   load the NEWEST chain blocks first (newest→oldest, first-write-wins) so the
+   freshest cases paint before the bulk merge finishes; then fill the historical
+   remainder from the snapshot. If the archive.org chain search stalls past the
+   reveal budget, paint the snapshot floor right away and let the background poll
+   fold the recent chain in once the search answers. Stash the resolved state in
+   OPFS for next time.
    Warm path: render the prior resolved state straight out of OPFS, then poll
    the chain for blocks we haven't folded yet and forward-apply them. */
+
+/* Resolve `promise`, but give up after `ms` and yield `fallback` instead. Used
+   to bound the archive.org chain search so a stalled search can't hold the first
+   paint hostage — past the budget we reveal from the snapshot floor and let the
+   background poll fold the chain in once archive.org finally answers. `promise`
+   must not reject (pre-catch it), so a late rejection can't go unhandled. */
+function withTimeout(promise, ms, fallback) {
+  let timer;
+  const timeout = new Promise(resolve => { timer = setTimeout(() => resolve(fallback), ms); });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+// How long we wait on the archive.org chain search before revealing from the
+// GitHub snapshot instead. The chain is the *recent* data and we want it first,
+// but archive.org search is slow and flaky; past this budget the snapshot floor
+// reveals the bulk and syncChain() folds the chain in when the search returns.
+const CHAIN_REVEAL_BUDGET_MS = 3500;
 
 /* Cold load. Returns the resolved state plus the chain blocks it folded:
    → { cases:{docket:rec}, updated_at, seenIds:[…] }
@@ -1780,53 +1784,58 @@ async function coldHydrate(onProgress) {
   const seen = new Set();
   let updatedAt = null;
 
+  // 0 — kick the reliable bulk (GitHub snapshot) downloading IMMEDIATELY, in
+  // parallel with the flaky archive.org chain work below. It's the historical
+  // floor either way, so starting it now overlaps its 14.5 MB download with the
+  // chain search — the floor is ready to fold the moment the recent blocks land
+  // (and is what we reveal from if the chain search stalls). Pre-caught so its
+  // rejection can never surface unhandled if the reveal budget fires first.
+  const snapshotP = loadSnapshotCases().catch(e => {
+    console.warn('[eo] GitHub snapshot fetch failed:', e.message);
+    return null;
+  });
+
   // 1 + 2 — newest chain blocks first, each block's ops applied newest→oldest,
   // first-write-wins. Render after each so today's filings hit the screen while
-  // the snapshot is still downloading.
-  let blocks = [];
-  try { blocks = await findChainBlocks(); }
-  catch (e) { console.warn('[eo] chain search failed:', e.message); }
-  for (const b of blocks) {
-    let parsed;
-    try { parsed = parseBlockLines(await blockText(b.identifier)); }
-    catch (e) { console.warn('[eo] block', b.identifier, 'skipped:', e.message); continue; }
-    parsed.ops.reverse();                          // newest op first within the block
-    for (const t of parsed.ops) applyOpNewestFirst(state, touched, t);
-    seen.add(b.identifier);
-    // Blocks arrive newest-first, so the first dated one is the newest overall.
-    if (!updatedAt) updatedAt = (parsed.header && (parsed.header.ts || parsed.header.date)) || b.addeddate || null;
-    onProgress && onProgress(state, updatedAt);
-  }
-
-  // 3 — base fill, layered first-write-wins (the chain from steps 1–2 already
-  // won; each base only fills fields still untouched). Preferred base is the v2
-  // consolidated genesis — one hardcoded fetch on archive.org, no search-index
-  // lag — else a live aggregate block. But archive.org can be unreachable (CORS,
-  // search lag, item rename) and an aggregate carries enrichment only, not the
-  // scraped record; either way the rows render with blank Plaintiff/Attorney/
-  // address and only a fraction of the cases. So unless the archive.org base
-  // actually brought scraped records, ALWAYS fold the frozen GitHub snapshot
-  // underneath as the floor: it's the one source we can always reach and it
-  // carries the full scraped baseline (~70k records). That guarantees the app
-  // hydrates correctly even when the v2 genesis can't be loaded.
-  const overlays = [];
-
-  // a) preferred: the v2 consolidated genesis block.
-  try {
-    const { header, ops } = parseBlockLines(await blockText(V2_GENESIS_ID));
-    const g = {};
-    for (const t of ops) if (t.op === 'INS' && t.docket) g[t.docket] = { ...t.data };
-    if (Object.keys(g).length) {
-      overlays.push(g);
-      seen.add(V2_GENESIS_ID);
-      if (!updatedAt && header) updatedAt = header.ts || header.date || null;
+  // the snapshot is still downloading. The search is bounded by a reveal budget:
+  // if archive.org is slow we get `null` here, skip straight to the floor, and
+  // let syncChain() fold the recent blocks in later (forward-apply, chain wins).
+  const chainSearchP = findChainBlocks().catch(e => {
+    console.warn('[eo] chain search failed:', e.message);
+    return null;
+  });
+  const blocks = await withTimeout(chainSearchP, CHAIN_REVEAL_BUDGET_MS, null);
+  if (blocks && blocks.length) {
+    for (const b of blocks) {
+      let parsed;
+      try { parsed = parseBlockLines(await blockText(b.identifier)); }
+      catch (e) { console.warn('[eo] block', b.identifier, 'skipped:', e.message); continue; }
+      parsed.ops.reverse();                          // newest op first within the block
+      for (const t of parsed.ops) applyOpNewestFirst(state, touched, t);
+      seen.add(b.identifier);
+      // Blocks arrive newest-first, so the first dated one is the newest overall.
+      if (!updatedAt) updatedAt = (parsed.header && (parsed.header.ts || parsed.header.date)) || b.addeddate || null;
+      onProgress && onProgress(state, updatedAt);
     }
-  } catch (e) {
-    console.warn('[eo] v2 genesis fetch failed:', e.message);
+  } else if (!blocks) {
+    console.warn('[eo] chain search slow/failed — revealing from snapshot, folding chain in background');
   }
 
-  // b) else the newest aggregate block (resolved chain state).
-  if (!overlays.length) {
+  // 3 — base floor, layered first-write-wins (the chain from steps 1–2 already
+  // won; the base only fills fields still untouched). Prefer the GitHub snapshot:
+  // one fast CDN request carrying the full scraped baseline (~70k records), and
+  // it's already downloading from step 0 so it usually folds with no extra wait.
+  // Only when GitHub is unreachable do we rebuild the baseline from archive.org —
+  // the v2 consolidated genesis, then the newest aggregate — so the app still
+  // hydrates with GitHub down (the aggregate is enrichment-only, a last resort).
+  let base = await snapshotP;
+  if (!base || !Object.keys(base).length) {
+    try {
+      base = await loadGenesisCases();               // v2 consolidated genesis (INS rows)
+      if (base && Object.keys(base).length) seen.add(V2_GENESIS_ID);
+    } catch (e) { console.warn('[eo] v2 genesis fallback failed:', e.message); base = null; }
+  }
+  if (!base || !Object.keys(base).length) {
     try {
       const aggs = await findBlocks(AGGREGATE_SUBJECT).catch(() => []);
       if (aggs.length) {
@@ -1834,25 +1843,14 @@ async function coldHydrate(onProgress) {
         const a = {};
         for (const t of ops) if (t.op === 'INS' && t.docket) a[t.docket] = { ...t.data };
         if (Object.keys(a).length) {
-          overlays.push(a);
+          base = a;
           seen.add(aggs[0].identifier);
           if (!updatedAt) updatedAt = aggs[0].addeddate || null;
         }
       }
-    } catch (e) {
-      console.warn('[eo] aggregate search failed:', e.message);
-    }
+    } catch (e) { console.warn('[eo] aggregate fallback failed:', e.message); }
   }
-
-  // c) floor: the GitHub snapshot, unless the archive.org base above already
-  //    carries full scraped records (a complete genesis does; a thin aggregate,
-  //    partial block, or failed fetch does not).
-  if (!overlays.some(hasScrapedRecord)) {
-    try { overlays.push(await loadSnapshotCases()); }
-    catch (e) { console.warn('[eo] GitHub snapshot fetch failed:', e.message); }
-  }
-
-  for (const base of overlays) fillUntouched(state, touched, base);
+  if (base && Object.keys(base).length) fillUntouched(state, touched, base);
   onProgress && onProgress(state, updatedAt);
 
   if (!Object.keys(state).length) throw new Error('no cases found (chain + snapshot both empty)');
@@ -1900,8 +1898,10 @@ async function loadData() {
       return;
     }
 
-    // Cold path — newest chain blocks first (progressive paint), GitHub
-    // snapshot last. The first onProgress reveals the app; later ones repaint.
+    // Cold path — reveal as soon as we have *any* data (the newest chain blocks
+    // when archive.org answers in time, otherwise the GitHub snapshot floor), so
+    // the most recent cases paint without waiting for the full ~70k-record bulk.
+    // The first onProgress reveals the app; later ones repaint as the rest fills.
     let shown = false;
     const onProgress = (state, ts) => {
       casesState = state;
@@ -1909,6 +1909,7 @@ async function loadData() {
       if (!shown) {
         applyInitialCases({ cases: state, updated_at: ts });
         shown = true;
+        bgStatus('Loading full case history…', true);   // bulk still folding in
       } else {
         allRows = Object.entries(state).map(([docket, c]) => ({ docket, ...c }));
         enrichCaseRows(allRows);
@@ -1925,10 +1926,15 @@ async function loadData() {
     seenBlockIds = new Set(data.seenIds || []);
     if (!shown) applyInitialCases(data);   // safety: reveal even if no progress fired
     markSource('cases', { status: 'ok', rows: allRows.length });
+    bgStatus('', false);                   // full history in — clear the hint
 
     kickBackgroundSync();
     kickMssDemographicsSync();
     startUpdatePolling();
+    // Fold any chain blocks the reveal budget skipped (archive.org search was
+    // slow, so we revealed from the snapshot floor). A no-op when the chain was
+    // already folded above — those ids are in seenBlockIds.
+    whenIdle(() => syncChain());
 
     // Persist the resolved state + which chain blocks are folded in, so the next
     // refresh hits the warm path and the poll only fetches genuinely-new blocks.
@@ -1938,6 +1944,7 @@ async function loadData() {
     }));
   } catch (e) {
     markSource('cases', { status: 'failed', error: e.message });
+    bgStatus('', false);
     document.getElementById("loading").style.display = "none";
     document.getElementById("error").style.display = "block";
     document.getElementById("error").textContent = "Error: " + e.message;
