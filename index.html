@@ -62,6 +62,28 @@ body {
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
+.progress-bar {
+  width: 280px; max-width: 72vw; height: 6px;
+  background: var(--border); border-radius: 999px; overflow: hidden;
+}
+.progress-bar-fill {
+  height: 100%; width: 0;
+  background: var(--gold); border-radius: 999px;
+  transition: width 0.25s ease;
+}
+.progress-bar.indeterminate .progress-bar-fill {
+  width: 35%;
+  animation: indeterminate 1.1s ease-in-out infinite;
+}
+@keyframes indeterminate {
+  0%   { margin-left: -35%; }
+  100% { margin-left: 100%; }
+}
+.loading-detail {
+  font-size: 11px; color: var(--dim);
+  min-height: 14px; letter-spacing: 0.04em;
+}
+
 header {
   display: flex; justify-content: space-between; align-items: flex-end;
   padding: 24px 24px 16px;
@@ -900,7 +922,11 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 
 <div id="loading">
   <div class="spinner"></div>
-  <div>Loading cases.json...</div>
+  <div id="loading-label">Loading case records…</div>
+  <div class="progress-bar" id="loading-bar" hidden>
+    <div class="progress-bar-fill" id="loading-fill"></div>
+  </div>
+  <div class="loading-detail" id="loading-detail"></div>
 </div>
 
 <div id="app" style="display:none">
@@ -1059,10 +1085,33 @@ const FEED_REFETCH_MS = 10 * 60 * 1000;
 // Fetch the feed and resolve it to { docket: dataRecord }. Each line is one
 // case shaped as a chain INS op; we ignore `op`, key off `docket`, and keep
 // `data` verbatim (ENC: values included — decrypted later, on unlock).
-async function fetchSnapshot() {
+async function fetchSnapshot(onProgress) {
   const r = await fetch(FEED_URL);
   if (!r.ok) throw new Error(`HTTP ${r.status}: feed`);
-  const text = await r.text();
+
+  // Stream the body so the first (cold) load can show real download progress.
+  // The feed isn't gzipped, so Content-Length is the true byte size; when it's
+  // absent — or the platform has no readable stream — we fall back to a plain
+  // read and let the caller render an indeterminate bar.
+  let text;
+  const total = +(r.headers.get('content-length') || 0);
+  if (onProgress && r.body && typeof r.body.getReader === 'function') {
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let received = 0;
+    text = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.length;
+      text += decoder.decode(value, { stream: true });   // handles split UTF-8
+      onProgress(received, total);
+    }
+    text += decoder.decode();                             // flush any tail bytes
+  } else {
+    text = await r.text();
+  }
+
   const cases = {};
   for (const line of text.split('\n')) {
     if (!line) continue;                  // skip blank / trailing lines
@@ -1076,17 +1125,21 @@ async function fetchSnapshot() {
   return cases;
 }
 
-/* ───────────────────────── OPFS binary cache ─────────────────────────
+/* ───────────────────────── Snapshot cache (OPFS + IndexedDB) ─────────────────────────
    Pay the network cost once. On warm loads each dataset is hydrated from
-   the Origin Private File System (a per-origin sandboxed filesystem the
-   browser persists across sessions) so we render before the network even
-   gets a chance to answer, then revalidate in the background.
+   browser storage so we render before the network even gets a chance to
+   answer, then revalidate in the background.
 
-   Why OPFS and not IndexedDB: OPFS is a flat file store with no schema
-   migrations, no transactions, and no structured-clone copy on read or
-   write. For these payloads — already-parsed JSON we just want to slurp
-   into memory — it's measurably faster and simpler than wrapping every
-   blob in an IDB record.
+   Two backends behind one interface. OPFS (the per-origin sandboxed
+   filesystem) is the fast primary: a flat file store with no schema
+   migrations, no transactions, and no structured-clone copy — for these
+   already-parsed JSON payloads it's measurably quicker than wrapping each blob
+   in an IDB record. But OPFS writes aren't available everywhere (notably Safari
+   on the main thread), and a silent write failure there used to mean nothing
+   persisted and every visit re-downloaded the whole ~31 MB feed. So when OPFS
+   can't store, we fall back to IndexedDB — supported across every browser we
+   target — to guarantee the snapshot survives across sessions. Reads try OPFS
+   first, then IDB.
 
    Bump CACHE_VERSION whenever the on-disk shape of a cached entry
    changes; mismatched versions are treated as cache misses. v7 drops the old
@@ -1099,47 +1152,102 @@ const CACHE_FILES = {
   tiger:     'tiger.v1.json',
 };
 
-const opfsCache = (() => {
-  const supported = typeof navigator !== 'undefined'
-    && navigator.storage && typeof navigator.storage.getDirectory === 'function';
-  let rootPromise = null;
-  const root = () => (rootPromise ||= navigator.storage.getDirectory());
+const localCache = (() => {
+  // Fast path — OPFS flat files. Stores/returns the raw JSON envelope as text;
+  // the combined layer below owns versioning.
+  const opfs = (() => {
+    const supported = typeof navigator !== 'undefined'
+      && navigator.storage && typeof navigator.storage.getDirectory === 'function';
+    let rootPromise = null;
+    const root = () => (rootPromise ||= navigator.storage.getDirectory());
+    async function getText(name) {
+      if (!supported) return null;
+      try {
+        const dir = await root();
+        const handle = await dir.getFileHandle(name);
+        return await (await handle.getFile()).text();
+      } catch (e) {
+        if (e && e.name !== 'NotFoundError') console.warn('[opfs] get', name, e);
+        return null;
+      }
+    }
+    async function putText(name, text) {
+      if (!supported) return false;
+      try {
+        const dir = await root();
+        const handle = await dir.getFileHandle(name, { create: true });
+        const writable = await handle.createWritable();   // absent on Safari main thread
+        await writable.write(text);
+        await writable.close();
+        return true;
+      } catch (e) {
+        console.warn('[opfs] put', name, e);
+        return false;
+      }
+    }
+    return { getText, putText };
+  })();
+
+  // Fallback — IndexedDB, the universal store. Values are the same JSON envelope
+  // strings, keyed by file name in a single object store.
+  const idb = (() => {
+    const supported = typeof indexedDB !== 'undefined';
+    const DB_NAME = 'eviction-overwatch', STORE = 'snapshots';
+    let dbPromise = null;
+    const open = () => (dbPromise ||= new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    }));
+    async function getText(name) {
+      if (!supported) return null;
+      try {
+        const db = await open();
+        return await new Promise((resolve, reject) => {
+          const req = db.transaction(STORE, 'readonly').objectStore(STORE).get(name);
+          req.onsuccess = () => resolve(req.result == null ? null : req.result);
+          req.onerror = () => reject(req.error);
+        });
+      } catch (e) { console.warn('[idb] get', name, e); return null; }
+    }
+    async function putText(name, text) {
+      if (!supported) return false;
+      try {
+        const db = await open();
+        return await new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE, 'readwrite');
+          tx.objectStore(STORE).put(text, name);
+          tx.oncomplete = () => resolve(true);
+          tx.onerror = () => reject(tx.error);
+          tx.onabort = () => reject(tx.error);
+        });
+      } catch (e) { console.warn('[idb] put', name, e); return false; }
+    }
+    return { getText, putText };
+  })();
 
   async function get(name) {
-    if (!supported) return null;
-    try {
-      const dir = await root();
-      const handle = await dir.getFileHandle(name);
-      const file = await handle.getFile();
-      const buf = await file.arrayBuffer();
-      const obj = JSON.parse(new TextDecoder().decode(new Uint8Array(buf)));
-      if (!obj || obj.v !== CACHE_VERSION) return null;
-      return obj;
-    } catch (e) {
-      if (e && e.name !== 'NotFoundError') console.warn('[opfs] get', name, e);
-      return null;
-    }
+    let text = await opfs.getText(name);     // fast path first…
+    if (text == null) text = await idb.getText(name);  // …then the fallback
+    if (text == null) return null;
+    let obj;
+    try { obj = JSON.parse(text); } catch (_) { return null; }
+    if (!obj || obj.v !== CACHE_VERSION) return null;
+    return obj;
   }
 
   async function put(name, payload) {
-    if (!supported) return false;
-    try {
-      const dir = await root();
-      const handle = await dir.getFileHandle(name, { create: true });
-      const writable = await handle.createWritable();
-      const bytes = new TextEncoder().encode(
-        JSON.stringify({ v: CACHE_VERSION, savedAt: Date.now(), ...payload })
-      );
-      await writable.write(bytes);
-      await writable.close();
-      return true;
-    } catch (e) {
-      console.warn('[opfs] put', name, e);
-      return false;
-    }
+    const text = JSON.stringify({ v: CACHE_VERSION, savedAt: Date.now(), ...payload });
+    // Persist via OPFS when it can; otherwise guarantee storage through IDB.
+    if (!(await opfs.putText(name, text))) await idb.putText(name, text);
+    return true;
   }
 
-  return { supported, get, put };
+  return { get, put };
 })();
 
 /* ───────────────────────── Lazy script loader ─────────────────────────
@@ -1178,6 +1286,49 @@ function whenIdle(fn, timeout = 1500) {
     return requestIdleCallback(fn, { timeout });
   }
   return setTimeout(fn, 0);
+}
+
+// Resolve after the browser has had a chance to paint (two frames). Used to let
+// the cold-load progress bar reach 100% on screen before the synchronous
+// parse/enrich/render work blocks the main thread.
+const nextPaint = () => new Promise(r =>
+  (typeof requestAnimationFrame === 'function'
+    ? requestAnimationFrame(() => requestAnimationFrame(r))
+    : setTimeout(r, 0)));
+
+/* ───────────────────────── First-load progress ─────────────────────────
+   Only the cold path hits the network for the ~31 MB feed; warm loads paint
+   instantly from the cache and never touch these. We show a real, byte-accurate
+   bar when Content-Length is known, and an indeterminate sweep when it isn't. */
+function setLoadingPhase(text) {
+  const el = document.getElementById('loading-label');
+  if (el) el.textContent = text;
+}
+
+function updateLoadProgress(received, total) {
+  const bar = document.getElementById('loading-bar');
+  const fill = document.getElementById('loading-fill');
+  const detail = document.getElementById('loading-detail');
+  if (!bar || !fill) return;
+  bar.hidden = false;
+  const mb = b => (b / 1048576).toFixed(1);
+  if (total > 0) {
+    const pct = Math.min(99, Math.round((received / total) * 100));
+    bar.classList.remove('indeterminate');
+    fill.style.width = pct + '%';
+    if (detail) detail.textContent = `${mb(received)} / ${mb(total)} MB · ${pct}%`;
+  } else {
+    // No Content-Length — sweep an indeterminate bar and just report bytes in.
+    bar.classList.add('indeterminate');
+    if (detail) detail.textContent = `${mb(received)} MB`;
+  }
+}
+
+function finishLoadProgress() {
+  const bar = document.getElementById('loading-bar');
+  const fill = document.getElementById('loading-fill');
+  if (bar) bar.classList.remove('indeterminate');
+  if (fill) fill.style.width = '100%';
 }
 
 /* ───────────────────────── Provenance registry ─────────────────────────
@@ -1409,7 +1560,7 @@ async function loadData() {
   try {
     // Warm path — paint the last snapshot straight from OPFS for an instant
     // render, then refetch in the background to swap in the fresh set.
-    const cached = await opfsCache.get(CACHE_FILES.cases);
+    const cached = await localCache.get(CACHE_FILES.cases);
     if (cached && cached.data) {
       casesUpdatedAt = (cached.data && cached.data.updated_at) || null;
       applyInitialCases(cached.data);
@@ -1423,7 +1574,13 @@ async function loadData() {
     }
 
     // Cold path — fetch the full snapshot once, render it, persist for next time.
-    const cases = await fetchSnapshot();
+    // Drive the progress bar off the download, then flip to a brief processing
+    // phase (and let it paint) before the synchronous render blocks the thread.
+    setLoadingPhase('Downloading case records…');
+    const cases = await fetchSnapshot(updateLoadProgress);
+    finishLoadProgress();
+    setLoadingPhase('Processing…');
+    await nextPaint();
     casesUpdatedAt = new Date().toISOString();
     applyInitialCases({ cases, updated_at: casesUpdatedAt });
     markSource('cases', { status: 'ok', rows: allRows.length });
@@ -1432,7 +1589,7 @@ async function loadData() {
     kickMssDemographicsSync();
     startFeedRefetch();
 
-    whenIdle(() => opfsCache.put(CACHE_FILES.cases, {
+    whenIdle(() => localCache.put(CACHE_FILES.cases, {
       data: { cases, updated_at: casesUpdatedAt },
     }));
   } catch (e) {
@@ -1476,7 +1633,7 @@ async function refetchSnapshot() {
   }
   markSource('cases', { status: 'ok', rows: allRows.length });
 
-  opfsCache.put(CACHE_FILES.cases, { data: { cases, updated_at: casesUpdatedAt } });
+  localCache.put(CACHE_FILES.cases, { data: { cases, updated_at: casesUpdatedAt } });
 
   const delta = newCount - prevCount;
   if (delta) {
@@ -2191,7 +2348,7 @@ function mapLayer() {
 const TIGER_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 async function fetchTractGeometries() {
-  const cached = await opfsCache.get(CACHE_FILES.tiger);
+  const cached = await localCache.get(CACHE_FILES.tiger);
   if (cached && cached.geo && cached.geo.features && cached.geo.features.length) {
     markSource('tiger', { status: 'ok', rows: cached.geo.features.length, fromCache: true });
     // Trigger a quiet refresh if the entry is stale, but return immediately.
@@ -2217,7 +2374,7 @@ async function downloadTractGeometries() {
       const data = await r.json();
       if (data.features && data.features.length) {
         markSource('tiger', { status: 'ok', rows: data.features.length });
-        opfsCache.put(CACHE_FILES.tiger, { geo: data });
+        localCache.put(CACHE_FILES.tiger, { geo: data });
         return data;
       }
       lastErr = new Error('no features');
@@ -3739,7 +3896,7 @@ const PRINCETON_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 async function kickBackgroundSync() {
   let usedCache = false;
   try {
-    const cached = await opfsCache.get(CACHE_FILES.princeton);
+    const cached = await localCache.get(CACHE_FILES.princeton);
     if (cached && Array.isArray(cached.rows)) {
       princetonRows = cached.rows;
       rebuildPrincetonAggregates();
@@ -3756,7 +3913,7 @@ async function kickBackgroundSync() {
     markSource('princeton', { status: 'ok', rows: rows.length });
     console.info(`[eo] princeton csv: ${rows.length} rows · ${agg.princetonMonths.length} months`);
     refreshSnapshotUi();
-    opfsCache.put(CACHE_FILES.princeton, { rows });
+    localCache.put(CACHE_FILES.princeton, { rows });
     bgStatus(`Princeton: ${rows.length} rows loaded (live)`, false);
     setTimeout(() => bgStatus(''), 3000);
   } catch (e) {
