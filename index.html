@@ -3517,8 +3517,15 @@ function liveEsc(s) { return escapeHtmlSafe(String(s == null ? '' : s)); }
 
 // Turn a raw log line into { time, marker, body } — no more "source":
 // "caselink-error.log" noise, no more double-spaced raw text.
+// Fallback for double-escaped unicode (e.g. a literal "✓" surviving
+// JSON.parse because it was escaped twice upstream) — decode any remaining
+// \uXXXX sequences to real characters before display.
+function decodeUnicodeEscapes(s) {
+  return String(s || '').replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+}
+
 function formatLiveLogLine(raw) {
-  let line = String(raw || '').replace(/\s+/g, ' ').trim();
+  let line = decodeUnicodeEscapes(String(raw || '')).replace(/\s+/g, ' ').trim();
   let time = '';
   const m = line.match(LIVE_TIMESTAMP_RE);
   if (m) { time = m[1].slice(11); line = m[2].trim(); }
@@ -3578,13 +3585,23 @@ function liveAppend(html) {
   if (!screen) return;
   const empty = screen.querySelector('.live-empty');
   if (empty) empty.remove();
-  const atBottom = screen.scrollHeight - screen.scrollTop - screen.clientHeight < 40;
-  screen.insertAdjacentHTML('beforeend', html);
-  while (screen.children.length > LIVE_MAX_LINES) screen.removeChild(screen.firstChild);
-  if (atBottom) screen.scrollTop = screen.scrollHeight;
+  const atTop = screen.scrollTop < 40;
+  screen.insertAdjacentHTML('afterbegin', html);
+  while (screen.children.length > LIVE_MAX_LINES) screen.removeChild(screen.lastChild);
+  if (atTop) screen.scrollTop = 0;
   liveEventCount++;
   const meta = document.getElementById('live-meta');
   if (meta) meta.textContent = `${liveEventCount} event${liveEventCount === 1 ? '' : 's'}`;
+}
+
+const LIVE_CONNECT_TIMEOUT_MS = 8000;
+let liveConnectTimeoutTimer = null;
+
+function liveRetry() {
+  clearTimeout(liveConnectTimeoutTimer);
+  if (liveSource) { liveSource.close(); liveSource = null; }
+  clearTimeout(liveReconnectTimer);
+  liveReconnectTimer = setTimeout(connectLiveFeed, LIVE_RECONNECT_MS);
 }
 
 function connectLiveFeed() {
@@ -3592,13 +3609,21 @@ function connectLiveFeed() {
   if (!('EventSource' in window)) { liveSetStatus('unsupported browser', true); return; }
   liveSetStatus('connecting…');
   liveSource = new EventSource(LIVE_URL);
-  liveSource.onopen = () => liveSetStatus('connected — watching scraper');
+  clearTimeout(liveConnectTimeoutTimer);
+  liveConnectTimeoutTimer = setTimeout(() => {
+    if (liveSource && liveSource.readyState !== EventSource.OPEN) {
+      liveSetStatus('connection blocked or timed out — check ad-blocker/shields, retrying…', true);
+      liveRetry();
+    }
+  }, LIVE_CONNECT_TIMEOUT_MS);
+  liveSource.onopen = () => {
+    clearTimeout(liveConnectTimeoutTimer);
+    liveSetStatus('connected — watching scraper');
+  };
   liveSource.onmessage = (e) => liveAppend(liveLineHtml(e.data));
   liveSource.onerror = () => {
     liveSetStatus('disconnected — retrying…', true);
-    if (liveSource) { liveSource.close(); liveSource = null; }
-    clearTimeout(liveReconnectTimer);
-    liveReconnectTimer = setTimeout(connectLiveFeed, LIVE_RECONNECT_MS);
+    liveRetry();
   };
 }
 
@@ -3610,6 +3635,7 @@ function renderLiveView() {
 
 function disconnectLiveFeed() {
   clearTimeout(liveReconnectTimer);
+  clearTimeout(liveConnectTimeoutTimer);
   if (liveSource) { liveSource.close(); liveSource = null; }
   liveStarted = false;
   liveSetStatus('disconnected');
