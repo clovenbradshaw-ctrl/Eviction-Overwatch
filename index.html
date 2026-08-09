@@ -1053,7 +1053,7 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
         <button data-val="coverage">Coverage</button>
         <button data-val="map">Map</button>
         <button data-val="sources">Sources</button>
-        <button data-val="live">Live</button>
+        <button data-val="live">Live Scraper</button>
       </div>
     </div>
     <div class="group" id="timeline-district-group" style="display:none">
@@ -3513,6 +3513,14 @@ function redactDefendantNames(text) {
   );
 }
 
+// Worker login accounts are scraper-internal credentials, not part of the
+// public court record — blank them wherever they show up in log lines.
+const LIVE_REDACT_LITERAL = '[redacted-account]';
+function redactWorkerAccount(text) {
+  if (!text) return text;
+  return text.split(LIVE_REDACT_LITERAL).join('█'.repeat(LIVE_REDACT_LITERAL.length));
+}
+
 function liveEsc(s) { return escapeHtmlSafe(String(s == null ? '' : s)); }
 
 // Turn a raw log line into { time, marker, body } — no more "source":
@@ -3531,7 +3539,7 @@ function formatLiveLogLine(raw) {
   if (m) { time = m[1].slice(11); line = m[2].trim(); }
   if (!line) return null;
 
-  line = redactDefendantNames(line);
+  line = redactWorkerAccount(redactDefendantNames(line));
   line = liveEsc(line).replace(LIVE_DOCKET_RE, '<span class="src">$1</span>');
 
   let marker = '·', markerClass = '';
@@ -3567,7 +3575,7 @@ function liveLineHtml(evt) {
   for (const [k, v] of Object.entries(payload)) {
     safe[k] = typeof v === 'string' && /defendant/i.test(k) ? '[redacted]' : v;
   }
-  return `<div class="live-line"><span class="src">[${liveEsc(payload.type || 'event')}]</span> ${liveEsc(redactDefendantNames(JSON.stringify(safe)))}</div>`;
+  return `<div class="live-line"><span class="src">[${liveEsc(payload.type || 'event')}]</span> ${liveEsc(redactWorkerAccount(redactDefendantNames(JSON.stringify(safe))))}</div>`;
 }
 
 function liveSetStatus(text, isErr) {
