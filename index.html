@@ -3546,7 +3546,8 @@ function formatLiveLogLine(raw) {
   if (/^={5,}$/.test(line.replace(/<[^>]+>/g, ''))) {
     return { time, marker: '', markerClass: '', body: '<span class="src">' + '─'.repeat(40) + '</span>' };
   }
-  if (/^✓|success|logged? in|clicked|found/i.test(line)) { marker = '✓'; markerClass = 'ok'; }
+  if (/^✓\s*/.test(line)) { marker = '✓'; markerClass = 'ok'; line = line.replace(/^✓\s*/, ''); }
+  else if (/success|logged? in|clicked|found/i.test(line)) { marker = '✓'; markerClass = 'ok'; }
   else if (/error|fail|not found|no .* found/i.test(line)) { marker = '✗'; markerClass = 'redacted'; }
   else if (/logging in|extracting|geocoding|looking for/i.test(line)) { marker = '›'; }
 
@@ -3560,7 +3561,12 @@ function liveLineHtml(evt) {
   if (payload.type === 'log') {
     const f = formatLiveLogLine(payload.line);
     if (!f) return '';
-    const timeHtml = f.time ? `<span class="ts">${liveEsc(f.time)}</span> ` : '';
+    // Show the time this line reached the viewer's own machine, not the
+    // scraper server's raw log timestamp — the two clocks/timezones aren't
+    // guaranteed to match, and "when did this happen for me" is what matters
+    // when watching a live feed.
+    const localTime = new Date().toLocaleTimeString([], { hour12: false });
+    const timeHtml = `<span class="ts">${liveEsc(localTime)}</span> `;
     const markerHtml = f.marker ? `<span class="${f.markerClass}">${f.marker}</span> ` : '  ';
     return `<div class="live-line">${timeHtml}${markerHtml}${f.body}</div>`;
   }
