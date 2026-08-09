@@ -3489,7 +3489,7 @@ function sparklineHtml(monthsMap, recentMonths) {
    independent of the case-table unlock state, since this is an unvetted
    raw feed. */
 
-const LIVE_URL = 'https://n8n.intelechia.com/live/subscribe';
+const LIVE_URL = 'https://n8n.intelechia.com/live/stream';
 const LIVE_MAX_LINES = 500;
 const LIVE_RECONNECT_MS = 4000;
 
@@ -3606,6 +3606,13 @@ function renderLiveView() {
   if (liveStarted) return;
   liveStarted = true;
   connectLiveFeed();
+}
+
+function disconnectLiveFeed() {
+  clearTimeout(liveReconnectTimer);
+  if (liveSource) { liveSource.close(); liveSource = null; }
+  liveStarted = false;
+  liveSetStatus('disconnected');
 }
 
 function renderDistrictsView() {
@@ -4003,6 +4010,11 @@ function setVisibility() {
 
 function render() {
   setVisibility();
+  if (viewMode === 'live') {
+    renderLiveView();
+  } else {
+    disconnectLiveFeed();
+  }
   if (viewMode === 'cases') {
     renderLocalTable();
   } else if (viewMode === 'districts') {
@@ -4015,8 +4027,6 @@ function render() {
     renderMapView();
   } else if (viewMode === 'sources') {
     renderProvenance();
-  } else if (viewMode === 'live') {
-    renderLiveView();
   }
   updateCoverageHeadline();
 }
