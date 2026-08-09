@@ -592,6 +592,84 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 #districts-view td.district-label { color: var(--gold); font-weight: 500; }
 #districts-view td.rep { color: var(--text); }
 #districts-view .spark { height: 18px; }
+
+/* ───────────────────────── Live tab — matrix/hacker terminal ───────────────────────── */
+#live-view {
+  padding: 16px 24px;
+  background: #020402;
+  border-radius: 4px;
+  margin: 0 24px 24px;
+}
+.live-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 10px 12px;
+  font-family: var(--mono);
+}
+.live-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #1f3d1f; box-shadow: 0 0 0 rgba(57,255,20,0);
+  transition: background .2s, box-shadow .2s;
+}
+.live-dot.on {
+  background: #39ff14;
+  box-shadow: 0 0 6px 1px rgba(57,255,20,0.8);
+  animation: live-pulse 1.4s ease-in-out infinite;
+}
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+.live-status {
+  font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: #39ff14; text-shadow: 0 0 4px rgba(57,255,20,0.5);
+}
+.live-status.err { color: #ff4136; text-shadow: 0 0 4px rgba(255,65,54,0.5); }
+.live-meta { margin-left: auto; font-size: 11px; color: #2f6b2f; }
+.live-redact-note {
+  font-size: 10px; color: #2f6b2f; margin-left: 12px;
+}
+.live-screen {
+  height: 520px;
+  overflow-y: auto;
+  background: #020402;
+  border: 1px solid #123312;
+  border-radius: 3px;
+  padding: 10px 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: #39ff14;
+  text-shadow: 0 0 2px rgba(57,255,20,0.35);
+}
+.live-screen::-webkit-scrollbar { width: 8px; }
+.live-screen::-webkit-scrollbar-track { background: #020402; }
+.live-screen::-webkit-scrollbar-thumb { background: #123312; border-radius: 4px; }
+.live-line {
+  white-space: pre-wrap; word-break: break-word;
+  opacity: 0; animation: live-fade-in .25s ease-out forwards;
+}
+@keyframes live-fade-in {
+  from { opacity: 0; transform: translateY(-2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.live-line .ts { color: #1f7a1f; }
+.live-line .src { color: #2ea82e; }
+.live-line .ok { color: #7dff5c; }
+.live-line .redacted {
+  background: #0c1f0c;
+  color: #39ff14;
+  border: 1px dashed #1f5c1f;
+  padding: 0 3px;
+  border-radius: 2px;
+}
+.live-cursor {
+  display: inline-block; width: 7px; height: 13px;
+  background: #39ff14; vertical-align: text-bottom;
+  animation: live-blink 1s step-end infinite;
+  box-shadow: 0 0 4px rgba(57,255,20,0.7);
+}
+@keyframes live-blink { 50% { opacity: 0; } }
+.live-empty { color: #1f5c1f; font-style: italic; }
 #districts-view .spark span { background: var(--gold-dim); width: 3px; min-height: 1px; }
 
 /* Timeline view (Princeton monthly filings) */
@@ -975,6 +1053,7 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
         <button data-val="coverage">Coverage</button>
         <button data-val="map">Map</button>
         <button data-val="sources">Sources</button>
+        <button data-val="live">Live</button>
       </div>
     </div>
     <div class="group" id="timeline-district-group" style="display:none">
@@ -1063,6 +1142,18 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   <div id="sources-view" style="display:none">
     <div class="prov-title">Data Sources · provenance</div>
     <div id="provenance-list"></div>
+  </div>
+
+  <div id="live-view" style="display:none">
+    <div class="live-bar">
+      <div class="live-dot" id="live-dot"></div>
+      <span class="live-status" id="live-status">disconnected</span>
+      <span class="live-redact-note">defendant names auto-redacted</span>
+      <span class="live-meta" id="live-meta"></span>
+    </div>
+    <div class="live-screen" id="live-screen">
+      <div class="live-empty">// waiting for scraper feed…<span class="live-cursor"></span></div>
+    </div>
   </div>
 </div>
 
@@ -2031,7 +2122,7 @@ function median(arr) {
 
 function updateCoverageHeadline() {
   const el = document.getElementById('coverage-headline');
-  if (viewMode === 'cases' || viewMode === 'districts' || viewMode === 'timeline' || viewMode === 'sources') { el.textContent = ''; return; }
+  if (viewMode === 'cases' || viewMode === 'districts' || viewMode === 'timeline' || viewMode === 'sources' || viewMode === 'live') { el.textContent = ''; return; }
   if (!princetonRows) {
     el.innerHTML = '<span style="color:var(--dim)">Fetching Princeton CSV…</span>';
     return;
@@ -3390,6 +3481,133 @@ function sparklineHtml(monthsMap, recentMonths) {
   ).join('') + `</span>`;
 }
 
+/* ───────────────────────── Live tab — scraper SSE feed ─────────────────────────
+   Subscribes to the n8n live stream (paired with the /live/publish sink the
+   scraper posts to) and renders it as a terminal feed. Every line is parsed
+   for a leading timestamp + status marker so raw log noise (source filenames,
+   double spaces) doesn't show; defendant names are redacted unconditionally,
+   independent of the case-table unlock state, since this is an unvetted
+   raw feed. */
+
+const LIVE_URL = 'https://n8n.intelechia.com/live/subscribe';
+const LIVE_MAX_LINES = 500;
+const LIVE_RECONNECT_MS = 4000;
+
+let liveSource = null;
+let liveEventCount = 0;
+let liveStarted = false;
+let liveReconnectTimer = null;
+
+const LIVE_TIMESTAMP_RE = /^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s*(.*)$/;
+const LIVE_DOCKET_RE = /\b(\d{2}[A-Z]{2}\d{3,8})\b/g;
+
+// Redact anything that looks like a defendant name mention. Deliberately
+// broad/over-inclusive: any capitalized run of 2+ words appearing after the
+// word "defendant" on the same line gets blanked, since a false positive
+// (over-redacting) is the safe failure mode here — a missed name is not.
+function redactDefendantNames(text) {
+  if (!text || !/defendant/i.test(text)) return text;
+  return text.replace(
+    /\bdefendants?\b((?:[^A-Za-z0-9\n]|is|was|named|address|for)*[:=]?\s*)([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,4})/g,
+    (m, sep, name) => m.slice(0, m.length - name.length) + '█'.repeat(Math.min(Math.max(name.length, 6), 16))
+  );
+}
+
+function liveEsc(s) { return escapeHtmlSafe(String(s == null ? '' : s)); }
+
+// Turn a raw log line into { time, marker, body } — no more "source":
+// "caselink-error.log" noise, no more double-spaced raw text.
+function formatLiveLogLine(raw) {
+  let line = String(raw || '').replace(/\s+/g, ' ').trim();
+  let time = '';
+  const m = line.match(LIVE_TIMESTAMP_RE);
+  if (m) { time = m[1].slice(11); line = m[2].trim(); }
+  if (!line) return null;
+
+  line = redactDefendantNames(line);
+  line = liveEsc(line).replace(LIVE_DOCKET_RE, '<span class="src">$1</span>');
+
+  let marker = '·', markerClass = '';
+  if (/^={5,}$/.test(line.replace(/<[^>]+>/g, ''))) {
+    return { time, marker: '', markerClass: '', body: '<span class="src">' + '─'.repeat(40) + '</span>' };
+  }
+  if (/^✓|success|logged? in|clicked|found/i.test(line)) { marker = '✓'; markerClass = 'ok'; }
+  else if (/error|fail|not found|no .* found/i.test(line)) { marker = '✗'; markerClass = 'redacted'; }
+  else if (/logging in|extracting|geocoding|looking for/i.test(line)) { marker = '›'; }
+
+  return { time, marker, markerClass, body: line };
+}
+
+function liveLineHtml(evt) {
+  let payload;
+  try { payload = JSON.parse(evt); } catch { payload = { type: 'raw', line: evt }; }
+
+  if (payload.type === 'log') {
+    const f = formatLiveLogLine(payload.line);
+    if (!f) return '';
+    const timeHtml = f.time ? `<span class="ts">${liveEsc(f.time)}</span> ` : '';
+    const markerHtml = f.marker ? `<span class="${f.markerClass}">${f.marker}</span> ` : '  ';
+    return `<div class="live-line">${timeHtml}${markerHtml}${f.body}</div>`;
+  }
+
+  if (payload.type === 'test') {
+    const addr = liveEsc(payload.address || '');
+    return `<div class="live-line"><span class="src">[test event]</span> address: ${addr}</div>`;
+  }
+
+  // Unknown payload shape — still redact defendant-looking fields before showing it.
+  const safe = {};
+  for (const [k, v] of Object.entries(payload)) {
+    safe[k] = typeof v === 'string' && /defendant/i.test(k) ? '[redacted]' : v;
+  }
+  return `<div class="live-line"><span class="src">[${liveEsc(payload.type || 'event')}]</span> ${liveEsc(redactDefendantNames(JSON.stringify(safe)))}</div>`;
+}
+
+function liveSetStatus(text, isErr) {
+  const el = document.getElementById('live-status');
+  if (!el) return;
+  el.textContent = text;
+  el.classList.toggle('err', !!isErr);
+  const dot = document.getElementById('live-dot');
+  if (dot) dot.classList.toggle('on', !isErr);
+}
+
+function liveAppend(html) {
+  if (!html) return;
+  const screen = document.getElementById('live-screen');
+  if (!screen) return;
+  const empty = screen.querySelector('.live-empty');
+  if (empty) empty.remove();
+  const atBottom = screen.scrollHeight - screen.scrollTop - screen.clientHeight < 40;
+  screen.insertAdjacentHTML('beforeend', html);
+  while (screen.children.length > LIVE_MAX_LINES) screen.removeChild(screen.firstChild);
+  if (atBottom) screen.scrollTop = screen.scrollHeight;
+  liveEventCount++;
+  const meta = document.getElementById('live-meta');
+  if (meta) meta.textContent = `${liveEventCount} event${liveEventCount === 1 ? '' : 's'}`;
+}
+
+function connectLiveFeed() {
+  if (liveSource) return;
+  if (!('EventSource' in window)) { liveSetStatus('unsupported browser', true); return; }
+  liveSetStatus('connecting…');
+  liveSource = new EventSource(LIVE_URL);
+  liveSource.onopen = () => liveSetStatus('connected — watching scraper');
+  liveSource.onmessage = (e) => liveAppend(liveLineHtml(e.data));
+  liveSource.onerror = () => {
+    liveSetStatus('disconnected — retrying…', true);
+    if (liveSource) { liveSource.close(); liveSource = null; }
+    clearTimeout(liveReconnectTimer);
+    liveReconnectTimer = setTimeout(connectLiveFeed, LIVE_RECONNECT_MS);
+  };
+}
+
+function renderLiveView() {
+  if (liveStarted) return;
+  liveStarted = true;
+  connectLiveFeed();
+}
+
 function renderDistrictsView() {
   const root = document.getElementById('districts-view');
   const byD = aggregateDistricts();
@@ -3766,6 +3984,7 @@ function setVisibility() {
   const isCoverage  = viewMode === 'coverage';
   const isMap       = viewMode === 'map';
   const isSources   = viewMode === 'sources';
+  const isLive      = viewMode === 'live';
   document.getElementById('local-toolbar').style.display      = isCases     ? '' : 'none';
   document.getElementById('table-header').style.display       = isCases     ? '' : 'none';
   document.getElementById('local-table-wrap').style.display   = isCases     ? '' : 'none';
@@ -3774,6 +3993,7 @@ function setVisibility() {
   document.getElementById('grid-view').style.display          = isCoverage  ? '' : 'none';
   document.getElementById('map-view').style.display           = isMap       ? '' : 'none';
   document.getElementById('sources-view').style.display       = isSources   ? '' : 'none';
+  document.getElementById('live-view').style.display          = isLive      ? '' : 'none';
   document.getElementById('timeline-district-group').style.display = isTimeline ? '' : 'none';
   document.getElementById('coverage-mode-group').style.display = isCoverage ? '' : 'none';
   document.getElementById('coverage-dir-group').style.display  = isCoverage ? '' : 'none';
@@ -3795,6 +4015,8 @@ function render() {
     renderMapView();
   } else if (viewMode === 'sources') {
     renderProvenance();
+  } else if (viewMode === 'live') {
+    renderLiveView();
   }
   updateCoverageHeadline();
 }
