@@ -787,6 +787,16 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 .dp-close:hover { color: var(--text); border-color: var(--muted); }
 .dp-body { padding: 20px 24px 24px; }
 
+/* The global td rule (single-line + ellipsis + max-width) is meant for the
+   main cases table; inside the profile it clips addresses mid-string. Let
+   profile table cells wrap to full width instead. */
+.dp-modal .profile-cases td {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  max-width: none;
+}
+
 .profile-grid {
   display: grid; grid-template-columns: repeat(4, 1fr);
   gap: 12px; margin-bottom: 20px;
@@ -2316,9 +2326,15 @@ function renderTimelineView() {
   const peakVal = counts[peakIdx];
   const avg = total / counts.length;
 
+  // District → rep lookup so the headline can name the council member for a
+  // selected district (same aggregation the Districts view uses).
+  const repByDistrict = {};
+  for (const a of Object.values(aggregateDistricts())) repByDistrict[a.key] = a.rep;
+  const selectedRep = timelineDistrict !== 'all' ? repByDistrict[timelineDistrict] : '';
+
   const districtLabel = timelineDistrict === 'all'
     ? 'All districts'
-    : `District ${timelineDistrict}`;
+    : `District ${timelineDistrict}` + (selectedRep ? ` · ${escapeHtmlSafe(selectedRep)}` : '');
 
   const headline = `<div class="tl-headline">
     <span>${escapeHtmlSafe(districtLabel)} · <strong>${months.length}</strong> months</span>
@@ -2699,7 +2715,8 @@ async function renderMapView() {
           const frame = mapHeatFrame();
           const info = agg.tractInfo[geoid];
           const nameLine = info && info.name ? info.name : `Tract ${geoid}`;
-          const districtLine = info && info.district ? `<br>${info.district}` : '';
+          const repLine = info && info.rep ? ` · ${escapeHtml(info.rep)}` : '';
+          const districtLine = info && info.district ? `<br>${escapeHtml(info.district)}${repLine}` : '';
           layer.bindTooltip(
             `<strong>${nameLine}</strong>${districtLine}<br>${frame.tooltipFmt(geoid)}<br><span style="color:#c4a44a">click for detail</span>`,
             { sticky: true }
@@ -3450,7 +3467,7 @@ function aggregateDistricts() {
       out[d] = {
         district: d,
         key: normalizeDistrict(d),
-        rep: r.council_rep || '',
+        rep: '',
         cases: 0, pending: 0, dismissed: 0, other: 0,
         tracts: new Set(),
         plaintiffs: {}, attorneys: {},
@@ -3459,6 +3476,8 @@ function aggregateDistricts() {
       };
     }
     const a = out[d];
+    // Rep can be blank on any individual row; keep scanning until one carries it.
+    if (!a.rep && r.council_rep) a.rep = r.council_rep;
     a.cases++;
     if (r.status === 'PENDING') a.pending++;
     else if (r.status === 'DISMISSED' || r.status === 'NONSUIT') a.dismissed++;
