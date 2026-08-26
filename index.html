@@ -1458,7 +1458,7 @@ async function fetchSnapshot(onProgress) {
 const CACHE_VERSION = 7;
 const CACHE_FILES = {
   cases:     'cases.v1.json',
-  princeton: 'princeton.v1.json',
+  princeton: 'princeton.v2.json',   // v2: Eviction Lab ETS file, replaces the dead evictionlab.org/uploads URL
   tiger:     'tiger.v1.json',
 };
 
@@ -1646,6 +1646,15 @@ function finishLoadProgress() {
    footer can show exactly what was fetched, when, and how many rows came
    back. Update via markSource(...) on each fetch. */
 
+// Eviction Lab's nationwide Eviction Tracking System file. Declared up here
+// because the provenance registry below cites it; the fetch machinery that
+// range-slices Nashville out of it lives further down.
+const ETS_MONTHLY_CSV = 'https://eviction-lab-data-downloads.s3.amazonaws.com/ets/all_sites_monthly_2020_2021.csv';
+const ETS_SITE        = 'Nashville, TN';
+// First fields of the header row. If these ever stop matching, the file has been
+// restructured and we want a loud failure rather than a silent zero-row parse.
+const ETS_EXPECTED_COLS = ['city', 'type', 'GEOID', 'month', 'filings_2020'];
+
 const TIGER_TRACT_URL = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWMS_Current/MapServer/8/query?'
   + 'where=' + encodeURIComponent("STATE='47' AND COUNTY='037'")
   + '&outFields=GEOID&returnGeometry=true&f=geojson';
@@ -1667,8 +1676,8 @@ const sources = {
   },
   princeton: {
     name: 'Princeton Eviction Lab — Nashville monthly filings',
-    url: 'https://evictionlab.org/uploads/nashville_monthly_2020_2021.csv',
-    notes: 'Pre-pandemic / pandemic-era filings 2020–2021 by census tract. Fetched live each session via CORS proxy; never persisted.',
+    url: ETS_MONTHLY_CSV,
+    notes: 'Eviction Tracking System monthly filing counts by census tract. The published file is nationwide (~67 MB, all tracked sites); the browser fetches it directly from S3 and range-slices out the Nashville block, so only about a megabyte crosses the wire. Despite its 2020_2021 filename the series is still maintained and runs to the present month, which is what makes a like-for-like comparison with the scrape possible. Cached locally and revalidated weekly.',
     status: 'pending', fetchedAt: null, rows: null, error: null,
   },
   mss: {
@@ -1737,7 +1746,7 @@ function renderProvenance() {
 const SRC_SCRAPED   = 'Source: scraped court records (circuitclerk.nashville.gov).';
 const SRC_GEOCODED  = 'Source: geocoded from the case address during scrape (cases.json).';
 const SRC_DERIVED   = 'Source: derived locally from scraped cases.json fields.';
-const SRC_PRINCETON = 'Source: Princeton Eviction Lab monthly filings CSV (2020–2021, evictionlab.org).';
+const SRC_PRINCETON = 'Source: Princeton Eviction Lab (Eviction Tracking System) monthly filings CSV, Nashville tract-months, evictionlab.org.';
 const SRC_MSS       = 'Source: Metro Social Services, Know Your Community 2026 (population & race/ethnicity from ACS 2023; other measures from ACS 2017–2021).';
 const SRC_TIGER     = 'Source: US Census TIGERweb tract polygons (Davidson County).';
 
@@ -1817,6 +1826,7 @@ let agg = {
   princetonDistrict: {},      // { "5":   { "MM/YYYY": filings } }
   localMonths:     [],        // sorted asc, derived from allRows
   princetonMonths: [],        // sorted asc, derived from princetonRows
+  princetonSealed: {},        // { "MM/YYYY": filings }  — filings Eviction Lab could not place in a tract
   districtDemographics: {},   // { "5": { population, median_age, age, race_ethnicity, education, income, poverty, employment, housing } }  (MSS)
   countyTotals:    null,      // Davidson Co. comparison values from the MSS file
 };
@@ -1954,13 +1964,20 @@ async function refetchSnapshot() {
 
 function updateSubtitle() {
   const enriched = allRows.filter(r => r.enriched).length;
-  const withTract = allRows.filter(r => r.census_geoid).length;
+  const withTract = allRows.filter(r => r.tract_geoid).length;
   const tractCount = Object.keys(agg.tractInfo).length;
   let s = `Scraped: ${allRows.length.toLocaleString()} cases · ${enriched.toLocaleString()} enriched · ${withTract.toLocaleString()} with tracts (${tractCount.toLocaleString()} unique)`;
-  if (princetonRows) s += ` · Princeton (independent): ${princetonRows.length.toLocaleString()} monthly-filing rows 2020–21 — not added to scraped count`;
+  if (princetonRows) {
+    const range = formatMonthRange(agg.princetonMonths);
+    const sealed = princetonSealedTotal();
+    s += ` · Princeton (independent): ${princetonRows.length.toLocaleString()} tract-month filing rows`
+      + `${range ? ` ${range}` : ''}`
+      + `${sealed ? `, ${sealed.toLocaleString()} filings with no tract` : ''}`
+      + ` — not added to scraped count`;
+  }
   const el = document.getElementById("subtitle");
   el.textContent = s;
-  el.title = 'Scraped = current per-case court records (one row per docket). Princeton = aggregated monthly filing totals 2020–21 (one row per tract-month, no dockets). Different shapes, different time windows — never sum them.';
+  el.title = 'Scraped = current per-case court records (one row per docket). Princeton = aggregated monthly filing totals (one row per tract-month, no dockets). Two independent counts of the same evictions — compare them, never sum them.';
 }
 
 /* ───────────────────────── Existing per-case stats / filters / table ───────────────────────── */
@@ -2229,7 +2246,7 @@ function caseFileDateToMonth(fileDate) {
 function rebuildLocalAggregates() {
   const t2d = {}, info = {}, byTract = {}, byDistrict = {}, months = new Set();
   for (const r of allRows) {
-    const g = r.census_geoid ? String(r.census_geoid) : null;
+    const g = r.tract_geoid;
     const d = normalizeDistrict(r.council_district);
     const m = caseFileDateToMonth(r.file_date);
 
@@ -2262,32 +2279,79 @@ function rebuildLocalAggregates() {
 }
 
 /* Build agg.princetonTract / princetonDistrict from princetonRows × tractToDistrict.
-   Run when CSV arrives. */
+   Run when CSV arrives, and again whenever cases reload — the district rollup
+   depends on tractToDistrict, which the scrape supplies.
+
+   Two things worth stating. The CSV always carries a row for the month in
+   progress, filled with zeros until Eviction Lab publishes it; carrying that
+   through would draw a phantom empty bar on the timeline and read as "Eviction
+   Lab counted nothing" rather than "not reported yet", so trailing all-zero
+   months are dropped. And a tract only reaches a district if the scrape has
+   placed that tract in one, so district totals are honest about their own
+   coverage rather than quietly attributing orphan tracts. */
 function rebuildPrincetonAggregates() {
-  const byTract = {}, byDistrict = {}, months = new Set();
+  const byTract = {}, byDistrict = {}, monthTotals = new Map();
   if (!princetonRows) {
-    agg.princetonTract = {}; agg.princetonDistrict = {}; agg.princetonMonths = [];
+    agg.princetonTract = {}; agg.princetonDistrict = {};
+    agg.princetonMonths = []; agg.princetonSealed = {};
     return;
   }
   const t2d = agg.tractToDistrict;
+  const sealed = {};
   for (const r of princetonRows) {
     const g = String(r.GEOID);
     const m = String(r.month);
-    const f = r.filings_2020 || 0;
+    const f = Number(r.filings_2020);
+    const v = Number.isFinite(f) ? f : 0;      // blanks and "NA" count as zero
+    monthTotals.set(m, (monthTotals.get(m) || 0) + v);
+
+    /* Eviction Lab files the filings it can't place in a tract under a literal
+       GEOID of "sealed" (suppressed addresses — about 1% of Nashville filings).
+       Those are real evictions but they have nothing to join to, so they'd sit
+       in the tract grid as a permanently 0%-covered row and read as a hole in
+       our scrape rather than a hole in theirs. Keep them out of the join and
+       carry the count separately so it can be disclosed instead of dropped. */
+    if (!/^\d+$/.test(g)) {
+      sealed[m] = (sealed[m] || 0) + v;
+      continue;
+    }
+
     if (!byTract[g]) byTract[g] = {};
-    byTract[g][m] = (byTract[g][m] || 0) + f;
-    months.add(m);
+    byTract[g][m] = (byTract[g][m] || 0) + v;
 
     const t = t2d[g];
     if (t && t.council_district) {
       const d = normalizeDistrict(t.council_district);
       if (!byDistrict[d]) byDistrict[d] = {};
-      byDistrict[d][m] = (byDistrict[d][m] || 0) + f;
+      byDistrict[d][m] = (byDistrict[d][m] || 0) + v;
     }
   }
+
+  // Drop not-yet-reported months off the tail (see note above). Only the tail:
+  // a genuine zero month in the middle of the series is real data.
+  let months = sortMonthsAsc([...monthTotals.keys()]);
+  while (months.length && !monthTotals.get(months[months.length - 1])) months.pop();
+  const keep = new Set(months);
+  for (const map of [byTract, byDistrict]) {
+    for (const k in map) {
+      for (const m in map[k]) if (!keep.has(m)) delete map[k][m];
+    }
+  }
+  for (const m in sealed) if (!keep.has(m)) delete sealed[m];
+
   agg.princetonTract    = byTract;
   agg.princetonDistrict = byDistrict;
-  agg.princetonMonths   = sortMonthsAsc([...months]);
+  agg.princetonMonths   = months;
+  agg.princetonSealed   = sealed;
+}
+
+// Total filings Eviction Lab reported without a tract (suppressed addresses).
+// Surfaced wherever Princeton totals are, so the tract grid's omission is stated
+// rather than left for someone to discover as a discrepancy.
+function princetonSealedTotal() {
+  let n = 0;
+  for (const m in agg.princetonSealed) n += agg.princetonSealed[m];
+  return n;
 }
 
 function sortMonthsAsc(arr) {
@@ -2312,9 +2376,8 @@ function formatMonthRange(months) {
   return a === b ? a : `${a} – ${b}`;
 }
 
-// Full union of months across both sources (oldest→newest). Showing every
-// month lets Princeton's 2020-2021 history sit next to the recent scrape
-// even though they don't overlap.
+// Full union of months across both sources (oldest→newest), so a month present
+// on one side only still gets a column rather than vanishing.
 function allMonthsUnion() {
   const set = new Set([...agg.princetonMonths, ...agg.localMonths]);
   return sortMonthsAsc([...set]);
@@ -2346,9 +2409,9 @@ function updateCoverageHeadline() {
     el.innerHTML = '<span style="color:var(--dim)">Fetching Princeton CSV…</span>';
     return;
   }
-  // Pick the most recent month with overlap (both sides > 0 for at least one
-  // district/tract). Princeton stops in 2021 and we start in 2026, so an empty
-  // result is the honest answer.
+  // Pick the most recent month with overlap (Princeton > 0 for at least one
+  // district/tract). Both series now run to the present, so under normal
+  // conditions this resolves on the first or second month tried.
   const months = recentMonthsUnion(24).slice().reverse(); // newest first
   const p = coverageMode === 'tract' ? agg.princetonTract : agg.princetonDistrict;
   const l = coverageMode === 'tract' ? agg.localTract     : agg.localDistrict;
@@ -2365,7 +2428,7 @@ function updateCoverageHeadline() {
       return;
     }
   }
-  el.innerHTML = '<span style="color:var(--dim)">no Princeton↔scrape month overlap (Princeton CSV ends 2021)</span>';
+  el.innerHTML = '<span style="color:var(--dim)">no Princeton↔scrape month overlap in the last 24 months</span>';
 }
 
 /* ───────────────────────── Coverage view (District or Tract) ───────────────────────── */
@@ -2389,13 +2452,24 @@ function renderCoverageGrid() {
   const princeton = isTract ? agg.princetonTract    : agg.princetonDistrict;
   const local     = isTract ? agg.localTract        : agg.localDistrict;
 
-  // Row keys = union of both sides, so we surface tracts/districts that appear
-  // in our scrape but not Princeton (and vice versa).
-  const keys = [...new Set([...Object.keys(princeton), ...Object.keys(local)])].sort((a, b) => {
+  /* Row keys = union of both sides, so a tract or district that appears on only
+     one side still gets a row rather than disappearing. But rows Princeton has
+     no data for can't show a ratio, and in tract mode there are a lot of them —
+     the scrape picks up out-of-county tracts (a Rutherford or Sumner address in
+     a Nashville court record) that Eviction Lab never covers, and by raw GEOID
+     order those sort ahead of Davidson County. Leading with a screenful of
+     dashes buries the comparison the view exists to show, so comparable rows
+     come first and one-sided rows follow. */
+  const allKeys = [...new Set([...Object.keys(princeton), ...Object.keys(local)])];
+  const comparable = k => (princeton[k] ? 0 : 1);
+  const keys = allKeys.sort((a, b) => {
+    const c = comparable(a) - comparable(b);
+    if (c) return c;
     const an = parseInt(a, 10), bn = parseInt(b, 10);
     if (!isNaN(an) && !isNaN(bn)) return an - bn;
     return a.localeCompare(b);
   });
+  const oneSided = allKeys.filter(k => comparable(k)).length;
 
   const labelFor = isTract
     ? (k => { const info = agg.tractInfo[k]; return info && info.name ? info.name : `Tract ${k}`; })
@@ -2433,13 +2507,16 @@ function renderCoverageGrid() {
     <span><span class="sw amber"></span> 50–85%</span>
     <span><span class="sw red"></span> &lt;50%</span>
     <span style="color:var(--dim)">Princeton CSV is live from evictionlab.org · only months where Princeton > 0 get a ratio · showing ${months.length} months</span>
+    <span style="color:var(--dim)">Scraped tracts come from the geocoded GEOID where present, otherwise the court record's tract code within Davidson County.</span>
+    ${princetonSealedTotal() ? `<span style="color:var(--dim)">${princetonSealedTotal().toLocaleString()} Princeton filings carry no tract (sealed addresses) and appear in no row above.</span>` : ''}
+    ${oneSided ? `<span style="color:var(--dim)">Last ${oneSided.toLocaleString()} ${isTract ? 'tracts' : 'districts'}: scraped cases with no Princeton counterpart (mostly addresses outside Davidson County) — nothing to compare, so no ratio.</span>` : ''}
   </div>`;
 
   root.innerHTML = html;
 }
 
 /* ───────────────────────── Timeline view (Princeton monthly filings) ─────────────────────────
-   Bar chart of monthly eviction filings from the Princeton CSV (2020–2021).
+   Bar chart of monthly eviction filings from the Princeton CSV.
    Toggle: "All districts" sums every district present in agg.princetonDistrict
    for each month; otherwise we read one district's monthly series directly.
    Tracts that don't map to a council district are excluded — same convention
@@ -2512,7 +2589,7 @@ function renderTimelineView() {
   populateTimelineDistrictSelect();
 
   const sourceNote = `<div class="tl-source-note" title="${escapeAttr(SRC_PRINCETON)}">
-    Monthly eviction filings from <strong>Princeton Eviction Lab</strong> (Nashville, 2020–2021).
+    Monthly eviction filings from <strong>Princeton Eviction Lab</strong> (Nashville${agg.princetonMonths.length ? ', ' + formatMonthRange(agg.princetonMonths) : ''}).
     Each bar is total court filings for that month. Toggle the District selector to filter to a single council district.
   </div>`;
 
@@ -3004,10 +3081,36 @@ function bucketJudgmentAmount(amt) {
 
 // Derive judgment_amount + judgment_bucket on each row at load time. These
 // power a numeric "Judgment $" table column and a bucket-based filter.
+/* Davidson County's FIPS prefix. Nashville is a consolidated city-county, so a
+   Metro council district exists only inside 47037 — which is what lets us
+   rebuild a full tract GEOID from a bare tract code below. */
+const DAVIDSON_FIPS = '47037';
+
+/* Only a third of scraped cases survive geocoding far enough to carry a
+   `census_geoid`, but ~97% carry the 6-digit `census_tract` the court record
+   itself supplies. Keying tract aggregates on `census_geoid` alone therefore
+   threw away two thirds of the scrape, which is why every tract compared
+   against Eviction Lab looked like a ~35% undercount when the two sources
+   actually agree to within a few percent county-wide.
+
+   So derive one canonical tract key: the geocoder's GEOID when we have it,
+   otherwise DAVIDSON_FIPS + the tract code, gated on the row carrying a council
+   district (the only in-county signal available on un-geocoded rows). Against
+   the current feed that reconstruction matches a real Davidson tract for 48,036
+   of 48,037 such rows. `census_geoid` is left untouched — it stays the raw
+   scraped field, and exports still emit it as-is. */
+function tractGeoidFor(r) {
+  if (r.census_geoid) return String(r.census_geoid);
+  const t = r.census_tract == null ? '' : String(r.census_tract).trim();
+  if (!/^\d{1,6}$/.test(t) || !r.council_district) return null;
+  return DAVIDSON_FIPS + t.padStart(6, '0');
+}
+
 function enrichCaseRows(rows) {
   for (const r of rows) {
     r.judgment_amount = extractJudgmentAmount(r);
     r.judgment_bucket = bucketJudgmentAmount(r.judgment_amount);
+    r.tract_geoid     = tractGeoidFor(r);
   }
 }
 
@@ -3177,7 +3280,7 @@ function renderRecordPanel(docket) {
     'docket', 'status', 'file_date', 'Plaintiff_1', 'Attorney',
     'address_formatted', 'council_district', 'council_rep',
     'state_house_district', 'us_congressional_district',
-    'census_geoid', 'census_name',
+    'census_geoid', 'tract_geoid', 'census_name',
   ];
   const seen = new Set();
   const ordered = [];
@@ -3214,6 +3317,17 @@ function renderRecordPanel(docket) {
       return `<div class="rp-row">
         <span class="lbl">${escapeHtml(k)}</span>
         <span class="val${empty}">${escapeHtml(txt)}</span>
+      </div>`;
+    }
+    // Derived, not scraped — and it's the key the Princeton comparison joins on,
+    // so it's worth saying which of the two ways it was arrived at.
+    if (k === 'tract_geoid') {
+      const via = r.census_geoid
+        ? 'Taken from the geocoded census_geoid. ' + SRC_GEOCODED
+        : 'Rebuilt as Davidson County (47037) + the census_tract on the court record, because this case has no geocoded GEOID. ' + SRC_DERIVED;
+      return `<div class="rp-row" title="${escapeAttr('Tract key used to compare this case against Princeton Eviction Lab filings. ' + via)}">
+        <span class="lbl">${escapeHtml(k)}</span>
+        <span class="val${v ? '' : ' empty'}">${escapeHtml(v || '—')}</span>
       </div>`;
     }
     if (v == null || v === '') { display = '—'; cls += ' empty'; }
@@ -3283,7 +3397,7 @@ async function resolveRecordFields(docket) {
     'docket', 'status', 'file_date', 'Plaintiff_1', 'Attorney',
     'address_formatted', 'council_district', 'council_rep',
     'state_house_district', 'us_congressional_district',
-    'census_geoid', 'census_name',
+    'census_geoid', 'tract_geoid', 'census_name',
   ];
   const seen = new Set();
   const keys = [];
@@ -3691,7 +3805,7 @@ function aggregateDistricts() {
     if (r.status === 'PENDING') a.pending++;
     else if (r.status === 'DISMISSED' || r.status === 'NONSUIT') a.dismissed++;
     else a.other++;
-    if (r.census_geoid) a.tracts.add(String(r.census_geoid));
+    if (r.tract_geoid) a.tracts.add(r.tract_geoid);
     if (r.Plaintiff_1) a.plaintiffs[r.Plaintiff_1] = (a.plaintiffs[r.Plaintiff_1] || 0) + 1;
     if (r.Attorney && r.Attorney !== ', PRS') a.attorneys[r.Attorney] = (a.attorneys[r.Attorney] || 0) + 1;
     a.rows.push(r);
@@ -3959,10 +4073,7 @@ function showDistrictProfile(district) {
 
   const tractCounts = {};
   for (const r of a.rows) {
-    if (r.census_geoid) {
-      const g = String(r.census_geoid);
-      tractCounts[g] = (tractCounts[g] || 0) + 1;
-    }
+    if (r.tract_geoid) tractCounts[r.tract_geoid] = (tractCounts[r.tract_geoid] || 0) + 1;
   }
   const topTracts = Object.entries(tractCounts).sort((x, y) => y[1] - x[1]);
 
@@ -3981,7 +4092,7 @@ function showDistrictProfile(district) {
   const mss = districtKey ? agg.districtDemographics[districtKey] : null;
   const county = agg.countyTotals;
 
-  // Princeton total filings (2020–21) for this district, if loaded.
+  // Princeton total filings across all loaded months for this district.
   const princetonMap = districtKey ? agg.princetonDistrict[districtKey] : null;
   let princetonTotal = null;
   if (princetonMap) {
@@ -4115,7 +4226,7 @@ function showDistrictProfile(district) {
   }
 
   const princetonLine = princetonTotal != null
-    ? `<span class="src-num" title="${esc('Princeton 2020–21 sum across all months. ' + SRC_PRINCETON)}"><span class="src-tag">Princeton</span> ${princetonTotal.toLocaleString()}</span>`
+    ? `<span class="src-num" title="${esc('Princeton sum across all loaded months' + (formatMonthRange(agg.princetonMonths) ? ' (' + formatMonthRange(agg.princetonMonths) + ')' : '') + '. ' + SRC_PRINCETON)}"><span class="src-tag">Princeton</span> ${princetonTotal.toLocaleString()}</span>`
     : princetonStatus === 'pending'
       ? `<span class="src-num pending" title="${esc('Princeton CSV still loading from evictionlab.org.')}"><span class="src-tag">Princeton</span> …</span>`
       : `<span class="src-num pending" title="${esc('No Princeton data available for this district. ' + SRC_PRINCETON)}"><span class="src-tag">Princeton</span> —</span>`;
@@ -4132,7 +4243,7 @@ function showDistrictProfile(district) {
         </div>
         <div class="dp-body">
           <div class="profile-grid">
-            <div class="profile-stat stat-multi" title="${esc('Two independent counts — the same evictions counted two different ways. Scraped = current per-case court records (one row per docket). Princeton = aggregated monthly filing totals 2020–21 (no dockets, just counts). Different shapes, different time windows — DO NOT add them together. ' + SRC_SCRAPED + ' ' + SRC_PRINCETON)}">
+            <div class="profile-stat stat-multi" title="${esc('Two independent counts — the same evictions counted two different ways. Scraped = current per-case court records (one row per docket). Princeton = aggregated monthly filing totals (no dockets, just counts). DO NOT add them together. ' + SRC_SCRAPED + ' ' + SRC_PRINCETON)}">
               <div class="label">Total Cases</div>
               <div class="stat-sources">
                 <span class="src-num" title="${esc('Recent court filings. ' + SRC_SCRAPED)}"><span class="src-tag">Scraped</span> ${a.cases.toLocaleString()}</span>
@@ -4426,7 +4537,7 @@ function buildChatDigestText() {
   for (const [name, n] of s.topAttorneys) L.push(`  ${name}: ${n.toLocaleString()}`);
   if (princetonRows && princetonRows.length) {
     L.push('');
-    L.push('PRINCETON EVICTION LAB MONTHLY FILINGS 2020–2021 (filings, NOT the same count as cases above — never sum them):');
+    L.push(`PRINCETON EVICTION LAB MONTHLY FILINGS${formatMonthRange(agg.princetonMonths) ? ' ' + formatMonthRange(agg.princetonMonths) : ''} (filings, NOT the same count as cases above — never sum them):`);
     const pm = {};
     for (const r of princetonRows) {
       const key = String(r.month || '');
@@ -4812,13 +4923,31 @@ function bindViewControls() {
 }
 
 /* ───────────────────────── Princeton CSV fetch ─────────────────────────
-   Fetched once per session direct from evictionlab.org through the n8n CORS
-   proxy. Nothing is persisted — no GitHub round-trip, no snapshot file, no
-   tract→district library. Every case in cases.json already carries its own
-   GEOID + council_district, so the comparison is apples-to-apples in memory. */
+   The Eviction Lab publishes its Eviction Tracking System counts as a single
+   nationwide tract-month CSV covering all the sites it tracks. Two properties
+   of that file shape everything below.
 
-const N8N_PROXY     = 'https://n8n.intelechia.com/webhook/feed';
-const PRINCETON_CSV = 'https://evictionlab.org/uploads/nashville_monthly_2020_2021.csv';
+   1. S3 serves it with `Access-Control-Allow-Origin: *`, so the browser fetches
+      it directly and no CORS proxy sits in the path. The proxy route this used
+      to take was actively harmful: it answered 200 with the upstream's error
+      page as the body, so a dead source URL looked like a successful fetch that
+      merely happened to parse to zero rows. Every check below therefore
+      verifies the *content*, not just the status code.
+
+   2. It is ~67 MB, and Nashville is ~14k of its millions of rows. The rows are
+      sorted by city, so Nashville is one contiguous byte block. We binary-search
+      the city column with HTTP Range requests to find that block's bounds and
+      download only it — under a megabyte. If the host won't serve ranges we
+      fall back to streaming the whole file and filtering rows as they arrive,
+      so even the slow path never holds 67 MB in memory.
+
+   Note the filename says 2020_2021 but the file is still maintained and now
+   runs through the current month. That is the whole reason the coverage grid
+   has something to compare against: our scrape and Eviction Lab's counts cover
+   the same months, not disjoint eras. */
+
+// Still used by the TIGERweb tract-boundary fetch, which has no CORS headers.
+const N8N_PROXY = 'https://n8n.intelechia.com/webhook/feed';
 
 function bgStatus(msg, active=false) {
   const el = document.getElementById('bg-sync');
@@ -4828,13 +4957,220 @@ function bgStatus(msg, active=false) {
 
 function pxProxy(url) { return `${N8N_PROXY}?url=${encodeURIComponent(url)}`; }
 
-async function fetchPrincetonCsvRows() {
-  const r = await fetch(pxProxy(PRINCETON_CSV));
-  if (!r.ok) throw new Error(`csv HTTP ${r.status}`);
-  const text = await r.text();
+const _utf8 = new TextDecoder();
+const NL = 10; // '\n'
+
+// Thrown when the host answers a Range request with the whole body. Signals the
+// caller to abandon the slice strategy and stream instead.
+class RangeUnsupported extends Error {}
+
+async function etsBytes(start, end) {
+  const r = await fetch(ETS_MONTHLY_CSV, { headers: { Range: `bytes=${start}-${end}` } });
+  if (r.status === 200) throw new RangeUnsupported('server ignored Range');
+  if (r.status !== 206) throw new Error(`range HTTP ${r.status}`);
+  return new Uint8Array(await r.arrayBuffer());
+}
+
+// The city is the first CSV field and is double-quoted (it contains a comma).
+function cityOfLine(line) {
+  if (line[0] === '"') {
+    const close = line.indexOf('"', 1);
+    return close === -1 ? line.slice(1) : line.slice(1, close);
+  }
+  const comma = line.indexOf(',');
+  return comma === -1 ? line : line.slice(0, comma);
+}
+
+/* City of the first whole line at or after `pos`. Landing mid-line is the norm —
+   a byte offset from a bisection almost never falls on a boundary — so anywhere
+   but the very start of the data we skip to just past the next newline and read
+   the line that begins there. Returns null past the last line. */
+async function etsCityAtOrAfter(pos, dataStart, size) {
+  let window = 4096;
+  while (pos < size) {
+    const end = Math.min(size - 1, pos + window - 1);
+    const buf = await etsBytes(pos, end);
+    let from = 0;
+    if (pos > dataStart) {
+      const nl = buf.indexOf(NL);
+      if (nl === -1) {                    // no line boundary in view — widen
+        if (end >= size - 1) return null;
+        window *= 4;
+        continue;
+      }
+      from = nl + 1;
+    }
+    const lineEnd = buf.indexOf(NL, from);
+    if (lineEnd === -1 && end < size - 1) { window *= 4; continue; }
+    const line = buf.subarray(from, lineEnd === -1 ? buf.length : lineEnd);
+    if (!line.length) return null;
+    return cityOfLine(_utf8.decode(line));
+  }
+  return null;
+}
+
+/* Bracket the target site's block by bisecting the city column. Deliberately
+   approximate: it stops once the bracket is within ETS_BISECT_STOP bytes rather
+   than converging on the exact line, which halves the round trips and costs
+   nothing, because the caller pads outward and then trims by city anyway.
+   A probe past the end of the file sorts after everything, which keeps the
+   comparison total and the bisection well-defined. */
+const ETS_BISECT_STOP = 1024;
+const ETS_SLICE_PAD   = 1 << 16;
+
+async function etsFindSiteBounds(dataStart, size) {
+  const cityAt = async pos => (await etsCityAtOrAfter(pos, dataStart, size)) ?? '\uffff';
+
+  let lo = dataStart, hi = size;
+  while (hi - lo > ETS_BISECT_STOP) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (await cityAt(mid) < ETS_SITE) lo = mid; else hi = mid;
+  }
+  const blockLo = lo;
+
+  hi = size;
+  while (hi - lo > ETS_BISECT_STOP) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (await cityAt(mid) <= ETS_SITE) lo = mid; else hi = mid;
+  }
+  return { lo: blockLo, hi };
+}
+
+/* Download the bracketed block plus a margin, then cut it back to exactly the
+   site's lines. Both edges of the window are almost certainly partial lines, so
+   they're dropped before anything is read. The margin is what makes the result
+   trustworthy rather than merely plausible: seeing a non-matching line on each
+   side of the block is proof the block wasn't clipped, and if we don't see one,
+   we widen and try again instead of quietly returning a short slice.
+   Returns null when the site isn't in the file at all — renamed, or dropped
+   from the tracking system — which sends the caller to the streaming path. */
+async function etsSliceSite(dataStart, size) {
+  let pad = ETS_SLICE_PAD;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const b = await etsFindSiteBounds(dataStart, size);
+    const start = Math.max(dataStart, b.lo - pad);
+    const end   = Math.min(size - 1, b.hi + pad);
+    const lines = _utf8.decode(await etsBytes(start, end)).split('\n');
+    if (start > dataStart) lines.shift();
+    if (end < size - 1) lines.pop();
+
+    const first = lines.findIndex(l => cityOfLine(l) === ETS_SITE);
+    if (first === -1) return null;
+    let last = lines.length - 1;
+    while (last > first && cityOfLine(lines[last]) !== ETS_SITE) last--;
+
+    const boundedLeft  = first > 0 || start === dataStart;
+    const boundedRight = last < lines.length - 1 || end === size - 1;
+    if (boundedLeft && boundedRight) return lines.slice(first, last + 1).join('\n');
+    pad *= 8;   // block ran to an edge of the window — we may have clipped it
+  }
+  return null;
+}
+
+// Parse a headerless slice of the CSV by prepending the real header line.
+async function etsParseSlice(headerLine, text) {
   await loadScript(PAPAPARSE_URL);
-  const parsed = Papa.parse(text, { header: true, skipEmptyLines: true, dynamicTyping: true });
-  return parsed.data.filter(r => r.GEOID && r.month);
+  const parsed = Papa.parse(headerLine + '\n' + text, {
+    header: true, skipEmptyLines: true, dynamicTyping: true,
+  });
+  return parsed.data;
+}
+
+/* Whole-file fallback: stream the CSV, keep only the target site's lines, and
+   discard the rest as it arrives, so the full 67 MB never lands in memory at
+   once. Used when Range isn't honoured, the total size can't be read, or the
+   site block can't be located. Returns the header line with the body — the
+   header is the stream's first line, so fetching it separately would be waste.
+   The file is city-sorted, so the scan stops at the first line past the block
+   rather than reading to the end. */
+async function etsStreamSiteLines() {
+  const r = await fetch(ETS_MONTHLY_CSV);
+  if (!r.ok) throw new Error(`csv HTTP ${r.status}`);
+  if (!r.body) {
+    const all = (await r.text()).split('\n');
+    return { headerLine: all[0], body: all.filter(l => cityOfLine(l) === ETS_SITE).join('\n') };
+  }
+
+  const reader = r.body.getReader();
+  const kept = [];
+  let carry = '', headerLine = null, done = false, seen = 0, past = false;
+  while (!done) {
+    const chunk = await reader.read();
+    done = chunk.done;
+    if (!chunk.value) continue;
+    seen += chunk.value.length;
+    carry += _utf8.decode(chunk.value, { stream: true });
+    const lines = carry.split('\n');
+    carry = lines.pop();
+    for (const line of lines) {
+      if (headerLine === null) { headerLine = line; continue; }
+      if (!line) continue;
+      if (cityOfLine(line) === ETS_SITE) { kept.push(line); past = true; }
+      else if (past) { done = true; break; }
+    }
+    bgStatus(`Scanning Eviction Lab CSV… ${(seen / 1048576).toFixed(0)} MB`, true);
+  }
+  reader.cancel().catch(() => {});
+  if (carry && cityOfLine(carry) === ETS_SITE) kept.push(carry);
+  return { headerLine, body: kept.join('\n') };
+}
+
+// A zero-row parse should never be mistaken for "the source had nothing to say",
+// so confirm the file is still shaped the way the rest of this code assumes.
+function assertEtsColumns(headerLine) {
+  const cols = String(headerLine || '').split(',').map(c => c.trim());
+  for (const want of ETS_EXPECTED_COLS) {
+    if (!cols.includes(want)) {
+      throw new Error(`unexpected CSV layout (no "${want}" column) — source may have moved`);
+    }
+  }
+}
+
+/* Fetch the site's tract-month rows: ranged slice where possible, streaming
+   scan otherwise, with the file's shape verified either way.
+
+   The total size comes from a HEAD rather than from the Content-Range of a
+   ranged GET. Content-Range is not a CORS-safelisted response header, so a
+   cross-origin page reads it back as null however plainly the server sent it;
+   Content-Length is safelisted and readable. Without a size there is nothing to
+   bisect over, so that case goes straight to the stream. */
+async function fetchPrincetonCsvRows() {
+  let size = NaN;
+  try {
+    const h = await fetch(ETS_MONTHLY_CSV, { method: 'HEAD' });
+    if (h.ok) size = Number(h.headers.get('Content-Length'));
+  } catch (e) {
+    console.warn('[ets] HEAD failed, will stream:', e.message);
+  }
+
+  let headerLine = null, body = null;
+  if (Number.isFinite(size) && size > 0) {
+    try {
+      const probe = await fetch(ETS_MONTHLY_CSV, { headers: { Range: 'bytes=0-1023' } });
+      if (!probe.ok) throw new Error(`csv HTTP ${probe.status}`);
+      if (probe.status !== 206) {
+        // Range ignored — this response is the whole file. Drop it unread and
+        // let the streaming path fetch it again without buffering.
+        if (probe.body) probe.body.cancel().catch(() => {});
+      } else {
+        headerLine = (await probe.text()).split('\n')[0];
+        assertEtsColumns(headerLine);
+        bgStatus(`Locating ${ETS_SITE} in the Eviction Lab CSV…`, true);
+        body = await etsSliceSite(headerLine.length + 1, size);
+      }
+    } catch (e) {
+      if (!(e instanceof RangeUnsupported)) console.warn('[ets] slice failed, streaming instead:', e.message);
+      body = null;
+    }
+  }
+
+  if (body == null) ({ headerLine, body } = await etsStreamSiteLines());
+  assertEtsColumns(headerLine);
+
+  const rows = (await etsParseSlice(headerLine, body))
+    .filter(r => r.city === ETS_SITE && r.GEOID && r.month);
+  if (!rows.length) throw new Error(`no ${ETS_SITE} rows found in Eviction Lab CSV`);
+  return rows;
 }
 
 function refreshSnapshotUi() {
@@ -4843,14 +5179,14 @@ function refreshSnapshotUi() {
   if (viewMode !== 'cases') render();
 }
 
-// Princeton CSV is static historical filings — revalidate at most weekly.
+// The file is republished as new months close, so revalidate weekly.
 const PRINCETON_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 async function kickBackgroundSync() {
   let usedCache = false;
   try {
     const cached = await localCache.get(CACHE_FILES.princeton);
-    if (cached && Array.isArray(cached.rows)) {
+    if (cached && Array.isArray(cached.rows) && cached.rows.length) {
       princetonRows = cached.rows;
       rebuildPrincetonAggregates();
       markSource('princeton', { status: 'ok', rows: princetonRows.length, fromCache: true });
@@ -4859,20 +5195,21 @@ async function kickBackgroundSync() {
       if (Date.now() - (cached.savedAt || 0) < PRINCETON_TTL_MS) return;
     }
 
-    bgStatus('Fetching Princeton CSV…', true);
+    bgStatus('Fetching Eviction Lab CSV…', true);
     const rows = await fetchPrincetonCsvRows();
     princetonRows = rows;
     rebuildPrincetonAggregates();
     markSource('princeton', { status: 'ok', rows: rows.length });
-    console.info(`[eo] princeton csv: ${rows.length} rows · ${agg.princetonMonths.length} months`);
+    console.info(`[eo] eviction lab csv: ${rows.length} rows · ${agg.princetonMonths.length} months `
+      + `(${formatMonthRange(agg.princetonMonths) || 'none'}) · ${Object.keys(agg.princetonTract).length} tracts`);
     refreshSnapshotUi();
     localCache.put(CACHE_FILES.princeton, { rows });
-    bgStatus(`Princeton: ${rows.length} rows loaded (live)`, false);
+    bgStatus(`Eviction Lab: ${rows.length.toLocaleString()} tract-months loaded`, false);
     setTimeout(() => bgStatus(''), 3000);
   } catch (e) {
-    console.warn('Princeton CSV fetch failed:', e);
+    console.warn('Eviction Lab CSV fetch failed:', e);
     if (!usedCache) markSource('princeton', { status: 'failed', error: e.message });
-    bgStatus(`Princeton fetch failed: ${e.message}`, false);
+    bgStatus(`Eviction Lab fetch failed: ${e.message}`, false);
     setTimeout(() => bgStatus(''), 5000);
   }
 }
@@ -4941,7 +5278,7 @@ async function buildCsv(rows) {
     'docket', 'status', 'file_date', 'Plaintiff_1', 'Attorney',
     'address_formatted', 'council_district', 'council_rep',
     'state_house_district', 'us_congressional_district',
-    'census_geoid', 'census_name',
+    'census_geoid', 'tract_geoid', 'census_name',
   ];
   const cols = [];
   const seen = new Set();
