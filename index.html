@@ -16,6 +16,13 @@
      block first paint. font-display:swap (already in the URL) handles FOUT. -->
 <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:wght@400;600&display=swap" onload="this.rel='stylesheet'">
 <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:wght@400;600&display=swap"></noscript>
+<script type="importmap">
+{
+  "imports": {
+    "fs": "data:text/javascript;base64,ZXhwb3J0IGRlZmF1bHQgbmV3IFByb3h5KHt9LCB7IGdldChfLCBrKSB7IHRocm93IG5ldyBFcnJvcigiZnMuIiArIFN0cmluZyhrKSArICIgaXMgTm9kZS1vbmx5OyB1bmF2YWlsYWJsZSBpbiB0aGUgYnJvd3NlciIpOyB9IH0pOw=="
+  }
+}
+</script>
 <style>
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -1004,6 +1011,187 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 .prov-source .prov-meta.failed { color: var(--red); }
 .prov-source .prov-notes { color: var(--muted); font-size: 10px; line-height: 1.4; }
 
+/* ───────────────────────── Chat with Data (β) ───────────────────────── */
+#chat-view {
+  display: flex; flex-direction: column;
+  margin: 0 24px 24px;
+  height: calc(100vh - 240px);
+  min-height: 480px;
+}
+.chat-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px;
+}
+.chat-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--dim); flex-shrink: 0;
+}
+.chat-dot.on { background: var(--green); box-shadow: 0 0 6px rgba(74,186,138,0.7); }
+.chat-dot.busy { background: var(--amber); animation: live-pulse 1.2s ease-in-out infinite; }
+.chat-dot.err { background: var(--red); }
+.chat-status {
+  font-size: 11px; color: var(--muted); letter-spacing: 0.04em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chat-status.err { color: var(--red); }
+.chat-spans { font-size: 10px; color: var(--dim); white-space: nowrap; }
+.chat-model-select {
+  font-family: var(--mono); font-size: 11px; padding: 3px 8px;
+  color: var(--text); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 3px; margin-left: auto;
+}
+.chat-rebuild {
+  font-family: var(--mono); font-size: 10px; padding: 3px 10px;
+  color: var(--gold); background: transparent;
+  border: 1px solid var(--gold-dim); border-radius: 3px; cursor: pointer;
+}
+.chat-rebuild:hover { background: rgba(196,164,74,0.10); }
+.chat-rebuild[disabled] { opacity: 0.5; cursor: wait; }
+
+.chat-screen {
+  flex: 1; overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border); border-radius: 4px;
+  padding: 14px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.chat-msg { max-width: 92%; line-height: 1.55; font-size: 12px; }
+.chat-msg .who {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.12em;
+  color: var(--dim); margin-bottom: 4px;
+}
+.chat-msg.user { align-self: flex-end; text-align: right; }
+.chat-msg.user .bubble {
+  display: inline-block; text-align: left;
+  background: rgba(196,164,74,0.10); border: 1px solid var(--gold-dim);
+  border-radius: 6px; padding: 8px 12px; color: var(--text);
+}
+.chat-msg.assistant { align-self: flex-start; }
+.chat-msg.assistant .bubble {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 10px 12px; color: var(--text);
+  overflow-wrap: anywhere;
+}
+.chat-msg .bubble p { margin: 0 0 8px; } 
+.chat-msg .bubble p:last-child { margin-bottom: 0; }
+.chat-msg.error .bubble { border-color: var(--red); color: var(--red); }
+
+.cite-chip {
+  font-family: var(--mono); font-size: 9px; line-height: 1;
+  padding: 1px 5px; margin: 0 1px;
+  color: var(--gold); background: rgba(196,164,74,0.08);
+  border: 1px solid var(--gold-dim); border-radius: 3px;
+  cursor: pointer; vertical-align: 1px;
+}
+.cite-chip:hover { background: rgba(196,164,74,0.18); }
+.unverified-num {
+  border-bottom: 1px dotted var(--amber); cursor: help;
+}
+
+.prov-strip {
+  display: flex; flex-wrap: wrap; gap: 5px; align-items: center;
+  margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--surface);
+}
+.prov-strip .prov-label {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--dim);
+}
+.span-chip {
+  font-family: var(--mono); font-size: 9px;
+  padding: 2px 6px; color: var(--muted);
+  background: transparent; border: 1px solid var(--border); border-radius: 3px;
+  cursor: pointer; font-variant-numeric: tabular-nums;
+}
+.span-chip:hover { color: var(--gold); border-color: var(--gold-dim); }
+.prov-note { font-size: 9px; color: var(--dim); font-style: italic; }
+
+.artifact-title {
+  font-family: var(--serif); font-size: 14px; color: #f5f0e0;
+  margin-bottom: 8px;
+}
+.artifact-table-wrap { overflow-x: auto; }
+.artifact-table-wrap table { min-width: 420px; width: 100%; border-collapse: collapse; }
+.artifact-table-wrap th {
+  padding: 6px 10px; font-size: 9px; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--dim); text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.artifact-table-wrap th.num, .artifact-table-wrap td.num {
+  text-align: right; font-variant-numeric: tabular-nums;
+}
+.artifact-table-wrap td {
+  padding: 5px 10px; font-size: 11px; color: var(--text);
+  border-bottom: 1px solid var(--surface);
+}
+.artifact-table-wrap td.row-label { color: var(--gold); }
+.chart-svg { display: block; width: 100%; height: auto; }
+.chart-svg .bar { fill: var(--gold-dim); }
+.chart-svg .bar:hover { fill: var(--gold); }
+.chart-svg .bar-label { fill: var(--text); font-size: 11px; }
+.chart-svg .bar-value { fill: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.chart-svg .axis { stroke: var(--border); stroke-width: 1; }
+
+.chat-suggestions {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  padding: 8px 2px 2px;
+}
+.suggest-chip {
+  font-family: var(--mono); font-size: 10px; padding: 3px 10px;
+  color: var(--muted); background: transparent;
+  border: 1px solid var(--border); border-radius: 999px; cursor: pointer;
+}
+.suggest-chip:hover { color: var(--gold); border-color: var(--gold-dim); }
+
+.chat-composer { display: flex; gap: 8px; padding-top: 10px; }
+#chat-input {
+  flex: 1; padding: 9px 12px; font-size: 12px;
+  font-family: var(--mono); color: var(--text);
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 4px; outline: none;
+}
+#chat-input:focus { border-color: var(--gold-dim); }
+#chat-send {
+  font-family: var(--mono); font-size: 11px; padding: 8px 18px;
+  color: #1a1814; background: var(--gold);
+  border: 1px solid var(--gold); border-radius: 4px;
+  cursor: pointer; font-weight: 500;
+}
+#chat-send:hover { background: #d4b25a; }
+#chat-send[disabled] { opacity: 0.5; cursor: wait; }
+
+.span-modal-overlay {
+  position: fixed; inset: 0; z-index: 3000;
+  background: rgba(0,0,0,0.65);
+  display: flex; align-items: center; justify-content: center;
+}
+.span-modal {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 6px; width: 640px; max-width: 94vw;
+  max-height: 80vh; display: flex; flex-direction: column;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+}
+.span-modal .sm-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+  font-size: 11px; color: var(--gold); letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.span-modal .sm-close {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--muted); font-family: var(--mono); font-size: 13px;
+  width: 24px; height: 24px; border-radius: 4px; cursor: pointer;
+}
+.span-modal .sm-close:hover { color: var(--text); }
+.span-modal .sm-meta {
+  padding: 8px 16px; font-size: 10px; color: var(--dim);
+  border-bottom: 1px solid var(--surface); font-variant-numeric: tabular-nums;
+}
+.span-modal .sm-body {
+  padding: 12px 16px; overflow-y: auto;
+  font-size: 11px; line-height: 1.6; color: var(--text);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+
+
 </style>
 </head>
 <body>
@@ -1064,6 +1252,7 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
         <button data-val="map">Map</button>
         <button data-val="sources">Sources</button>
         <button data-val="live">Live Scraper</button>
+        <button data-val="chat">Chat β</button>
       </div>
     </div>
     <div class="group" id="timeline-district-group" style="display:none">
@@ -1164,6 +1353,26 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
     <div class="live-screen" id="live-screen">
       <div class="live-empty">// waiting for scraper feed…<span class="live-cursor"></span></div>
     </div>
+  </div>
+
+  <div id="chat-view" style="display:none">
+    <div class="chat-bar">
+      <div class="chat-dot" id="chat-dot"></div>
+      <span class="chat-status" id="chat-status">idle</span>
+      <span class="chat-spans" id="chat-spans"></span>
+      <select class="chat-model-select" id="chat-model-select">
+        <option value="Qwen2.5-0.5B-Instruct-q4f16_1-MLC" selected>Qwen2.5 0.5B (~0.5 GB)</option>
+        <option value="Llama-3.2-1B-Instruct-q4f16_1-MLC">Llama 3.2 1B (~0.9 GB)</option>
+        <option value="Qwen2.5-1.5B-Instruct-q4f16_1-MLC">Qwen2.5 1.5B (~1.5 GB)</option>
+      </select>
+      <button class="chat-rebuild" id="chat-rebuild" type="button" onclick="rebuildChatDigest()">Re-index data</button>
+    </div>
+    <div class="chat-screen" id="chat-screen"></div>
+    <div class="chat-suggestions" id="chat-suggestions"></div>
+    <form class="chat-composer" id="chat-composer" onsubmit="event.preventDefault(); submitChat();">
+      <input id="chat-input" placeholder="Ask about the case data — tables and charts are computed live from the snapshot…" autocomplete="off">
+      <button type="submit" id="chat-send">Send</button>
+    </form>
   </div>
 </div>
 
@@ -4051,6 +4260,7 @@ function setVisibility() {
   const isMap       = viewMode === 'map';
   const isSources   = viewMode === 'sources';
   const isLive      = viewMode === 'live';
+  const isChat      = viewMode === 'chat';
   document.getElementById('local-toolbar').style.display      = isCases     ? '' : 'none';
   document.getElementById('table-header').style.display       = isCases     ? '' : 'none';
   document.getElementById('local-table-wrap').style.display   = isCases     ? '' : 'none';
@@ -4060,6 +4270,7 @@ function setVisibility() {
   document.getElementById('map-view').style.display           = isMap       ? '' : 'none';
   document.getElementById('sources-view').style.display       = isSources   ? '' : 'none';
   document.getElementById('live-view').style.display          = isLive      ? '' : 'none';
+  document.getElementById('chat-view').style.display          = isChat      ? '' : 'none';
   document.getElementById('timeline-district-group').style.display = isTimeline ? '' : 'none';
   document.getElementById('coverage-mode-group').style.display = isCoverage ? '' : 'none';
   document.getElementById('coverage-dir-group').style.display  = isCoverage ? '' : 'none';
@@ -4073,6 +4284,9 @@ function render() {
     renderLiveView();
   } else {
     disconnectLiveFeed();
+  }
+  if (viewMode === 'chat') {
+    bootChatView();
   }
   if (viewMode === 'cases') {
     renderLocalTable();
@@ -4089,6 +4303,454 @@ function render() {
   }
   updateCoverageHeadline();
 }
+
+/* ───────────────────────── Chat with Data (β) ─────────────────────────
+   eoreader6.1 (loaded from CDN as ES modules) holds the current snapshot as
+   an addressed corpus: every chunk is a span with {span_id, source_id,
+   byte_start, byte_end}. Tables and charts are computed mechanically from
+   the live rows — never asked of the model. The model only narrates over
+   retrieved spans, and every figure it ships is checked against those bytes.
+   Provenance: each answer carries clickable span chips; clicking shows the
+   exact bytes the answer was grounded in. */
+
+const EO61_CDN = 'https://cdn.jsdelivr.net/gh/clovenbradshaw-ctrl/eoreader6.1@main/packages/host/index.js';
+const WEBLLM_CDN = 'https://esm.run/@mlc-ai/web-llm';
+
+let chatApi = null;          // eoreader6 host module, once imported
+let chatSession = null;      // eoreader6 session holding the digest corpus
+let chatEngine = null;       // WebLLM engine, once loaded
+let chatEngineModel = null;  // model id chatEngine was built for
+let chatDigestKey = null;    // snapshot key the session was built from
+let chatBooting = false;
+let chatBusy = false;
+let chatTurn = 0;
+
+function chatSetStatus(msg, cls) {
+  const dot = document.getElementById('chat-dot');
+  const el = document.getElementById('chat-status');
+  el.textContent = msg;
+  el.classList.toggle('err', cls === 'err');
+  dot.className = 'chat-dot' + (cls === 'on' ? ' on' : cls === 'busy' ? ' busy' : cls === 'err' ? ' err' : '');
+}
+
+function chatSnapshotKey() {
+  return `${allRows.length}|${casesUpdatedAt || ''}`;
+}
+
+async function ensureChatEngine() {
+  if (!chatApi) {
+    chatSetStatus('loading eoreader6.1 from CDN…', 'busy');
+    chatApi = await import(EO61_CDN);
+  }
+  const modelId = document.getElementById('chat-model-select').value;
+  if (chatEngine && chatEngineModel === modelId) return;
+  if (chatEngine) { try { await chatEngine.unload(); } catch (_) {} chatEngine = null; }
+  if (!('gpu' in navigator)) {
+    throw new Error('WebGPU not available in this browser — Chat β needs Chrome/Edge 113+ or a WebGPU-capable browser');
+  }
+  chatSetStatus(`downloading ${modelId} (cached after first load)…`, 'busy');
+  const webllm = await import(WEBLLM_CDN);
+  chatEngine = await webllm.CreateMLCEngine(modelId, {
+    initProgressCallback: p => chatSetStatus(`${p.text || 'loading model'} ${(p.progress * 100 | 0)}%`, 'busy'),
+  });
+  chatEngineModel = modelId;
+}
+
+function chatParseDate(v) {
+  const m = String(v || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  return m ? new Date(+m[3], +m[1] - 1, +m[2]).getTime() : 0;
+}
+
+function chatComputeStats() {
+  const statusCounts = {};
+  const districtStats = {};
+  const monthCounts = {};
+  const plaintiffs = {};
+  const attorneys = {};
+  let minDate = Infinity, maxDate = -Infinity;
+  for (const r of allRows) {
+    const st = String(r.status || 'UNKNOWN').toUpperCase();
+    statusCounts[st] = (statusCounts[st] || 0) + 1;
+    const d = r.council_district != null && r.council_district !== '' ? String(r.council_district) : 'unknown';
+    const ds = districtStats[d] ||= { total: 0, pending: 0, dismissed: 0 };
+    ds.total++;
+    if (st === 'PENDING') ds.pending++;
+    if (st === 'DISMISSED' || st === 'NONSUIT') ds.dismissed++;
+    const t = chatParseDate(r.file_date);
+    if (t) { if (t < minDate) minDate = t; if (t > maxDate) maxDate = t; }
+    const mk = caseFileDateToMonth(r.file_date);
+    if (mk) monthCounts[mk] = (monthCounts[mk] || 0) + 1;
+    const pl = String(r.Plaintiff_1 || '').trim();
+    if (pl) plaintiffs[pl] = (plaintiffs[pl] || 0) + 1;
+    const at = String(r.Attorney || '').trim();
+    if (at) attorneys[at] = (attorneys[at] || 0) + 1;
+  }
+  const top = (obj, n) => Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, n);
+  return {
+    total: allRows.length,
+    statusCounts, districtStats, monthCounts,
+    topPlaintiffs: top(plaintiffs, 10),
+    topAttorneys: top(attorneys, 10),
+    dateRange: minDate === Infinity ? null : {
+      from: new Date(minDate).toISOString().slice(0, 10),
+      to: new Date(maxDate).toISOString().slice(0, 10),
+    },
+  };
+}
+
+function buildChatDigestText() {
+  const s = chatComputeStats();
+  const L = [];
+  L.push('NASHVILLE EVICTION CASE DATA — DIGEST OF THE LIVE SNAPSHOT');
+  L.push(`Total cases (unique dockets): ${s.total.toLocaleString()}`);
+  if (s.dateRange) L.push(`Filing dates span ${s.dateRange.from} through ${s.dateRange.to}`);
+  L.push(`Snapshot fetched: ${(casesUpdatedAt || 'unknown').slice(0, 19).replace('T', ' ')} UTC`);
+  L.push('');
+  L.push('CASES BY STATUS:');
+  for (const [k, v] of Object.entries(s.statusCounts).sort((a, b) => b[1] - a[1])) L.push(`  ${k}: ${v.toLocaleString()}`);
+  L.push('');
+  L.push('CASES BY COUNCIL DISTRICT (total / pending / dismissed+nonsuit):');
+  for (const [d, v] of Object.entries(s.districtStats).sort((a, b) => (+a[0] || 99) - (+b[0] || 99))) {
+    L.push(`  District ${d}: ${v.total.toLocaleString()} / ${v.pending.toLocaleString()} / ${v.dismissed.toLocaleString()}`);
+  }
+  L.push('');
+  L.push('CASES BY MONTH FILED:');
+  for (const [m, v] of sortMonthsAsc(Object.keys(s.monthCounts)).map(k => [k, s.monthCounts[k]])) {
+    L.push(`  ${m}: ${v.toLocaleString()}`);
+  }
+  L.push('');
+  L.push('TOP PLAINTIFFS (filers) BY CASE COUNT:');
+  for (const [name, n] of s.topPlaintiffs) L.push(`  ${name}: ${n.toLocaleString()}`);
+  L.push('');
+  L.push('TOP ATTORNEYS (plaintiff counsel) BY CASE COUNT:');
+  for (const [name, n] of s.topAttorneys) L.push(`  ${name}: ${n.toLocaleString()}`);
+  if (princetonRows && princetonRows.length) {
+    L.push('');
+    L.push('PRINCETON EVICTION LAB MONTHLY FILINGS 2020–2021 (filings, NOT the same count as cases above — never sum them):');
+    const pm = {};
+    for (const r of princetonRows) {
+      const key = String(r.month || '');
+      if (!key) continue;
+      pm[key] = (pm[key] || 0) + Number(r.filings || r.filed || 0);
+    }
+    for (const m of sortMonthsAsc(Object.keys(pm))) L.push(`  ${m}: ${pm[m].toLocaleString()}`);
+  }
+  const demo = agg.districtDemographics || {};
+  if (Object.keys(demo).length) {
+    L.push('');
+    L.push('DISTRICT DEMOGRAPHICS (Metro Social Services, Know Your Community 2026):');
+    for (const d of Object.keys(demo).sort((a, b) => (+a) - (+b))) {
+      const x = demo[d];
+      L.push(`  District ${d}: population ${x.population != null ? x.population.toLocaleString() : '?'}`
+        + `, median household income ${x.income && x.income.median_household_income != null ? '$' + Math.round(x.income.median_household_income).toLocaleString() : '?'}`
+        + `, poverty rate ${x.poverty && x.poverty.pct_total_poverty != null ? x.poverty.pct_total_poverty.toFixed(1) + '%' : '?'}`
+        + `, median monthly rent ${x.housing && x.housing.median_monthly_rent != null ? '$' + Math.round(x.housing.median_monthly_rent).toLocaleString() : '?'}`);
+    }
+  }
+  L.push('');
+  L.push('NOTES: Defendant names are encrypted and excluded from this digest. Plaintiff and attorney names are public court record fields.');
+  return L.join('\n');
+}
+
+async function ensureChatSession(force) {
+  const key = chatSnapshotKey();
+  if (!force && chatSession && chatDigestKey === key) return;
+  if (!chatApi) throw new Error('engine not loaded');
+  chatSession = chatApi.createSession({});
+  const text = buildChatDigestText();
+  const sourceId = `eviction-snapshot[${key}]`;
+  const res = chatApi.admitChunked(chatSession, { text, sourceId, language: 'en' });
+  chatDigestKey = key;
+  document.getElementById('chat-spans').textContent =
+    `${res.chunks} spans · ${text.length.toLocaleString()} bytes · ${allRows.length.toLocaleString()} cases indexed`;
+}
+
+async function bootChatView() {
+  if (chatBooting || (chatApi && chatSession && chatEngine)) { renderChatSuggestions(); return; }
+  if (chatBooting) return;
+  chatBooting = true;
+  try {
+    await ensureChatEngine();
+    await ensureChatSession(false);
+    chatSetStatus(`ready — ${chatEngineModel}`, 'on');
+    renderChatSuggestions();
+  } catch (e) {
+    console.warn('[eo/chat] boot failed:', e);
+    chatSetStatus(e.message, 'err');
+  } finally {
+    chatBooting = false;
+  }
+}
+
+async function rebuildChatDigest() {
+  const btn = document.getElementById('chat-rebuild');
+  btn.disabled = true;
+  try {
+    await ensureChatSession(true);
+    chatSetStatus(`re-indexed — ${chatEngineModel || 'model pending'}`, chatEngine ? 'on' : '');
+  } catch (e) {
+    chatSetStatus(e.message, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+const CHAT_SUGGESTIONS = [
+  'Table: cases by council district',
+  'Chart: cases by month filed',
+  'Table: status breakdown',
+  'Chart: top plaintiffs',
+  'Which districts have the highest poverty rate?',
+];
+
+function renderChatSuggestions() {
+  const root = document.getElementById('chat-suggestions');
+  root.innerHTML = CHAT_SUGGESTIONS.map(s =>
+    `<button type="button" class="suggest-chip" onclick="askChat('${s.replace(/'/g, "\\'")}')">${escapeHtmlSafe(s)}</button>`
+  ).join('');
+}
+
+/* Mechanical answers — computed from live state, never asked of a model. */
+function detectChatArtifact(q) {
+  const wantsChart = /\b(chart|plot|graph|bar\b|visuali[sz]e|trend)/i.test(q);
+  const wantsTable = /\b(table|tabulate|list|break\s?down|breakdown|show|rank)/i.test(q);
+  if (!wantsChart && !wantsTable) return null;
+  let subject = null;
+  if (/plaintiff/i.test(q)) subject = 'plaintiffs';
+  else if (/attorney|counsel/i.test(q)) subject = 'attorneys';
+  else if (/status|pending|dismissed|nonsuit/i.test(q)) subject = 'status';
+  else if (/demograph|poverty|income|rent|population/i.test(q)) subject = 'demographics';
+  else if (/month|trend|over time|timeline/i.test(q)) subject = 'months';
+  else if (/district|council/i.test(q)) subject = 'district';
+  if (!subject) return null;
+  const kind = wantsChart ? 'chart' : 'table';
+  const s = chatComputeStats();
+  const provQuery = {
+    district: 'CASES BY COUNCIL DISTRICT',
+    status: 'CASES BY STATUS',
+    months: 'CASES BY MONTH FILED',
+    plaintiffs: 'TOP PLAINTIFFS',
+    attorneys: 'TOP ATTORNEYS',
+    demographics: 'DISTRICT DEMOGRAPHICS',
+  }[subject];
+  if (subject === 'district') {
+    const items = Object.entries(s.districtStats)
+      .sort((a, b) => (+a[0] || 99) - (+b[0] || 99))
+      .map(([d, v]) => ({
+        label: `District ${d}`, value: v.total,
+        cells: [`District ${d}`, v.total.toLocaleString(), v.pending.toLocaleString(), v.dismissed.toLocaleString()],
+      }));
+    return { kind, title: 'Cases by council district', head: ['District', 'Cases', 'Pending', 'Dismissed'], rows: items, provQuery };
+  }
+  if (subject === 'status') {
+    const items = Object.entries(s.statusCounts).sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => ({ label: k, value: v, cells: [k, v.toLocaleString()] }));
+    return { kind, title: 'Cases by status', head: ['Status', 'Cases'], rows: items, provQuery };
+  }
+  if (subject === 'months') {
+    const items = sortMonthsAsc(Object.keys(s.monthCounts)).map(m => ({ label: m, value: s.monthCounts[m], cells: [m, s.monthCounts[m].toLocaleString()] }));
+    return { kind, title: 'Cases by month filed', head: ['Month', 'Cases'], rows: items, provQuery };
+  }
+  if (subject === 'plaintiffs') {
+    const items = s.topPlaintiffs.map(([name, n]) => ({ label: name, value: n, cells: [name, n.toLocaleString()] }));
+    return { kind, title: 'Top plaintiffs by case count', head: ['Plaintiff', 'Cases'], rows: items, provQuery };
+  }
+  if (subject === 'attorneys') {
+    const items = s.topAttorneys.map(([name, n]) => ({ label: name, value: n, cells: [name, n.toLocaleString()] }));
+    return { kind, title: 'Top attorneys by case count', head: ['Attorney', 'Cases'], rows: items, provQuery };
+  }
+  if (subject === 'demographics') {
+    const demo = agg.districtDemographics || {};
+    const items = Object.keys(demo).sort((a, b) => (+a) - (+b)).map(d => {
+      const x = demo[d];
+      const pop = x.population != null ? x.population.toLocaleString() : '—';
+      const pov = x.poverty && x.poverty.pct_total_poverty != null ? x.poverty.pct_total_poverty.toFixed(1) + '%' : '—';
+      const inc = x.income && x.income.median_household_income != null ? '$' + Math.round(x.income.median_household_income).toLocaleString() : '—';
+      return { label: `District ${d}`, value: x.population, cells: [`District ${d}`, pop, pov, inc] };
+    });
+    return { kind, title: 'District demographics (MSS 2026)', head: ['District', 'Population', 'Poverty rate', 'Median HH income'], rows: items, provQuery };
+  }
+  return null;
+}
+
+function artifactHtml(a) {
+  let body = '';
+  if (a.kind === 'table') {
+    body = `<div class="artifact-table-wrap"><table><thead><tr>${
+      a.head.map((h, i) => `<th${i > 0 ? ' class="num"' : ''}>${escapeHtmlSafe(h)}</th>`).join('')
+    }</tr></thead><tbody>${
+      a.rows.map(r => `<tr>${r.cells.map((c, i) =>
+        `<td${i === 0 ? ' class="row-label"' : ' class="num"'}>${escapeHtmlSafe(c)}</td>`
+      ).join('')}</tr>`).join('')
+    }</tbody></table></div>`;
+  } else {
+    const max = Math.max(1, ...a.rows.map(r => r.value || 0));
+    const rowH = 22, padL = 150, padR = 56, w = 720;
+    const h = a.rows.length * rowH + 10;
+    const bars = a.rows.map((r, i) => {
+      const y = i * rowH + 5;
+      const bw = Math.max(2, ((r.value || 0) / max) * (w - padL - padR));
+      return `<rect class="bar" x="${padL}" y="${y}" width="${bw.toFixed(1)}" height="${rowH - 8}" rx="2"><title>${escapeHtmlSafe(r.label)}: ${(r.value || 0).toLocaleString()}</title></rect>`
+        + `<text class="bar-label" x="${padL - 8}" y="${y + rowH / 2 - 2}" text-anchor="end">${escapeHtmlSafe(String(r.label).slice(0, 24))}</text>`
+        + `<text class="bar-value" x="${padL + bw + 6}" y="${y + rowH / 2 - 2}">${(r.value || 0).toLocaleString()}</text>`;
+    }).join('');
+    body = `<svg class="chart-svg" viewBox="0 0 ${w} ${h}" role="img">${bars}</svg>`;
+  }
+  return `<div class="artifact-title">${escapeHtmlSafe(a.title)}</div>${body}`;
+}
+
+const CHAT_SYSTEM_PROMPT = [
+  'You answer questions about Nashville eviction case data using ONLY the numbered data excerpts provided in the user message.',
+  'Rules:',
+  '- Cite the excerpt you used for every factual claim, in the form [1], [2].',
+  '- Never invent numbers, names, districts, or dates. If the excerpts do not contain the answer, say exactly what is missing.',
+  '- Do not add scraped+Princeton counts together; they are different measures.',
+  '- Keep answers short: 1-3 sentences unless asked to enumerate.',
+].join('\n');
+
+function linkCitations(html, spans) {
+  return html.replace(/\[(\d)\]/g, (m, d) => {
+    const i = +d - 1;
+    if (!spans[i]) return m;
+    return `<button type="button" class="cite-chip" data-span-id="${escapeHtmlSafe(spans[i].span_id)}">[${d}]</button>`;
+  });
+}
+
+function verifyNumbers(text, groundText) {
+  const cites = [];
+  const masked = text.replace(/\[\d+\]/g, m => { cites.push(m); return '\u0000'; });
+  const ground = new Set();
+  for (const m of groundText.matchAll(/\d[\d,]*(?:\.\d+)?%?/g)) ground.add(m[0]);
+  const checked = masked.replace(/\b\d[\d,]*(?:\.\d+)?%?\b/g, m =>
+    ground.has(m) ? m : `<span class="unverified-num" title="this figure was not found in the cited data excerpts">${m}</span>`);
+  return checked.replace(/\u0000/g, () => cites.shift());
+}
+
+function addChatMessage(role, html, provHtml) {
+  const screen = document.getElementById('chat-screen');
+  const div = document.createElement('div');
+  div.className = 'chat-msg ' + role;
+  const who = role === 'user' ? 'you' : role === 'error' ? 'error' : 'assistant · grounded in snapshot';
+  div.innerHTML = `<div class="who">${who}</div><div class="bubble">${html}</div>${provHtml || ''}`;
+  screen.appendChild(div);
+  screen.scrollTop = screen.scrollHeight;
+  return div;
+}
+
+async function submitChat() {
+  const input = document.getElementById('chat-input');
+  const q = input.value.trim();
+  if (!q || chatBusy) return;
+  input.value = '';
+  askChat(q);
+}
+
+async function askChat(q) {
+  if (chatBusy) return;
+  addChatMessage('user', escapeHtmlSafe(q));
+  const myTurn = ++chatTurn;
+
+  const artifact = detectChatArtifact(q);
+  if (artifact && chatApi && chatSession) {
+    const hits = chatApi.searchSpans(chatSession, { query: artifact.provQuery, limit: 1 }).spans;
+    const sp = hits[0];
+    const prov = `<div class="prov-strip"><span class="prov-label">provenance</span>`
+      + `<span class="prov-note">computed mechanically from ${allRows.length.toLocaleString()} live rows — no model involved</span>`
+      + (sp ? spanChipHtml(sp) : '')
+      + `</div>`;
+    addChatMessage('assistant', artifactHtml(artifact), prov);
+    return;
+  }
+
+  if (!chatEngine || !chatSession) {
+    addChatMessage('error', escapeHtmlSafe('Not ready yet — ' + document.getElementById('chat-status').textContent));
+    return;
+  }
+
+  chatBusy = true;
+  document.getElementById('chat-send').disabled = true;
+  chatSetStatus('thinking…', 'busy');
+  try {
+    await ensureChatSession(false);
+    const { spans } = chatApi.searchSpans(chatSession, { query: q, limit: 6 });
+    if (!spans.length) {
+      addChatMessage('assistant', escapeHtmlSafe('No part of the indexed snapshot matches that question. Try asking about districts, statuses, months, plaintiffs, attorneys, or demographics.'));
+      return;
+    }
+    const units = chatApi.spanUnits(chatSession, spans);
+    const folded = chatApi.foldSpans(chatSession, { units, query: q, tokenBudget: 2200, maxUnits: 6 });
+    const context = folded.selected.map((u, i) => `[${i + 1}] ${u.text}`).join('\n\n');
+    const response = await chatEngine.chat.completions.create({
+      messages: [
+        { role: 'system', content: CHAT_SYSTEM_PROMPT },
+        { role: 'user', content: `Question: ${q}\n\nDATA EXCERPTS:\n${context}` },
+      ],
+      temperature: 0.2,
+      max_tokens: 600,
+    });
+    if (myTurn !== chatTurn) return;
+    let answer = (response.choices[0].message.content || '').trim();
+    answer = escapeHtmlSafe(answer);
+    answer = verifyNumbers(answer, context);
+    answer = linkCitations(answer, folded.selected);
+    answer = `<p>${answer.replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>')}</p>`;
+    const prov = `<div class="prov-strip"><span class="prov-label">provenance</span>${
+      folded.selected.map(u => spanChipHtml(u.meta)).join('')
+    }<span class="prov-note">figures underlined ⚠ were not found in these excerpts</span></div>`;
+    addChatMessage('assistant', answer, prov);
+    chatSetStatus(`ready — ${chatEngineModel}`, 'on');
+  } catch (e) {
+    console.warn('[eo/chat] turn failed:', e);
+    addChatMessage('error', escapeHtmlSafe(e.message || String(e)));
+    chatSetStatus(e.message, 'err');
+  } finally {
+    chatBusy = false;
+    document.getElementById('chat-send').disabled = false;
+  }
+}
+
+function spanChipHtml(meta) {
+  const id = meta.span_id || meta.spanId;
+  const short = id.startsWith('span:') ? id.slice(5, 13) : id.slice(0, 8);
+  return `<button type="button" class="span-chip" data-span-id="${escapeHtmlSafe(id)}" title="${escapeHtmlSafe(id)}">§${escapeHtmlSafe(short)}</button>`;
+}
+
+document.addEventListener('click', e => {
+  const chip = e.target.closest('.cite-chip, .span-chip');
+  if (chip) { openSpanModal(chip.dataset.spanId); return; }
+});
+
+function openSpanModal(spanId) {
+  closeSpanModal();
+  let out;
+  if (chatSession) {
+    out = chatApi.readSpan(chatSession, { spanId, maxBytes: 4000 });
+  } else {
+    out = { error: 'session not loaded' };
+  }
+  const overlay = document.createElement('div');
+  overlay.className = 'span-modal-overlay';
+  overlay.id = 'span-modal-overlay';
+  overlay.addEventListener('click', e => { if (e.target === overlay) closeSpanModal(); });
+  overlay.innerHTML = `<div class="span-modal">
+    <div class="sm-head"><span>${escapeHtmlSafe(spanId)}</span>
+      <button type="button" class="sm-close" onclick="closeSpanModal()">✕</button></div>
+    ${out.error
+      ? `<div class="sm-body">${escapeHtmlSafe(out.error)}</div>`
+      : `<div class="sm-meta">source ${escapeHtmlSafe(out.source_id)} · bytes ${out.byte_start}–${out.byte_end}${out.truncated ? ' · truncated to 4000' : ''}</div>
+         <div class="sm-body">${escapeHtmlSafe(out.text)}</div>`}
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+function closeSpanModal() {
+  const el = document.getElementById('span-modal-overlay');
+  if (el) el.remove();
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && document.getElementById('span-modal-overlay')) closeSpanModal();
+});
 
 function bindRowClicks() {
   document.getElementById('tbody').addEventListener('click', (e) => {
