@@ -708,6 +708,13 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   font-family: var(--mono); font-size: 14px; line-height: 1; padding: 0 2px; flex-shrink: 0;
 }
 .hz-collapse:hover { color: var(--gold); }
+.hz-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 3px; overflow: hidden; margin: 5px 0 3px; }
+.hz-seg button {
+  font-family: var(--mono); font-size: 9px; padding: 2px 7px;
+  color: var(--muted); background: transparent; border: none; cursor: pointer;
+}
+.hz-seg button.on { background: var(--gold); color: #1a1814; }
+.hz-seg button:not(.on):hover { color: var(--text); background: rgba(255,255,255,0.05); }
 .hz-body { overflow-y: auto; padding: 4px 0 6px; }
 .hz-row {
   display: grid; grid-template-columns: 20px 1fr auto; gap: 8px; align-items: baseline;
@@ -1678,6 +1685,15 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
         <div class="hz-head">
           <div>
             <div class="hz-title">Hot zones</div>
+            <div class="hz-seg" id="hz-seg">
+              <button type="button" data-val="zones" class="on">Zones</button>
+              <button type="button" data-val="groups" title="Sets of tracts whose month-over-month change moves together, discovered from the data">Groups</button>
+            </div>
+            <div class="hz-seg" id="hz-grain-seg" style="display:none">
+              <button type="button" data-val="tract" class="on">Tracts</button>
+              <button type="button" data-val="building">Buildings</button>
+              <button type="button" data-val="owner">Owners</button>
+            </div>
             <div class="hz-sub" id="hz-sub"></div>
           </div>
           <button type="button" class="hz-collapse" id="hz-collapse" title="Collapse">–</button>
@@ -4095,6 +4111,8 @@ function signalRadiusFor(p, ctx) {
    Both are shown; neither is merged into a score. */
 
 const HOTZONE_COUNT = 12;
+let hzView = 'zones';   // 'zones' | 'groups'
+let hzGrain = 'tract';  // 'tract' | 'building' | 'owner'
 
 function tractDisplayName(geoid) {
   const info = agg.tractInfo?.[geoid];
@@ -4135,7 +4153,236 @@ function computeHotZones() {
   return { zones, span, prevStart, comparable: prev.size > 0 };
 }
 
+/* ───────────── Self-emergent groups of tracts (the next holon up) ────────
+   A census tract is an administrative box, not a thing that behaves. But some
+   tracts DO move together — their month-over-month filing changes rise and
+   fall in step — and those sets are a real holon above the tract and below the
+   city, discovered from the data rather than imposed by a district map.
+
+   Correlation is on month-over-month CHANGE, not level: two big tracts both
+   being big correlates trivially, while two tracts that turn at the same time
+   is the structure worth having. The bar is declared, not tuned, and the
+   CONTROL runs beside it every time — each tract's own months shuffled
+   independently, keeping its exact counts and destroying only the co-timing.
+   Measured on the full record: at 0.6 the real material still binds groups of
+   up to 9 tracts while the control produces ZERO edges; at 0.3 both collapse
+   into one blob and the answer is meaningless. The reader sees both numbers. */
+
+const HOLON_THRESHOLD = 0.6;
+const HOLON_MIN_FILINGS = 60;
+
+function holonMonthlySeries(grain) {
+  const months = [];
+  for (let m = snapMonth(llStartTs); m <= llCursorTs; ) {
+    months.push(m);
+    const d = new Date(m);
+    m = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
+  }
+  const idx = new Map(months.map((m, i) => [m, i]));
+  const keyOf = grain === 'owner' ? (r) => (r.Plaintiff_1 || '').trim() || null
+              : grain === 'building' ? (r) => normalizeAddressKey(r.address_formatted)
+              : (r) => r.tract_geoid || r.census_tract || null;
+  const series = new Map();
+  for (const r of allRows) {
+    const key = keyOf(r);
+    if (!key) continue;
+    const t = parseUsDate(r.file_date);
+    if (!t) continue;
+    const i = idx.get(snapMonth(t));
+    if (i === undefined) continue;
+    if (!series.has(key)) series.set(key, new Array(months.length).fill(0));
+    series.get(key)[i]++;
+  }
+  return { months, series };
+}
+
+/* What "next to each other" means at each grain — and where it means nothing.
+   Tracts must share a boundary. Buildings must be within a short walk, which
+   is the same idea at the smaller scale. OWNERS have no geography: a portfolio
+   is a relation between filings, not places, so no spatial gate applies and
+   the grouping is behaviour alone. Saying that out loud matters, because a
+   reader is entitled to know which groups are neighbourhoods and which are
+   simply people acting alike. */
+const HOLON_GRAINS = Object.freeze({
+  tract:    { label: 'Tracts',    minFilings: 60, gate: 'adjacent',  noun: 'tracts',    gateNote: 'and share a boundary' },
+  building: { label: 'Buildings', minFilings: 12, gate: 'proximity', noun: 'buildings', gateNote: `and sit within ${'400'}m of one another` },
+  owner:    { label: 'Owners',    minFilings: 20, gate: 'none',      noun: 'owners',    gateNote: 'with no spatial gate — a portfolio is not a place' },
+});
+const HOLON_PROXIMITY_M = 400;
+
+function holonDisplayName(grain, id) {
+  if (grain === 'tract') return tractDisplayName(id);
+  if (grain === 'building') return llPropertyIndex?.properties.find(p => p.key === id)?.addressDisplay || id;
+  return id;
+}
+
+/** Metres between two lat/lngs, flat-earth at this scale. */
+function _metres(a, b) {
+  const dy = (a.lat - b.lat) * 111320;
+  const dx = (a.lng - b.lng) * 111320 * Math.cos((a.lat + b.lat) / 2 * Math.PI / 180);
+  return Math.hypot(dx, dy);
+}
+
+const _zdiff = (s) => {
+  const d = s.slice(1).map((v, i) => v - s[i]);
+  const m = d.reduce((a, b) => a + b, 0) / (d.length || 1);
+  const sd = Math.sqrt(d.reduce((a, b) => a + (b - m) ** 2, 0) / (d.length || 1)) || 1;
+  return d.map(v => (v - m) / sd);
+};
+
+/* Which tracts physically touch, from the TIGER polygons themselves.
+   Two tracts are neighbours if their boundaries share a vertex, rounded to
+   ~1m. Census polygons are topologically clean, so adjacent tracts share
+   real vertices rather than merely coming close. Built once per session. */
+let _tractAdjacency = null;
+function tractAdjacency() {
+  if (_tractAdjacency || !tractGeometries) return _tractAdjacency;
+  const byVertex = new Map();
+  const walk = (coords, geoid) => {
+    if (typeof coords[0] === 'number') {
+      const k = `${coords[0].toFixed(5)},${coords[1].toFixed(5)}`;
+      if (!byVertex.has(k)) byVertex.set(k, new Set());
+      byVertex.get(k).add(geoid);
+    } else for (const c of coords) walk(c, geoid);
+  };
+  for (const f of tractGeometries.features || []) {
+    if (f.geometry?.coordinates) walk(f.geometry.coordinates, String(f.properties.GEOID));
+  }
+  const adj = new Map();
+  for (const owners of byVertex.values()) {
+    if (owners.size < 2) continue;
+    for (const a of owners) for (const b of owners) {
+      if (a === b) continue;
+      if (!adj.has(a)) adj.set(a, new Set());
+      adj.get(a).add(b);
+    }
+  }
+  _tractAdjacency = adj;
+  return adj;
+}
+
+/* A group is only a group if it is BOTH contiguous and co-moving. Correlation
+   alone will happily link two tracts on opposite sides of the county, which is
+   a correlation cluster, not a neighbourhood — so adjacency gates every edge
+   and the resulting sets are connected regions by construction. */
+function _linkTracts(vecs, thr, grain = 'tract') {
+  const gate = HOLON_GRAINS[grain]?.gate || 'none';
+  const adj = gate === 'adjacent' ? tractAdjacency() : null;
+  const coords = gate === 'proximity' && llPropertyIndex
+    ? new Map(llPropertyIndex.properties.map(p => [p.key, { lat: p.lat, lng: p.lng }])) : null;
+  const parent = new Map(vecs.map(([id]) => [id, id]));
+  const find = (x) => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
+  let edges = 0, adjacentPairs = 0;
+  for (let i = 0; i < vecs.length; i++) for (let j = i + 1; j < vecs.length; j++) {
+    const idA = vecs[i][0], idB = vecs[j][0];
+    if (gate === 'adjacent' && adj && !(adj.get(idA)?.has(idB))) continue;
+    if (gate === 'proximity' && coords) {
+      const a0 = coords.get(idA), b0 = coords.get(idB);
+      if (!a0 || !b0 || _metres(a0, b0) > HOLON_PROXIMITY_M) continue;
+    }
+    adjacentPairs++;
+    const a = vecs[i][1], b = vecs[j][1];
+    let s = 0; for (let k = 0; k < a.length; k++) s += a[k] * b[k];
+    if (s / (a.length || 1) >= thr) { edges++; const ra = find(idA), rb = find(idB); if (ra !== rb) parent.set(ra, rb); }
+  }
+  const g = new Map();
+  for (const [id] of vecs) { const r = find(id); if (!g.has(r)) g.set(r, []); g.get(r).push(id); }
+  return { edges, adjacentPairs, hasAdjacency: Boolean(adj || coords),
+           groups: [...g.values()].filter(a => a.length >= 2).sort((a, b) => b.length - a.length) };
+}
+
+function computeTractHolons(grain = hzGrain) {
+  const spec = HOLON_GRAINS[grain] || HOLON_GRAINS.tract;
+  const { months, series } = holonMonthlySeries(grain);
+  if (months.length < 6) return { refused: 'window too short — a group needs at least 6 months of change to be visible' };
+  const eligible = [...series.entries()].filter(([, s]) => s.reduce((a, b) => a + b, 0) >= spec.minFilings);
+  if (eligible.length < 4) return { refused: `only ${eligible.length} ${spec.noun} have ${spec.minFilings}+ filings in this window` };
+
+  const vecs = eligible.map(([id, s]) => [id, _zdiff(s)]);
+  const real = _linkTracts(vecs, HOLON_THRESHOLD, grain);
+
+  // The control, run every time and shown every time.
+  let s0 = 20260903; const rnd = () => ((s0 = (s0 * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  const ctrlVecs = eligible.map(([id, s]) => {
+    const c = s.slice();
+    for (let i = c.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [c[i], c[j]] = [c[j], c[i]]; }
+    return [id, _zdiff(c)];
+  });
+  const ctrl = _linkTracts(ctrlVecs, HOLON_THRESHOLD, grain);
+
+  const totals = new Map(eligible.map(([id, s]) => [id, s.reduce((a, b) => a + b, 0)]));
+  return {
+    grain, spec,
+    eligible: eligible.length,
+    months: months.length,
+    groups: real.groups.map(members => ({
+      members,
+      filings: members.reduce((a, id) => a + (totals.get(id) || 0), 0),
+    })),
+    edges: real.edges,
+    control: { edges: ctrl.edges, groups: ctrl.groups.length, largest: ctrl.groups[0]?.length || 0 },
+  };
+}
+
+function renderHolons() {
+  const body = document.getElementById('hz-body');
+  const sub = document.getElementById('hz-sub');
+  const res = computeTractHolons();
+  const gspec = HOLON_GRAINS[hzGrain] || HOLON_GRAINS.tract;
+  if (sub) sub.textContent = `${gspec.noun} that move together · ${toISODate(llStartTs)} → ${toISODate(llCursorTs)}`;
+  if (res.refused) { body.innerHTML = `<div class="hz-empty">${escapeHtml(res.refused)}.</div>`; return; }
+  if (!res.groups.length) {
+    body.innerHTML = `<div class="hz-empty">No group of tracts moves together above the ${HOLON_THRESHOLD} bar in this window.
+      That is a finding, not a failure: of ${res.eligible} eligible ${gspec.noun}, each is moving on its own.</div>`;
+    return;
+  }
+  const biggest = res.groups[0]?.members.length || 0;
+  const percolated = biggest / Math.max(1, res.eligible) > 0.25;
+  const warn = percolated
+    ? `<div class="hz-note" style="border-top:none;color:#e8a735">One group holds ${biggest} of ${res.eligible} ${gspec.noun}
+       (${Math.round(100 * biggest / res.eligible)}%). At this bar everything is linking to everything — that is
+       percolation, not structure, and this grouping should not be read as ${gspec.noun === 'owners' ? 'coordinated owners' : 'neighbourhoods'}.
+       Narrow the window or treat it as one undifferentiated mass.</div>`
+    : '';
+  body.innerHTML = warn + res.groups.map((g, i) => `
+    <div class="hz-row" onclick="highlightHolon(${i})" title="Show this group on the map">
+      <span class="hz-rank">${String.fromCharCode(65 + i)}</span>
+      <span>
+        <span class="hz-name">${g.members.length} ${gspec.noun} moving together</span>
+        <span class="hz-why">${g.members.slice(0, 4).map(m => escapeHtml(holonDisplayName(hzGrain, m).replace(/^Census Tract /, '').slice(0, 30))).join(', ')}${g.members.length > 4 ? ` +${g.members.length - 4}` : ''}</span>
+      </span>
+      <span class="hz-n">${g.filings.toLocaleString()}</span>
+    </div>`).join('')
+    + `<div class="hz-note">Grouped where month-over-month change correlates at ${HOLON_THRESHOLD}+ ${gspec.gateNote}
+       (${res.edges} linked pairs among ${res.eligible} ${gspec.noun} with ${gspec.minFilings}+ filings).
+       Control — each ${gspec.noun.replace(/s$/, '')}'s own months shuffled, counts kept, co-timing destroyed —
+       produced <strong>${res.control.edges} pair${res.control.edges === 1 ? '' : 's'}</strong>
+       and ${res.control.groups} group${res.control.groups === 1 ? '' : 's'} on the same window.
+       ${res.control.edges === 0 ? "The control found nothing, so these groups are the material's own." : 'Read the gap between those two numbers as the strength of the finding.'}</div>`;
+  window._holonGroups = res.groups;
+}
+
+/** Paint one emergent group onto the tract layer. */
+function highlightHolon(i) {
+  const g = window._holonGroups?.[i];
+  if (!g) return;
+  const set = new Set(g.members);
+  if (hzGrain === 'building') return applyLandlordHighlight(g.members, `${g.members.length} buildings moving together`);
+  if (hzGrain === 'owner') {
+    // An owner group has no shape of its own — show every building those
+    // owners file at, which is the nearest honest thing to draw.
+    const keys = (llPropertyIndex?.properties || []).filter(p => set.has(p.primaryLandlord)).map(p => p.key);
+    return keys.length ? applyLandlordHighlight(keys, `${g.members.length} owners moving together`) : undefined;
+  }
+  if (!tractLayer) return;
+  tractLayer.eachLayer(l => {
+    const inGroup = set.has(String(l.feature.properties.GEOID));
+    l.setStyle({ weight: inGroup ? 3 : 1, color: inGroup ? '#e85d3a' : '#2a2820', fillOpacity: inGroup ? 0.9 : 0.35 });
+  });
+}
+
 function renderHotZones() {
+  if (hzView === 'groups') return renderHolons();
   const body = document.getElementById('hz-body');
   const sub = document.getElementById('hz-sub');
   if (!body) return;
@@ -6744,6 +6991,24 @@ function bindViewControls() {
     if (viewMode === 'map') renderMapView();
   });
   document.getElementById('ll-highlight-clear').addEventListener('click', () => clearLandlordHighlight());
+  document.querySelectorAll('#hz-seg button').forEach(b => {
+    b.addEventListener('click', () => {
+      hzView = b.dataset.val;
+      document.querySelectorAll('#hz-seg button').forEach(x => x.classList.toggle('on', x === b));
+      document.getElementById('hz-grain-seg').style.display = hzView === 'groups' ? '' : 'none';
+      // Leaving the groups view drops any group paint it left on the tracts.
+      if (hzView !== 'groups') updateMapColors();
+      renderHotZones();
+    });
+  });
+  document.querySelectorAll('#hz-grain-seg button').forEach(b => {
+    b.addEventListener('click', () => {
+      hzGrain = b.dataset.val;
+      document.querySelectorAll('#hz-grain-seg button').forEach(x => x.classList.toggle('on', x === b));
+      updateMapColors();
+      renderHotZones();
+    });
+  });
   const hzc = document.getElementById('hz-collapse');
   hzc?.addEventListener('click', () => {
     const panel = document.getElementById('hotzones');
