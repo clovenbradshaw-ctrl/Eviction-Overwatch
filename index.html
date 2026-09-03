@@ -553,23 +553,14 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 /* Map view */
 #map-view { padding: 0; }
 #map { width: 100%; height: 65vh; background: #1a1814; }
-.map-controls {
-  padding: 12px 24px; background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-}
-.map-controls .month-label {
-  font-size: 13px; font-weight: 500; min-width: 110px;
-  color: var(--gold); font-variant-numeric: tabular-nums;
-}
-.map-controls input[type=range] {
-  flex: 1; min-width: 200px; accent-color: var(--gold);
-}
-.map-controls .scale-legend {
+
+
+
+.scale-legend {
   display: flex; align-items: center; gap: 8px;
   font-size: 10px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.08em;
 }
-.map-controls .scale-bar {
+.scale-bar {
   display: inline-block; width: 120px; height: 8px;
   background: linear-gradient(to right, #ffffb2, #fed976, #feb24c, #fd8d3c, #fc4e2a, #e31a1c, #b10026);
   border-radius: 2px;
@@ -1637,13 +1628,6 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   <div id="grid-view" style="display:none"></div>
 
   <div id="map-view" style="display:none">
-    <div class="map-controls" id="map-controls" style="display:none">
-      <span class="month-label" id="map-month-label"></span>
-      <input type="range" id="map-slider" min="0" max="0" value="0">
-      <div class="scale-legend">
-        <span>fewer</span><span class="scale-bar"></span><span>more</span>
-      </div>
-    </div>
     <!-- The clip. One strip standing for the whole record, with a filings-per-
          month histogram as its "waveform" so you can see the shape of what you
          are trimming before you trim it. Drag the handles to set in/out, drag
@@ -1672,6 +1656,9 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
         <span class="ll-halflife-unit">mo half-life</span>
         <button type="button" id="ll-time-reset" title="Reset to the full range, playhead at the end">Reset</button>
         <span class="ll-coverage-note" id="ll-coverage-note"></span>
+        <span class="scale-legend" id="tract-scale" style="display:none">
+          <span id="tract-scale-label"></span><span>fewer</span><span class="scale-bar"></span><span>more</span>
+        </span>
       </div>
       <div class="signal-legend" id="ll-signal-legend"></div>
     </div>
@@ -3433,8 +3420,26 @@ function updateMapColors() {
     const geoid = String(layer.feature.properties.GEOID);
     layer.setStyle({ fillColor: colorForFilings(frame.values[geoid] || 0, frame.max) });
   });
-  const labelEl = document.getElementById('map-month-label');
-  if (labelEl) labelEl.textContent = frame.label;
+  const chip = document.getElementById('tract-scale');
+  const lbl = document.getElementById('tract-scale-label');
+  if (chip) chip.style.display = document.getElementById('layer-tracts')?.checked ? '' : 'none';
+  if (lbl) lbl.textContent = frame.label;
+}
+
+/** The tract layer's month, read off the clip's playhead. */
+function monthAtPlayhead(months) {
+  if (!months.length) return null;
+  if (llCursorTs === null) return months[months.length - 1];
+  const d = new Date(llCursorTs);
+  const want = `${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
+  if (months.includes(want)) return want;
+  // Not every month is present in every source; take the latest one at or
+  // before the playhead rather than snapping forward into the future.
+  const key = (m) => { const [mm, yy] = m.split('/'); return yy + mm; };
+  const target = key(want);
+  let best = null;
+  for (const m of months) if (key(m) <= target && (!best || key(m) > key(best))) best = m;
+  return best || months[0];
 }
 
 // Show only the controls relevant to the current mode and seed default
@@ -3442,23 +3447,16 @@ function updateMapColors() {
 function syncMapControls() {
   const { months } = mapLayer();
   const yearGroup = document.getElementById('map-year-group');
-  const sliderEl  = document.getElementById('map-slider');
   const isTrajectory = mapMode === 'trajectory';
 
-  sliderEl.style.display = isTrajectory ? '' : 'none';
-
-  if (isTrajectory) {
-    if (!months.length) {
-      mapMonth = null;
-      sliderEl.min = 0; sliderEl.max = 0; sliderEl.value = 0;
-    } else {
-      let idx = months.indexOf(mapMonth);
-      if (idx < 0) idx = months.length - 1;
-      mapMonth = months[idx];
-      sliderEl.min = 0;
-      sliderEl.max = months.length - 1;
-      sliderEl.value = idx;
-    }
+  // The tract trajectory follows the CLIP'S PLAYHEAD. It used to carry its own
+  // month slider in its own row, which meant two timelines on one screen
+  // disagreeing about what "now" was, and the taller of them was the one
+  // nobody was dragging. There is one timeline; this reads it.
+  if (isTrajectory && months.length) {
+    mapMonth = monthAtPlayhead(months);
+  } else if (isTrajectory) {
+    mapMonth = null;
   }
 
   const isYear = mapMode === 'year';
@@ -3487,7 +3485,6 @@ async function renderMapView() {
 
   // Hide every layer-specific control while (re)loading so nothing shows
   // stale controls for a layer that isn't actually on the map yet.
-  document.getElementById('map-controls').style.display = 'none';
   document.getElementById('clip-bar').style.display = 'none';
   status.textContent = 'Loading map…';
   status.style.display = '';
@@ -3559,7 +3556,7 @@ async function renderMapView() {
     const boundsList = [];
     if (tractsOn && tractLayer) boundsList.push(tractLayer.getBounds());
     if (evictionsOn && llPropertyIndex && llPropertyIndex.properties.length) {
-      boundsList.push(L.latLngBounds(llPropertyIndex.properties.map(p => [p.lat, p.lng])));
+      boundsList.push(robustBounds(llPropertyIndex.properties));
     }
     if (boundsList.length) {
       const combined = boundsList.reduce((a, b) => a.extend(b));
@@ -3642,13 +3639,6 @@ async function ensureTractLayer(shouldBuild, status) {
         },
       });
 
-      const slider = document.getElementById('map-slider');
-      slider.addEventListener('input', e => {
-        const { months: ms } = mapLayer();
-        mapMonth = ms[parseInt(e.target.value, 10)];
-        updateMapColors();
-        syncMapUrl();
-      });
       document.getElementById('map-year-select').addEventListener('change', e => {
         mapYear = e.target.value;
         updateMapColors();
@@ -3731,6 +3721,24 @@ async function ensureEvictionsLayer(shouldBuild, status, note) {
   }
 }
 
+/* Bounds that ignore the tails. A handful of filings carry addresses well
+   outside the county -- a corporate mailing address in another state, a
+   geocode that landed on a city centroid -- and an absolute min/max fit
+   zooms the map out to continental scale to include them, which makes the
+   opening view useless for the county the app is about. Trimming to the
+   1st-99th percentile of each axis keeps the real extent and drops the
+   strays; the outliers are still ON the map, they just do not get to
+   decide where it opens. */
+function robustBounds(properties, q = 0.01) {
+  const lats = properties.map(p => p.lat).sort((a, b) => a - b);
+  const lngs = properties.map(p => p.lng).sort((a, b) => a - b);
+  const at = (arr, f) => arr[Math.min(arr.length - 1, Math.max(0, Math.floor(arr.length * f)))];
+  return L.latLngBounds(
+    [at(lats, q), at(lngs, q)],
+    [at(lats, 1 - q), at(lngs, 1 - q)]
+  );
+}
+
 // Adds/removes each Leaflet layer to/from the map per the two layer
 // checkboxes, and shows/hides each layer's own control group — the one
 // place that keeps "what's checked" and "what's actually drawn" in
@@ -3746,8 +3754,9 @@ function updateMapLayerVisibility() {
     if (!tractsReady && leafletMap.hasLayer(tractLayer)) leafletMap.removeLayer(tractLayer);
   }
   document.getElementById('map-mode-group').style.display   = tractsReady ? '' : 'none';
-  document.getElementById('map-controls').style.display     = tractsReady ? '' : 'none';
   if (!tractsReady) document.getElementById('map-year-group').style.display = 'none';
+  const scaleChip = document.getElementById('tract-scale');
+  if (scaleChip) scaleChip.style.display = tractsReady ? '' : 'none';
 
   const evictionsReady = evictionsOn && !!(allRows && allRows.length) && llStartTs !== null;
   if (evictionsOn) {
@@ -4520,14 +4529,20 @@ function drawClipHistogram() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, rect.width, rect.height);
 
-  const max = Math.max(1, ...llMonthBins.map(b => b.count));
+  // The bars are TOTAL filings that month, not the geocoded subset. Drawing
+  // the subset made the histogram's own shape a picture of address coverage:
+  // whole years where nothing could be placed read as years with no evictions,
+  // which is the exact misreading the coverage band below exists to prevent.
+  // Every row carries a file_date, so this denominator is ~complete; the band
+  // underneath says how much of each month we could actually put on the map.
+  const max = Math.max(1, ...llMonthBins.map(b => b.total || b.count));
   const barW = Math.max(1, rect.width / Math.max(1, llMonthBins.length) - 1);
   const floor = 13;                              // leave room for the tick labels
   const cov = 4;                                 // the coverage band's own strip
   const usable = rect.height - floor - cov - 4;
   for (const b of llMonthBins) {
     const x = tsToFrac(b.ts) * rect.width;
-    const h = (b.count / max) * usable;
+    const h = ((b.total || b.count) / max) * usable;
     // In-window bars read gold, out-of-window bars stay muted: the histogram
     // itself shows what the current trim actually selects.
     const inWin = b.ts >= llStartTs && b.ts <= llEndTs;
@@ -4590,7 +4605,13 @@ function clipClamp() {
   llCursorTs = Math.min(Math.max(llCursorTs, llStartTs), llEndTs);
 }
 
-function clipApply() { clipClamp(); setLandlordsTimeInputs(); applyLandlordsTimeFilter(); }
+function clipApply() {
+  clipClamp();
+  setLandlordsTimeInputs();
+  applyLandlordsTimeFilter();
+  // One playhead, both layers: in trajectory mode the tracts follow it too.
+  if (mapMode === 'trajectory' && tractLayer) { syncMapControls(); updateMapColors(); }
+}
 
 function stopClipPlayback() {
   llPlaying = false;
