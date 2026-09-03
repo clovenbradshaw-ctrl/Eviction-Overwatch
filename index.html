@@ -578,8 +578,7 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 }
 .leaflet-control-zoom a:hover { background: var(--bg); color: var(--gold); }
 
-/* Landlords view — one dot per building, click through to ownership */
-#landlords-view { padding: 0; }
+/* Building/eviction layer — one dot per building, click through to ownership */
 .ll-controls {
   padding: 12px 24px; background: var(--surface);
   border-bottom: 1px solid var(--border);
@@ -617,7 +616,20 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   color: var(--gold); font-variant-numeric: tabular-nums;
 }
 .ll-cursor-row input[type="range"] { flex: 1; min-width: 200px; accent-color: var(--gold); }
-#ll-map { width: 100%; height: 65vh; background: #1a1814; }
+/* Banner shown while a landlord's whole portfolio is highlighted on the
+   map (the holonic step up from one building) — same surface/border
+   language as the other control strips above it. */
+.ll-highlight-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 8px 24px; background: rgba(196,164,74,0.08);
+  border-bottom: 1px solid var(--gold-dim); font-size: 11px; color: var(--text);
+}
+.ll-highlight-banner #ll-highlight-clear {
+  font-family: var(--mono); font-size: 10px; flex-shrink: 0;
+  padding: 3px 10px; color: var(--gold); background: transparent;
+  border: 1px solid var(--gold-dim); border-radius: 3px; cursor: pointer;
+}
+.ll-highlight-banner #ll-highlight-clear:hover { background: rgba(196,164,74,0.10); }
 /* !important: Leaflet's own stylesheet (loaded dynamically, so it lands
    after this block in the cascade) sets .leaflet-marker-icon { display:
    block }, which otherwise wins the tie against an equal-specificity
@@ -631,6 +643,10 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 .ll-cluster-icon.tier-2 { background: #e8a735; box-shadow: 0 0 0 3px rgba(232,167,53,0.25); }
 .ll-cluster-icon.tier-3 { background: #e85d3a; color: #1a1810; box-shadow: 0 0 0 3px rgba(232,93,58,0.28); }
 .ll-dot { border-radius: 50%; box-shadow: 0 0 0 2px rgba(0,0,0,0.4); }
+/* Landlord-portfolio highlight ring — drawn OVER the ordinary dots/heat
+   layer, never replacing it, so a reader sees one owner's buildings
+   against the shape of the whole city rather than in isolation. */
+.ll-highlight-ring { filter: drop-shadow(0 0 4px rgba(196,164,74,0.8)); }
 
 /* Building/landlord detail panel — same right-edge treatment as the case
    record panel, since this is conceptually the same kind of drill-down. */
@@ -698,7 +714,20 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 #property-panel .pp-lm-other-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--gold-dim); margin-bottom: 5px; }
 #property-panel .pp-lm-other-row { display: flex; justify-content: space-between; align-items: center; gap: 6px; padding: 3px 0; font-size: 11px; }
 #property-panel .pp-lm-other-addr { color: var(--text); }
+#property-panel .pp-lm-other-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+#property-panel .pp-lm-other-jump { color: var(--gold); text-decoration: none; font-size: 10px; white-space: nowrap; }
+#property-panel .pp-lm-other-jump:hover { text-decoration: underline; }
 #property-panel .pp-lm-other-more { font-size: 10px; color: var(--dim); margin-top: 4px; font-style: italic; }
+/* The owner-wide trajectory + "show on the map" control — the holonic
+   step from one building up to everything this owner holds. */
+#property-panel .pp-lm-portfolio-traj { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--gold-dim); }
+#property-panel .pp-lm-highlight-btn {
+  display: block; width: 100%; margin-top: 8px;
+  font-family: var(--mono); font-size: 10px; text-align: center;
+  padding: 5px 8px; color: var(--gold); background: transparent;
+  border: 1px solid var(--gold-dim); border-radius: 3px; cursor: pointer;
+}
+#property-panel .pp-lm-highlight-btn:hover { background: rgba(196,164,74,0.10); }
 #property-panel .pp-gap-note {
   font-size: 10px; color: var(--dim); font-style: italic; line-height: 1.5;
 }
@@ -1387,7 +1416,6 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
         <button data-val="timeline">Timeline</button>
         <button data-val="coverage">Coverage</button>
         <button data-val="map">Map</button>
-        <button data-val="landlords">Landlords</button>
         <button data-val="sources">Sources</button>
         <button data-val="live">Live Scraper</button>
         <button data-val="chat">Chat β</button>
@@ -1430,6 +1458,18 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
       <label>Year</label>
       <select id="map-year-select"></select>
     </div>
+    <div class="group" id="map-layers-group" style="display:none">
+      <label>Layers</label>
+      <label class="ll-layer-check"><input type="checkbox" id="layer-tracts" checked> Census tracts</label>
+      <label class="ll-layer-check"><input type="checkbox" id="layer-evictions" checked> Evictions</label>
+    </div>
+    <div class="group" id="ll-mode-group" style="display:none">
+      <label>Buildings</label>
+      <div class="seg" id="ll-layer-seg">
+        <button data-val="dots" class="on">Buildings</button>
+        <button data-val="heat">Heat map</button>
+      </div>
+    </div>
     <div class="coverage" id="coverage-headline"></div>
   </div>
 
@@ -1469,19 +1509,7 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
         <span>fewer</span><span class="scale-bar"></span><span>more</span>
       </div>
     </div>
-    <div class="map-wrap" id="map-wrap">
-      <div id="map"></div>
-      <aside id="tract-panel" aria-hidden="true"></aside>
-    </div>
-    <div class="map-status" id="map-status">Loading map…</div>
-  </div>
-
-  <div id="landlords-view" style="display:none">
     <div class="ll-controls" id="ll-controls" style="display:none">
-      <div class="seg" id="ll-layer-seg">
-        <button data-val="dots" class="on">Buildings</button>
-        <button data-val="heat">Heat map</button>
-      </div>
       <div class="ll-time-controls">
         <label for="ll-start-date">Start</label>
         <input type="date" id="ll-start-date">
@@ -1500,11 +1528,16 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
       <span class="ll-cursor-label" id="ll-cursor-label"></span>
       <input type="range" id="ll-cursor-slider" min="0" max="0" value="0">
     </div>
-    <div class="map-wrap" id="ll-map-wrap">
-      <div id="ll-map"></div>
+    <div class="ll-highlight-banner" id="ll-highlight-banner" style="display:none">
+      <span id="ll-highlight-text"></span>
+      <button type="button" id="ll-highlight-clear">Clear</button>
+    </div>
+    <div class="map-wrap" id="map-wrap">
+      <div id="map"></div>
+      <aside id="tract-panel" aria-hidden="true"></aside>
       <aside id="property-panel" aria-hidden="true"></aside>
     </div>
-    <div class="map-status" id="ll-map-status">Loading map…</div>
+    <div class="map-status" id="map-status">Loading map…</div>
   </div>
 
   <div id="sources-view" style="display:none">
@@ -2017,23 +2050,33 @@ let agg = {
   countyTotals:    null,      // Davidson Co. comparison values from the MSS file
 };
 
-// Map view state
+// Map view state — ONE Leaflet instance, census tracts and evictions are
+// independently toggleable layers on it (never two separate maps).
 let tractGeometries = null;   // GeoJSON FeatureCollection from TIGERweb (shared by both sources)
 let leafletMap = null;
 let tractLayer = null;
 let mapMode = 'alltime';      // 'alltime' | 'year' | 'trajectory'
 let mapMonth = null;          // currently displayed "MM/YYYY" (trajectory mode)
 let mapYear = null;           // selected year (year mode)
+let mapDidInitialFit = false; // fitBounds runs once, on first data, never again
 const TRAJECTORY_HALF_LIFE_MONTHS = 3;  // hotness fades to 50% after 3 months
 
-// Landlords view state
-let llMap = null;
+// Building/eviction layer state
 let llClusterGroup = null;
 let llHeatLayer = null;
 let llPropertyIndex = null;   // built once per snapshot, keyed by normalized address
 let llLayerMode = 'dots';     // 'dots' | 'heat'
 let llOpenAddressKey = null;
 const _lmLookupCache = new Map();  // address key -> resolved Landlord Mapper result (or null)
+
+// Landlord-portfolio highlight — the holonic step from one building up to
+// everything an owner holds, drawn as its own always-visible layer over the
+// base dots/heat rather than replacing them, so a reader can see the shape
+// of one owner's holdings against the whole city. Every highlight is built
+// from Landlord Mapper's own inferred portfolio, never re-derived here.
+let llHighlightKeys = null;   // Set<propertyKey> | null
+let llHighlightLabel = null;
+let llHighlightLayer = null;
 
 // Time controls: start/end bound WHICH filings count at all; the cursor is
 // "as of when" the map's heat is shown; half-life is how fast a filing's
@@ -2047,6 +2090,90 @@ const DAY_MS = 86400000;
 
 function toISODate(ts) { return new Date(ts).toISOString().slice(0, 10); }
 function fromISODate(s) { const [y, m, d] = s.split('-').map(Number); return Date.UTC(y, m - 1, d); }
+
+// A URL-restored start/end/cursor/half-life, held here until the eviction
+// layer's own lazy init has computed the REAL data range to clamp it
+// against — consumed exactly once, then cleared. null until a link with
+// those params is opened.
+let llUrlRestorePending = null;
+
+// Reads a shared/bookmarked map view back out of the URL, before the first
+// render, so a copied link reproduces the same tab, layers, time window,
+// and tract-map mode a reader was looking at. Deliberately does NOT restore
+// which building panel was open or an active landlord highlight — those
+// are a moment in a session, not a shareable query.
+function restoreStateFromUrl() {
+  const params = new URLSearchParams(location.search);
+  const VIEWS = ['cases', 'districts', 'timeline', 'coverage', 'map', 'sources', 'live', 'chat'];
+  const view = params.get('view');
+  if (view && VIEWS.includes(view)) {
+    viewMode = view;
+    document.querySelectorAll('#view-seg button').forEach(b => b.classList.toggle('on', b.dataset.val === view));
+  }
+
+  if (params.has('tracts')) document.getElementById('layer-tracts').checked = params.get('tracts') !== '0';
+  if (params.has('evictions')) document.getElementById('layer-evictions').checked = params.get('evictions') !== '0';
+
+  const llmode = params.get('llmode');
+  if (llmode === 'dots' || llmode === 'heat') {
+    llLayerMode = llmode;
+    document.querySelectorAll('#ll-layer-seg button').forEach(b => b.classList.toggle('on', b.dataset.val === llmode));
+  }
+
+  const source = params.get('source');
+  if (source === 'princeton' || source === 'scraped') {
+    mapSource = source;
+    document.querySelectorAll('#map-source-seg button').forEach(b => b.classList.toggle('on', b.dataset.val === source));
+  }
+  const mode = params.get('mode');
+  if (mode === 'alltime' || mode === 'year' || mode === 'trajectory') {
+    mapMode = mode;
+    document.querySelectorAll('#map-mode-seg button').forEach(b => b.classList.toggle('on', b.dataset.val === mode));
+  }
+  if (params.has('year')) mapYear = params.get('year');
+  if (params.has('month')) mapMonth = params.get('month');
+
+  if (params.has('start') || params.has('end') || params.has('cursor') || params.has('halflife')) {
+    const start = params.has('start') ? fromISODate(params.get('start')) : null;
+    const end = params.has('end') ? fromISODate(params.get('end')) : null;
+    const cursor = params.has('cursor') ? fromISODate(params.get('cursor')) : null;
+    const halflife = params.has('halflife') ? parseFloat(params.get('halflife')) : null;
+    llUrlRestorePending = {
+      start: Number.isFinite(start) ? start : null,
+      end: Number.isFinite(end) ? end : null,
+      cursor: Number.isFinite(cursor) ? cursor : null,
+      halflife: (Number.isFinite(halflife) && halflife > 0) ? halflife : null,
+    };
+  }
+}
+
+// Keeps the URL's query string in agreement with the map's own view/filter
+// state -- never the open panel or landlord highlight (see above). Uses
+// replaceState, never pushState: dragging a slider is not a new page in
+// browser history, it's the same page with different filters.
+function syncMapUrl() {
+  const params = new URLSearchParams();
+  if (viewMode !== 'cases') params.set('view', viewMode);
+  if (viewMode === 'map') {
+    const tractsOn = document.getElementById('layer-tracts').checked;
+    const evictionsOn = document.getElementById('layer-evictions').checked;
+    if (!tractsOn) params.set('tracts', '0');
+    if (!evictionsOn) params.set('evictions', '0');
+    if (mapSource !== 'princeton') params.set('source', mapSource);
+    if (mapMode !== 'alltime') params.set('mode', mapMode);
+    if (mapMode === 'year' && mapYear) params.set('year', mapYear);
+    if (mapMode === 'trajectory' && mapMonth) params.set('month', mapMonth);
+    if (llLayerMode !== 'dots') params.set('llmode', llLayerMode);
+    if (llStartTs !== null) {
+      params.set('start', toISODate(llStartTs));
+      params.set('end', toISODate(llEndTs));
+      params.set('cursor', toISODate(llCursorTs));
+      if (llHalfLifeMonths !== 3) params.set('halflife', String(llHalfLifeMonths));
+    }
+  }
+  const qs = params.toString();
+  history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
+}
 
 // Decayed heat as of llCursorTs, over cases within [llStartTs, llEndTs],
 // per building. A case dated after the cursor contributes nothing (it
@@ -2107,6 +2234,7 @@ function applyInitialCases(data) {
   buildHeader();
   bindViewControls();
   bindRowClicks();
+  restoreStateFromUrl();
   renderProvenance();
   render();
 }
@@ -3175,22 +3303,27 @@ function syncMapControls() {
 // Back-compat alias: main called syncMapSlider() in places.
 const syncMapSlider = syncMapControls;
 
+// Single Leaflet instance for the whole Map tab. Census tracts and
+// evictions are two independently toggleable LAYERS on it, never two maps —
+// the reader moves between holonic levels (city → tract → building →
+// owner's whole portfolio) by toggling/clicking on one continuous map
+// rather than switching tabs.
 async function renderMapView() {
   const status = document.getElementById('map-status');
-  const controls = document.getElementById('map-controls');
+  const note = document.getElementById('ll-coverage-note');
+  const tractsOn = document.getElementById('layer-tracts').checked;
+  const evictionsOn = document.getElementById('layer-evictions').checked;
 
-  const { months } = mapLayer();
-  if (!months.length) {
-    status.textContent = mapSource === 'princeton'
-      ? 'Waiting for Princeton CSV…'
-      : 'No scraped cases have census tracts yet.';
-    status.style.display = '';
-    controls.style.display = 'none';
-    return;
-  }
+  // Hide every layer-specific control while (re)loading so nothing shows
+  // stale controls for a layer that isn't actually on the map yet.
+  document.getElementById('map-controls').style.display = 'none';
+  document.getElementById('ll-controls').style.display = 'none';
+  document.getElementById('ll-cursor-row').style.display = 'none';
+  status.textContent = 'Loading map…';
+  status.style.display = '';
 
-  // Leaflet is loaded on demand — first map view pays a one-time cost, every
-  // other view never touches it.
+  // Leaflet core is shared by both layers — loaded once, on first visit to
+  // this tab, whichever layer(s) a reader has on.
   try {
     await Promise.all([
       loadStyle(LEAFLET_CSS_URL),
@@ -3201,85 +3334,268 @@ async function renderMapView() {
     return;
   }
 
-  // Fetch tract polygons once per session
-  if (!tractGeometries) {
-    status.textContent = 'Fetching Davidson County tract boundaries from TIGERweb…';
-    status.style.display = '';
-    controls.style.display = 'none';
-    try {
-      tractGeometries = await fetchTractGeometries();
-    } catch (e) {
-      console.warn('tract geometry fetch failed:', e);
-      status.textContent = 'Failed to load tract boundaries: ' + e.message;
-      return;
+  if (!leafletMap) {
+    leafletMap = L.map('map', { zoomControl: true, attributionControl: false });
+    // Esri's hosted "Dark Gray Canvas" basemap (base + labels, two stacked
+    // tile layers) -- free, no API key, no account, ever. Two other free
+    // options were tried and rejected first, both live: CARTO's hosted
+    // basemaps (dark_nolabels, what this map used before) now require an
+    // API key -- confirmed in production, the reason this changed at all.
+    // Plain OpenStreetMap raster tiles (tile.openstreetmap.org) were tried
+    // next and actively BLOCKED mid-testing -- OSM's own tile usage policy
+    // (osm.wiki/Blocked) reserves the right to refuse exactly this shape of
+    // traffic (an app embedding their tiles) without prior arrangement, and
+    // it did so on every tile, not just a rate-limited few. Esri's basemap
+    // tiles carry no such policy for ordinary display use, are natively
+    // dark (no CSS invert filter needed to fake a theme over light tiles),
+    // and are the standard free, keyless Leaflet basemap choice for exactly
+    // this reason.
+    L.tileLayer('https://services.arcgisonline.com/arcgis/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom: 16,
+    }).addTo(leafletMap);
+    // Labels overlay -- added second so it stacks above the base tiles
+    // (both share Leaflet's default tilePane; later-added wins ties),
+    // still below the tract choropleth/markers, which live in their own
+    // higher panes regardless of tile add order.
+    L.tileLayer('https://services.arcgisonline.com/arcgis/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom: 16,
+    }).addTo(leafletMap);
+    L.control.attribution({ prefix: false })
+      .addAttribution('Tiles © Esri — Esri, HERE, Garmin, © OpenStreetMap contributors · Tracts © US Census · Ownership via <a href="https://landlordmapper.org/" target="_blank" rel="noopener">Landlord Mapper</a>')
+      .addTo(leafletMap);
+  }
+
+  // The two layers' own setup (each may hit the network — tract geometry
+  // from TIGERweb, cluster/heat plugin scripts) runs CONCURRENTLY, not one
+  // after the other. Sequential awaits here would mean a slow tract-boundary
+  // fetch blocks the eviction dots from ever appearing, even though the two
+  // layers are otherwise fully independent — measured live: a real fetch
+  // that takes longer than a few seconds left the evictions layer entirely
+  // unbuilt because the function was still parked awaiting tract geometry.
+  const { months } = mapLayer();
+  const tractDataReady = months.length > 0;
+  await Promise.all([
+    ensureTractLayer(tractsOn && tractDataReady, status),
+    ensureEvictionsLayer(evictionsOn && !!(allRows && allRows.length), status, note),
+  ]);
+
+  // Frame the map on whatever layer(s) actually have something to show —
+  // once only, on first load, so toggling a layer later never yanks the
+  // view out from under a reader who has already panned/zoomed.
+  if (!mapDidInitialFit) {
+    const boundsList = [];
+    if (tractsOn && tractLayer) boundsList.push(tractLayer.getBounds());
+    if (evictionsOn && llPropertyIndex && llPropertyIndex.properties.length) {
+      boundsList.push(L.latLngBounds(llPropertyIndex.properties.map(p => [p.lat, p.lng])));
+    }
+    if (boundsList.length) {
+      const combined = boundsList.reduce((a, b) => a.extend(b));
+      leafletMap.fitBounds(combined, { padding: [20, 20] });
+      mapDidInitialFit = true;
     }
   }
 
-  // Init Leaflet once
-  if (!leafletMap) {
-    leafletMap = L.map('map', { zoomControl: true, attributionControl: false });
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-    }).addTo(leafletMap);
-    L.control.attribution({ prefix: false })
-      .addAttribution('Tiles © OpenStreetMap, CartoDB · Tracts © US Census')
-      .addTo(leafletMap);
-
-    tractLayer = L.geoJSON(tractGeometries, {
-      style: () => ({
-        fillColor: '#1a1814', fillOpacity: 0.75,
-        color: '#2a2820', weight: 1, opacity: 0.6,
-      }),
-      onEachFeature: (feature, layer) => {
-        const geoid = String(feature.properties.GEOID);
-        layer.on('mouseover', e => {
-          const frame = mapHeatFrame();
-          const info = agg.tractInfo[geoid];
-          const nameLine = info && info.name ? info.name : `Tract ${geoid}`;
-          const repLine = info && info.rep ? ` · ${escapeHtml(info.rep)}` : '';
-          const districtLine = info && info.district ? `<br>${escapeHtml(info.district)}${repLine}` : '';
-          layer.bindTooltip(
-            `<strong>${nameLine}</strong>${districtLine}<br>${frame.tooltipFmt(geoid)}<br><span style="color:#c4a44a">click for detail</span>`,
-            { sticky: true }
-          ).openTooltip(e.latlng);
-          layer.setStyle({ weight: 2, color: '#c4a44a' });
-        });
-        layer.on('mouseout', () => {
-          layer.closeTooltip();
-          if (geoid !== selectedTract) layer.setStyle({ weight: 1, color: '#2a2820' });
-        });
-        layer.on('click', () => openTractPanel(geoid));
-      },
-    }).addTo(leafletMap);
-
-    leafletMap.fitBounds(tractLayer.getBounds(), { padding: [20, 20] });
-
-    const slider = document.getElementById('map-slider');
-    slider.addEventListener('input', e => {
-      const { months: ms } = mapLayer();
-      mapMonth = ms[parseInt(e.target.value, 10)];
-      updateMapColors();
-    });
-
-    document.getElementById('map-year-select').addEventListener('change', e => {
-      mapYear = e.target.value;
-      updateMapColors();
-    });
-  }
-
   syncMapControls();
-  status.style.display = 'none';
-  controls.style.display = '';
   updateMapColors();
+  updateMapLayerVisibility();
+
+  // Checked against what actually got BUILT, not just what was theoretically
+  // available — a data source with months but a failed geometry fetch (or a
+  // failed plugin load) is not "something to show" just because the data
+  // existed on paper.
+  const somethingToShow = !!(tractsOn && tractLayer) || !!(evictionsOn && llPropertyIndex && llPropertyIndex.properties.length);
+  if (somethingToShow) {
+    status.style.display = 'none';
+  } else if (tractsOn && tractDataReady && !tractLayer) {
+    status.style.display = '';
+    status.textContent = 'Failed to load tract boundaries — see the console for details.';
+  } else {
+    status.style.display = '';
+    status.textContent = (!allRows || !allRows.length)
+      ? 'No case data loaded yet.'
+      : (mapSource === 'princeton' ? 'Waiting for Princeton CSV…' : 'No scraped cases have census tracts yet.');
+  }
   setTimeout(() => leafletMap && leafletMap.invalidateSize(), 50);
 }
 
-/* ───────────────────────── Landlords view ─────────────────────────────
+// Outer holon: census-tract choropleth, the whole city at once. Builds
+// tractLayer at most once (subsequent calls with shouldBuild=true just
+// no-op past the existence checks); never touches the map's layer
+// membership itself — updateMapLayerVisibility() owns add/remove.
+// finally, not just a trailing call: shouldBuild=false, a failed fetch, and
+// the happy path all need the SAME "make this layer's own controls agree
+// with reality right now" step, and none of them should have to wait on
+// ensureEvictionsLayer's own unrelated, independently-timed network calls
+// to get there (measured live: a slow tract fetch was delaying evictions'
+// own controls from ever appearing, because both used to only sync at the
+// shared tail of renderMapView, after BOTH finished).
+async function ensureTractLayer(shouldBuild, status) {
+  try {
+    if (!shouldBuild) return;
+    if (!tractGeometries) {
+      status.textContent = 'Fetching Davidson County tract boundaries from TIGERweb…';
+      try {
+        tractGeometries = await fetchTractGeometries();
+      } catch (e) {
+        console.warn('tract geometry fetch failed:', e);
+        return;
+      }
+    }
+    if (tractGeometries && !tractLayer) {
+      tractLayer = L.geoJSON(tractGeometries, {
+        style: () => ({
+          fillColor: '#1a1814', fillOpacity: 0.75,
+          color: '#2a2820', weight: 1, opacity: 0.6,
+        }),
+        onEachFeature: (feature, layer) => {
+          const geoid = String(feature.properties.GEOID);
+          layer.on('mouseover', e => {
+            const frame = mapHeatFrame();
+            const info = agg.tractInfo[geoid];
+            const nameLine = info && info.name ? info.name : `Tract ${geoid}`;
+            const repLine = info && info.rep ? ` · ${escapeHtml(info.rep)}` : '';
+            const districtLine = info && info.district ? `<br>${escapeHtml(info.district)}${repLine}` : '';
+            layer.bindTooltip(
+              `<strong>${nameLine}</strong>${districtLine}<br>${frame.tooltipFmt(geoid)}<br><span style="color:#c4a44a">click for detail</span>`,
+              { sticky: true }
+            ).openTooltip(e.latlng);
+            layer.setStyle({ weight: 2, color: '#c4a44a' });
+          });
+          layer.on('mouseout', () => {
+            layer.closeTooltip();
+            if (geoid !== selectedTract) layer.setStyle({ weight: 1, color: '#2a2820' });
+          });
+          layer.on('click', () => openTractPanel(geoid));
+        },
+      });
+
+      const slider = document.getElementById('map-slider');
+      slider.addEventListener('input', e => {
+        const { months: ms } = mapLayer();
+        mapMonth = ms[parseInt(e.target.value, 10)];
+        updateMapColors();
+        syncMapUrl();
+      });
+      document.getElementById('map-year-select').addEventListener('change', e => {
+        mapYear = e.target.value;
+        updateMapColors();
+        syncMapUrl();
+      });
+    }
+  } finally {
+    // Own controls reflect reality the moment THIS layer's setup is done,
+    // never gated on how long the eviction layer's own setup takes.
+    syncMapControls();
+    updateMapColors();
+    updateMapLayerVisibility();
+  }
+}
+
+// Middle holon: one dot per building.
+async function ensureEvictionsLayer(shouldBuild, status, note) {
+  try {
+    if (!shouldBuild) return;
+    try {
+      await Promise.all([
+        loadStyle(MARKERCLUSTER_CSS_URL),
+        loadStyle(MARKERCLUSTER_DEFAULT_CSS_URL),
+        loadScript(MARKERCLUSTER_JS_URL),
+        loadScript(LEAFLET_HEAT_JS_URL),
+      ]);
+    } catch (e) {
+      console.warn('eviction-layer plugin load failed:', e);
+      return;
+    }
+
+    if (!llPropertyIndex) llPropertyIndex = buildPropertyIndex();
+    const { properties, totalCases, withCoords } = llPropertyIndex;
+    const pct = totalCases ? Math.round(100 * withCoords / totalCases) : 0;
+    note.textContent = `${properties.length.toLocaleString()} mapped buildings, from ${withCoords.toLocaleString()} of ${totalCases.toLocaleString()} cases with a resolved address (${pct}%). Cases without a geocoded address aren't shown here — see the Cases tab for the full docket.`;
+    if (!properties.length) return;
+
+    // Initialize the time controls ONCE, from the real span of dated,
+    // mappable filings — never reset on a later tab switch, so a reader's
+    // chosen window survives navigating away and back.
+    if (llStartTs === null) {
+      let minTs = Infinity, maxTs = -Infinity;
+      for (const p of properties) for (const c of p.cases) {
+        const t = parseUsDate(c.file_date);
+        if (!t) continue;
+        if (t < minTs) minTs = t;
+        if (t > maxTs) maxTs = t;
+      }
+      if (!Number.isFinite(minTs)) { minTs = Date.now(); maxTs = Date.now(); }
+      // A shared/bookmarked link may have already asked for a narrower window
+      // (restoreStateFromUrl) before the real data range was known — apply it
+      // now, clamped so a stale or out-of-range link can't point outside what
+      // this dataset actually covers.
+      const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+      if (llUrlRestorePending) {
+        const req = llUrlRestorePending;
+        llStartTs = clamp(req.start ?? minTs, minTs, maxTs);
+        llEndTs = clamp(req.end ?? maxTs, minTs, maxTs);
+        llCursorTs = clamp(req.cursor ?? llEndTs, llStartTs, llEndTs);
+        if (req.halflife) llHalfLifeMonths = req.halflife;
+        llUrlRestorePending = null;
+      } else {
+        llStartTs = minTs; llEndTs = maxTs; llCursorTs = maxTs;
+      }
+      bindLandlordsTimeControls();
+      setLandlordsTimeInputs();
+    }
+    applyLandlordsTimeFilter();
+  } finally {
+    // Own controls reflect reality the moment THIS layer's setup is done,
+    // never gated on how long the tract layer's own (often slower, network-
+    // bound) setup takes.
+    updateMapLayerVisibility();
+  }
+}
+
+// Adds/removes each Leaflet layer to/from the map per the two layer
+// checkboxes, and shows/hides each layer's own control group — the one
+// place that keeps "what's checked" and "what's actually drawn" in
+// agreement, called after every render and every checkbox change.
+function updateMapLayerVisibility() {
+  const tractsOn = document.getElementById('layer-tracts').checked;
+  const evictionsOn = document.getElementById('layer-evictions').checked;
+  const { months } = mapLayer();
+  const tractsReady = tractsOn && months.length > 0;
+
+  if (tractLayer) {
+    if (tractsReady && !leafletMap.hasLayer(tractLayer)) tractLayer.addTo(leafletMap);
+    if (!tractsReady && leafletMap.hasLayer(tractLayer)) leafletMap.removeLayer(tractLayer);
+  }
+  document.getElementById('map-source-group').style.display = tractsOn    ? '' : 'none';
+  document.getElementById('map-mode-group').style.display   = tractsReady ? '' : 'none';
+  document.getElementById('map-controls').style.display     = tractsReady ? '' : 'none';
+  if (!tractsReady) document.getElementById('map-year-group').style.display = 'none';
+
+  const evictionsReady = evictionsOn && !!(allRows && allRows.length) && llStartTs !== null;
+  if (evictionsOn) {
+    updateLandlordsLayer();
+  } else {
+    if (llClusterGroup && leafletMap.hasLayer(llClusterGroup)) leafletMap.removeLayer(llClusterGroup);
+    if (llHeatLayer && leafletMap.hasLayer(llHeatLayer)) leafletMap.removeLayer(llHeatLayer);
+    if (llHighlightLayer && leafletMap.hasLayer(llHighlightLayer)) leafletMap.removeLayer(llHighlightLayer);
+    closePropertyPanel();
+  }
+  document.getElementById('ll-mode-group').style.display        = evictionsOn    ? '' : 'none';
+  document.getElementById('ll-controls').style.display          = evictionsReady ? '' : 'none';
+  document.getElementById('ll-cursor-row').style.display        = evictionsReady ? '' : 'none';
+  document.getElementById('ll-highlight-banner').style.display  = (evictionsOn && llHighlightKeys) ? '' : 'none';
+  syncMapUrl();
+}
+
+/* ─────────────────── Building / landlord-portfolio layer ───────────────
    One dot per building. Click a building to see every filing at that
    address, then — via a live lookup against Landlord Mapper's public API
    — who owns it and a link straight to their page there, so the reader
    can see everything else that owner holds without this app trying to
-   re-derive Landlord Mapper's own ownership-matching work. */
+   re-derive Landlord Mapper's own ownership-matching work. From there, a
+   reader can step up a holonic level: from one building to that owner's
+   whole known portfolio, its own filing trajectory, and every one of
+   their buildings highlighted together on the same map. */
 
 function normalizeAddressKey(addr) {
   if (!addr) return null;
@@ -3323,6 +3639,21 @@ function parseUsDate(v) {
   return m ? new Date(+m[3], +m[1] - 1, +m[2]).getTime() : 0;
 }
 
+// Monthly filing counts, shaped for the SAME sparklineHtml()/sortMonthsAsc()
+// the Districts view already uses (caseFileDateToMonth too) — reused rather
+// than reinvented, so a building or owner's trend reads in the same visual
+// language as everything else here, instead of a second charting mechanism.
+function monthlyTrajectory(cases, maxMonths = 18) {
+  const monthsMap = {};
+  for (const c of cases) {
+    const m = caseFileDateToMonth(c.file_date);
+    if (m) monthsMap[m] = (monthsMap[m] || 0) + 1;
+  }
+  let months = sortMonthsAsc(Object.keys(monthsMap));
+  if (months.length > maxMonths) months = months.slice(months.length - maxMonths);
+  return { monthsMap, months };
+}
+
 function llMarkerColor(heat) {
   if (heat >= 6) return '#e85d3a';
   if (heat >= 2) return '#e8a735';
@@ -3331,90 +3662,6 @@ function llMarkerColor(heat) {
 
 function llMarkerRadius(heat) {
   return Math.min(6 + Math.sqrt(heat) * 3, 24);
-}
-
-async function renderLandlordsView() {
-  const status = document.getElementById('ll-map-status');
-  const controls = document.getElementById('ll-controls');
-  const note = document.getElementById('ll-coverage-note');
-
-  if (!allRows || !allRows.length) {
-    status.textContent = 'No case data loaded yet.';
-    status.style.display = '';
-    controls.style.display = 'none';
-    return;
-  }
-
-  status.textContent = 'Loading map…';
-  status.style.display = '';
-  controls.style.display = 'none';
-
-  try {
-    await Promise.all([
-      loadStyle(LEAFLET_CSS_URL),
-      loadScript(LEAFLET_JS_URL),
-    ]);
-    await Promise.all([
-      loadStyle(MARKERCLUSTER_CSS_URL),
-      loadStyle(MARKERCLUSTER_DEFAULT_CSS_URL),
-      loadScript(MARKERCLUSTER_JS_URL),
-      loadScript(LEAFLET_HEAT_JS_URL),
-    ]);
-  } catch (e) {
-    status.textContent = 'Failed to load map library: ' + e.message;
-    return;
-  }
-
-  if (!llPropertyIndex) llPropertyIndex = buildPropertyIndex();
-  const { properties, totalCases, withCoords } = llPropertyIndex;
-
-  const pct = totalCases ? Math.round(100 * withCoords / totalCases) : 0;
-  note.textContent = `${properties.length.toLocaleString()} mapped buildings, from ${withCoords.toLocaleString()} of ${totalCases.toLocaleString()} cases with a resolved address (${pct}%). Cases without a geocoded address aren't shown here — see the Cases tab for the full docket.`;
-
-  if (!properties.length) {
-    status.textContent = 'No geocoded cases available to map.';
-    return;
-  }
-
-  // Initialize the time controls ONCE, from the real span of dated,
-  // mappable filings — never reset on a later tab switch, so a reader's
-  // chosen window survives navigating away and back.
-  if (llStartTs === null) {
-    let minTs = Infinity, maxTs = -Infinity;
-    for (const p of properties) for (const c of p.cases) {
-      const t = parseUsDate(c.file_date);
-      if (!t) continue;
-      if (t < minTs) minTs = t;
-      if (t > maxTs) maxTs = t;
-    }
-    if (!Number.isFinite(minTs)) { minTs = Date.now(); maxTs = Date.now(); }
-    llStartTs = minTs; llEndTs = maxTs; llCursorTs = maxTs;
-    bindLandlordsTimeControls();
-    setLandlordsTimeInputs();
-  }
-
-  if (!llMap) {
-    // Same free, no-API-key CartoDB basemap tiles the Districts map already
-    // uses — deliberately reused rather than introducing a second, possibly
-    // metered tile provider.
-    llMap = L.map('ll-map', { zoomControl: true, attributionControl: false });
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png', {
-      maxZoom: 19, subdomains: 'abcd',
-    }).addTo(llMap);
-    L.control.attribution({ prefix: false })
-      .addAttribution('Tiles © OpenStreetMap, CartoDB · Ownership via <a href="https://landlordmapper.org/" target="_blank" rel="noopener">Landlord Mapper</a>')
-      .addTo(llMap);
-
-    const bounds = L.latLngBounds(properties.map(p => [p.lat, p.lng]));
-    llMap.fitBounds(bounds, { padding: [24, 24] });
-  }
-
-  applyLandlordsTimeFilter();
-
-  status.style.display = 'none';
-  controls.style.display = '';
-  document.getElementById('ll-cursor-row').style.display = '';
-  setTimeout(() => llMap && llMap.invalidateSize(), 50);
 }
 
 // Re-derives heat under the current start/end/cursor/half-life and redraws
@@ -3429,6 +3676,7 @@ function applyLandlordsTimeFilter() {
   if (cursorLabel) {
     cursorLabel.textContent = `As of ${toISODate(llCursorTs)} · ${properties.length.toLocaleString()} building(s) with filings in range (½-life ${llHalfLifeMonths} mo)`;
   }
+  syncMapUrl();
 }
 
 function setLandlordsTimeInputs() {
@@ -3501,7 +3749,7 @@ function bindLandlordsTimeControls() {
 }
 
 function buildLandlordsLayers(properties, maxHeat) {
-  if (llClusterGroup) { llMap.removeLayer(llClusterGroup); llClusterGroup = null; }
+  if (llClusterGroup) { leafletMap.removeLayer(llClusterGroup); llClusterGroup = null; }
   llClusterGroup = L.markerClusterGroup({
     maxClusterRadius: 50,
     iconCreateFunction: (cluster) => {
@@ -3541,14 +3789,82 @@ function buildLandlordsLayers(properties, maxHeat) {
 }
 
 function updateLandlordsLayer() {
-  if (!llMap || !llClusterGroup || !llHeatLayer) return;
+  if (!leafletMap || !llClusterGroup || !llHeatLayer) return;
   if (llLayerMode === 'heat') {
-    if (llMap.hasLayer(llClusterGroup)) llMap.removeLayer(llClusterGroup);
-    if (!llMap.hasLayer(llHeatLayer)) llHeatLayer.addTo(llMap);
+    if (leafletMap.hasLayer(llClusterGroup)) leafletMap.removeLayer(llClusterGroup);
+    if (!leafletMap.hasLayer(llHeatLayer)) llHeatLayer.addTo(leafletMap);
   } else {
-    if (llMap.hasLayer(llHeatLayer)) llMap.removeLayer(llHeatLayer);
-    if (!llMap.hasLayer(llClusterGroup)) llClusterGroup.addTo(llMap);
+    if (leafletMap.hasLayer(llHeatLayer)) leafletMap.removeLayer(llHeatLayer);
+    if (!leafletMap.hasLayer(llClusterGroup)) llClusterGroup.addTo(leafletMap);
   }
+  // The highlight ring layer rides on top of whichever eviction submode is
+  // active, since it answers a different question (which buildings are
+  // this owner's) than dots/heat do (how hot is each building right now).
+  if (llHighlightLayer && !leafletMap.hasLayer(llHighlightLayer)) llHighlightLayer.addTo(leafletMap);
+}
+
+// Holonic zoom, step 2: from one building up to everything an owner holds.
+// keys is every property key Landlord Mapper says belongs to this owner
+// AND that we also have eviction filings for in this dataset; label is the
+// owner's own name for display. Draws a distinct ring around each one
+// (never replacing the base dots/heat layer) and fits the map to show them
+// all at once.
+function applyLandlordHighlight(keys, label) {
+  llHighlightKeys = new Set(keys);
+  llHighlightLabel = label;
+  rebuildLandlordHighlightLayer();
+
+  const banner = document.getElementById('ll-highlight-banner');
+  const text = document.getElementById('ll-highlight-text');
+  if (banner && text) {
+    text.innerHTML = `Showing ${llHighlightKeys.size} propert${llHighlightKeys.size === 1 ? 'y' : 'ies'} linked to <strong>${escapeHtml(label)}</strong> ${LM_TAG}`;
+    banner.style.display = '';
+  }
+  if (llHighlightLayer) {
+    const bounds = llHighlightLayer.getBounds();
+    if (bounds.isValid()) leafletMap.fitBounds(bounds, { padding: [40, 40] });
+  }
+}
+
+function clearLandlordHighlight() {
+  llHighlightKeys = null;
+  llHighlightLabel = null;
+  if (llHighlightLayer && leafletMap && leafletMap.hasLayer(llHighlightLayer)) {
+    leafletMap.removeLayer(llHighlightLayer);
+  }
+  llHighlightLayer = null;
+  const banner = document.getElementById('ll-highlight-banner');
+  if (banner) banner.style.display = 'none';
+}
+
+function rebuildLandlordHighlightLayer() {
+  if (llHighlightLayer && leafletMap && leafletMap.hasLayer(llHighlightLayer)) {
+    leafletMap.removeLayer(llHighlightLayer);
+  }
+  llHighlightLayer = null;
+  if (!llHighlightKeys || !llPropertyIndex || !leafletMap) return;
+
+  const group = L.featureGroup(); // featureGroup, not layerGroup -- needs .getBounds() for the auto-fit below
+  for (const p of llPropertyIndex.properties) {
+    if (!llHighlightKeys.has(p.key)) continue;
+    // Sized/colored by this building's OWN all-time filing count, not by
+    // the current time-window heat — ownership is orthogonal to whatever
+    // date range happens to be selected, so a building still shows here
+    // even if it has no filings in the currently-viewed window.
+    const marker = L.circleMarker([p.lat, p.lng], {
+      radius: Math.max(12, llMarkerRadius(Math.min(p.evictionCount, 20))),
+      color: '#c4a44a', weight: 3, fillColor: 'transparent', fillOpacity: 0,
+      className: 'll-highlight-ring',
+    });
+    marker.bindTooltip(
+      `<strong>${escapeHtml(p.addressDisplay)}</strong><br>${p.evictionCount} filing${p.evictionCount === 1 ? '' : 's'} all-time · linked to ${escapeHtml(llHighlightLabel || 'this owner')}`,
+      { sticky: true }
+    );
+    marker.on('click', () => openPropertyPanel(p.key));
+    group.addLayer(marker);
+  }
+  llHighlightLayer = group;
+  if (document.getElementById('layer-evictions').checked) group.addTo(leafletMap);
 }
 
 /* ── Property detail panel: filings + the Landlord Mapper citation ── */
@@ -3561,16 +3877,19 @@ function closePropertyPanel() {
 }
 
 function openPropertyPanel(key) {
+  closeTractPanel(); // the two right-edge panels never show at once
   const p = llPropertyIndex.properties.find(x => x.key === key);
   const panel = document.getElementById('property-panel');
   if (!p) {
     panel.innerHTML = '<div class="tp-empty">Building not found.</div>';
     panel.classList.add('open');
+    panel.setAttribute('aria-hidden', 'false');
     return;
   }
   llOpenAddressKey = key;
 
   const landlordList = [...p.landlords.entries()].sort((a, b) => b[1] - a[1]);
+  const traj = monthlyTrajectory(p.cases);
   const casesHtml = p.cases.map(c => {
     const pleadings = Array.isArray(c.pleadings) ? c.pleadings : [];
     // "Face of the warrant" info the end-user asked for: the notice/filing
@@ -3600,6 +3919,13 @@ function openPropertyPanel(key) {
         <div class="tp-geoid">${p.evictionCount} filing${p.evictionCount === 1 ? '' : 's'} at this address</div>
       </div>
       <button class="tp-close" onclick="closePropertyPanel()" title="Close">×</button>
+    </div>
+
+    <div class="pp-section">
+      <div class="pp-section-label">Filing trend at this address</div>
+      ${traj.months.length > 1
+        ? sparklineHtml(traj.monthsMap, traj.months) + `<div class="pp-gap-note" style="margin-top:4px">${escapeHtml(traj.months[0])} – ${escapeHtml(traj.months[traj.months.length - 1])}, monthly filing counts</div>`
+        : '<div class="pp-gap-note">Not enough dated filings here to show a trend.</div>'}
     </div>
 
     <div class="pp-section">
@@ -3642,7 +3968,7 @@ function openPropertyPanel(key) {
 
   lookupLandlordMapper(p).then(result => {
     if (llOpenAddressKey !== key) return; // panel moved on before the fetch resolved
-    renderLandlordMapperCard(result);
+    renderLandlordMapperCard(result, p);
   });
 }
 
@@ -3652,7 +3978,7 @@ function openPropertyPanel(key) {
 // carry the provenance for everything under it.
 const LM_TAG = '<span class="pp-lm-tag" title="Ownership link inferred by landlordmapper.org, not by this app">via Landlord Mapper</span>';
 
-function renderLandlordMapperCard(result) {
+function renderLandlordMapperCard(result, property) {
   const el = document.getElementById('pp-lm-card');
   if (!el) return;
   if (!result) {
@@ -3660,15 +3986,48 @@ function renderLandlordMapperCard(result) {
       <div class="pp-lm-meta"><a href="${escapeAttr(LANDLORDMAPPER_SITE)}/home" target="_blank" rel="noopener">Search Landlord Mapper directly →</a></div>`;
     return;
   }
+
+  // Holonic step up: of this owner's OTHER properties (per Landlord
+  // Mapper), which ones do we ALSO have eviction filings for in this
+  // dataset? Matched on the exact normalized building address only — no
+  // fuzzy re-matching here, since that would be exactly the ownership-
+  // inference work we leave entirely to Landlord Mapper. A miss just means
+  // the two sources formatted the address differently, not that the owner
+  // doesn't hold that building.
+  const addrIndex = new Map(llPropertyIndex.properties.map(x => [normalizeAddressKey(x.addressDisplay), x]));
+  const portfolioMatches = (result.otherProperties || [])
+    .map(b => addrIndex.get(normalizeAddressKey(b.short_address)))
+    .filter(Boolean);
+  const portfolioProps = [property, ...portfolioMatches];
+  const portfolioKeys = portfolioProps.map(x => x.key);
+  const portfolioLabel = result.networkName || property.primaryLandlord || 'this owner';
+  const portfolioTraj = monthlyTrajectory(portfolioProps.flatMap(x => x.cases));
+
   const otherHtml = (result.otherProperties && result.otherProperties.length)
     ? `<div class="pp-lm-other">
         <div class="pp-lm-other-label">Other properties this owner holds</div>
-        ${result.otherProperties.map(b => `
+        ${result.otherProperties.map(b => {
+          const matched = addrIndex.get(normalizeAddressKey(b.short_address));
+          return `
           <div class="pp-lm-other-row">
             <span class="pp-lm-other-addr">${escapeHtml(b.short_address || b.taxpayer_name || 'address not on file')}</span>
-            ${LM_TAG}
-          </div>`).join('')}
+            <span class="pp-lm-other-right">
+              ${matched ? `<a href="#" class="pp-lm-other-jump" onclick="openPropertyPanel('${escapeAttr(matched.key)}'); return false;">${matched.evictionCount} filing${matched.evictionCount === 1 ? '' : 's'} here too →</a>` : ''}
+              ${LM_TAG}
+            </span>
+          </div>`;
+        }).join('')}
         ${result.otherPropertiesMore > 0 ? `<div class="pp-lm-other-more">+ ${result.otherPropertiesMore} more — see full portfolio below</div>` : ''}
+        ${portfolioMatches.length ? `
+          <div class="pp-lm-portfolio-traj">
+            <div class="pp-lm-other-label">This owner's trend across ${portfolioProps.length} propert${portfolioProps.length === 1 ? 'y' : 'ies'} in this dataset ${LM_TAG}</div>
+            ${portfolioTraj.months.length > 1 ? sparklineHtml(portfolioTraj.monthsMap, portfolioTraj.months) : '<div class="pp-gap-note">Not enough dated filings across these to show a trend.</div>'}
+            <button type="button" class="pp-lm-highlight-btn"
+                    data-keys="${escapeAttr(portfolioKeys.join(','))}" data-label="${escapeAttr(portfolioLabel)}"
+                    onclick="applyLandlordHighlight(this.dataset.keys.split(','), this.dataset.label)">
+              Show ${portfolioProps.length === 1 ? 'this building' : `these ${portfolioProps.length} buildings`} on the map
+            </button>
+          </div>` : ''}
       </div>`
     : '';
   el.innerHTML = `
@@ -3678,6 +4037,7 @@ function renderLandlordMapperCard(result) {
     <div class="pp-lm-meta">
       ${result.networkName ? escapeHtml(result.networkName) + '<br>' : ''}
       ${Number.isFinite(result.bldgCount) ? `${result.bldgCount.toLocaleString()} building${result.bldgCount === 1 ? '' : 's'}, ${result.unitCount?.toLocaleString() ?? '?'} unit${result.unitCount === 1 ? '' : 's'} in this owner's portfolio ${LM_TAG}` : ''}
+      ${Number.isFinite(result.bldgCount) && result.bldgCount > portfolioProps.length ? `<br>only ${portfolioProps.length} of those appear in this Nashville eviction dataset — the rest may be elsewhere, or simply have no filings here` : ''}
     </div>
     ${otherHtml}`;
 }
@@ -3871,6 +4231,7 @@ function formatPleadings(pleadings) {
 }
 
 function openTractPanel(geoid) {
+  closePropertyPanel(); // the two right-edge panels never show at once
   selectedTract = geoid;
   // Visually distinguish the selected tract on the map.
   if (tractLayer) {
@@ -5077,7 +5438,6 @@ function setVisibility() {
   const isTimeline  = viewMode === 'timeline';
   const isCoverage  = viewMode === 'coverage';
   const isMap       = viewMode === 'map';
-  const isLandlords = viewMode === 'landlords';
   const isSources   = viewMode === 'sources';
   const isLive      = viewMode === 'live';
   const isChat      = viewMode === 'chat';
@@ -5088,7 +5448,6 @@ function setVisibility() {
   document.getElementById('timeline-view').style.display      = isTimeline  ? '' : 'none';
   document.getElementById('grid-view').style.display          = isCoverage  ? '' : 'none';
   document.getElementById('map-view').style.display           = isMap       ? '' : 'none';
-  document.getElementById('landlords-view').style.display     = isLandlords ? '' : 'none';
   document.getElementById('sources-view').style.display       = isSources   ? '' : 'none';
   document.getElementById('live-view').style.display          = isLive      ? '' : 'none';
   document.getElementById('chat-view').style.display          = isChat      ? '' : 'none';
@@ -5097,6 +5456,14 @@ function setVisibility() {
   document.getElementById('coverage-dir-group').style.display  = isCoverage ? '' : 'none';
   document.getElementById('map-source-group').style.display    = isMap      ? '' : 'none';
   document.getElementById('map-mode-group').style.display      = isMap      ? '' : 'none';
+  document.getElementById('map-layers-group').style.display    = isMap      ? '' : 'none';
+  // map-year-group and ll-mode-group are further narrowed (by mapMode /
+  // the evictions checkbox) inside renderMapView's own updateMapLayerVisibility
+  // — this just forces them off the moment we leave the Map tab entirely.
+  if (!isMap) {
+    document.getElementById('map-year-group').style.display = 'none';
+    document.getElementById('ll-mode-group').style.display  = 'none';
+  }
 }
 
 function render() {
@@ -5119,8 +5486,6 @@ function render() {
     renderCoverageGrid();
   } else if (viewMode === 'map') {
     renderMapView();
-  } else if (viewMode === 'landlords') {
-    renderLandlordsView();
   } else if (viewMode === 'sources') {
     renderProvenance();
   }
@@ -5589,6 +5954,7 @@ function bindViewControls() {
       viewMode = b.dataset.val;
       document.querySelectorAll('#view-seg button').forEach(x => x.classList.toggle('on', x === b));
       render();
+      syncMapUrl();
     });
   });
   document.querySelectorAll('#coverage-mode-seg button').forEach(b => {
@@ -5617,6 +5983,7 @@ function bindViewControls() {
       llLayerMode = b.dataset.val;
       document.querySelectorAll('#ll-layer-seg button').forEach(x => x.classList.toggle('on', x === b));
       updateLandlordsLayer();
+      syncMapUrl();
     });
   });
   document.querySelectorAll('#map-source-seg button').forEach(b => {
@@ -5627,6 +5994,7 @@ function bindViewControls() {
         syncMapControls();
         updateMapColors();
       }
+      syncMapUrl();
     });
   });
   document.querySelectorAll('#map-mode-seg button').forEach(b => {
@@ -5637,8 +6005,22 @@ function bindViewControls() {
         syncMapControls();
         updateMapColors();
       }
+      syncMapUrl();
     });
   });
+  // The two layer checkboxes -- re-running renderMapView() is safe and
+  // cheap to call repeatedly: every expensive step inside it (loading
+  // Leaflet/plugins, fetching tract geometries, building the property
+  // index) is already guarded by "do we have this yet", so switching a
+  // layer on lazily loads it the first time and merely toggles visibility
+  // every time after.
+  document.getElementById('layer-tracts').addEventListener('change', () => {
+    if (viewMode === 'map') renderMapView();
+  });
+  document.getElementById('layer-evictions').addEventListener('change', () => {
+    if (viewMode === 'map') renderMapView();
+  });
+  document.getElementById('ll-highlight-clear').addEventListener('click', () => clearLandlordHighlight());
 }
 
 /* ───────────────────────── Princeton CSV fetch ─────────────────────────
