@@ -176,10 +176,21 @@ h1 {
   border-radius: 4px; border: 1px solid var(--border);
 }
 
+/* The label is the collapse control -- a real <button> so it is keyboard
+   reachable and announces its own expanded state, rather than a div with a
+   click handler bolted on. */
 .stat-label {
   font-size: 10px; text-transform: uppercase;
   letter-spacing: 0.1em; color: var(--dim); margin-bottom: 8px;
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  background: transparent; border: none; padding: 0;
+  font-family: inherit; text-align: left; cursor: pointer;
 }
+.stat-label:hover { color: var(--gold); }
+.stat-caret { display: inline-block; transition: transform 0.12s ease; font-size: 9px; }
+.stat-card.collapsed .stat-caret { transform: rotate(-90deg); }
+.stat-card.collapsed .stat-label { margin-bottom: 0; }
+.stat-card.collapsed > div { display: none; }
 
 .stat-item {
   display: flex; justify-content: space-between; padding: 3px 0;
@@ -578,28 +589,154 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 }
 .leaflet-control-zoom a:hover { background: var(--bg); color: var(--gold); }
 
-/* Building/eviction layer — one dot per building, click through to ownership */
-.ll-controls {
-  padding: 12px 24px; background: var(--surface);
+/* ── The clip: a Premiere-style trim/scrub strip over the whole record ──
+   Four date fields and a slider that did not know about each other became one
+   object you can see and drag. The histogram behind the window is the point:
+   you are trimming against visible content, not typing dates blind. */
+.clip-bar {
+  padding: 10px 24px 12px; background: var(--surface);
   border-bottom: 1px solid var(--border);
-  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  display: flex; flex-direction: column; gap: 8px;
 }
-.ll-coverage-note { font-size: 10px; color: var(--dim); letter-spacing: 0.02em; }
-.ll-time-controls {
-  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-  padding: 6px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+.clip-transport { display: flex; align-items: center; gap: 6px; }
+.clip-btn {
+  font-family: var(--mono); font-size: 11px; line-height: 1;
+  padding: 4px 9px; color: var(--gold); background: transparent;
+  border: 1px solid var(--gold-dim); border-radius: 3px; cursor: pointer;
 }
-.ll-time-controls label {
+.clip-btn:hover { background: rgba(196,164,74,0.10); }
+.clip-btn.playing { background: var(--gold); color: #1a1810; }
+.clip-readout {
+  font-family: var(--mono); font-size: 11px; color: var(--gold);
+  font-variant-numeric: tabular-nums; margin-left: 8px;
+}
+.clip-readout .dim { color: var(--dim); }
+.clip-track {
+  position: relative; height: 54px; cursor: pointer;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 3px;
+  overflow: hidden; user-select: none;
+}
+.clip-track:focus-visible { outline: 1px solid var(--gold); outline-offset: 1px; }
+#clip-hist { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+/* Everything outside the window is dimmed by the window's own huge box-shadow,
+   so there is exactly one element to move and no separate "mask" divs to keep
+   in sync with it. */
+.clip-window {
+  position: absolute; top: 0; bottom: 0;
+  border-left: 1px solid var(--gold); border-right: 1px solid var(--gold);
+  background: rgba(196,164,74,0.07);
+  box-shadow: 0 0 0 2000px rgba(10,9,8,0.66);
+  cursor: grab;
+}
+.clip-window.dragging { cursor: grabbing; }
+.clip-handle {
+  position: absolute; top: 0; bottom: 0; width: 11px;
+  background: var(--gold); cursor: ew-resize; opacity: 0.85;
+}
+.clip-handle:hover { opacity: 1; }
+/* The grab-bar notch, so a handle reads as draggable rather than decorative. */
+.clip-handle::after {
+  content: ''; position: absolute; left: 4px; top: 50%; transform: translateY(-50%);
+  width: 3px; height: 16px; border-left: 1px solid rgba(26,24,16,0.55);
+  border-right: 1px solid rgba(26,24,16,0.55);
+}
+.clip-handle-in  { left: -1px;  border-radius: 2px 0 0 2px; }
+.clip-handle-out { right: -1px; border-radius: 0 2px 2px 0; }
+.clip-playhead {
+  position: absolute; top: 0; bottom: 0; width: 2px;
+  background: #e85d3a; box-shadow: 0 0 6px rgba(232,93,58,0.9);
+  pointer-events: none; z-index: 3;
+}
+.clip-playhead::before {
+  content: ''; position: absolute; top: 0; left: -4px;
+  border-left: 5px solid transparent; border-right: 5px solid transparent;
+  border-top: 6px solid #e85d3a;
+}
+.clip-ticks {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 13px;
+  pointer-events: none; z-index: 2;
+}
+.clip-tick {
+  position: absolute; bottom: 1px; font-family: var(--mono); font-size: 9px;
+  color: var(--dim); transform: translateX(-50%); white-space: nowrap;
+  text-shadow: 0 0 3px var(--bg), 0 0 3px var(--bg);
+}
+/* What the current colouring means AND what it measured, always on screen --
+   a signal whose calibration lives only in a commit message is a signal
+   nobody can weigh. */
+.signal-legend {
+  font-size: 10px; color: var(--dim); line-height: 1.55;
+  border-left: 2px solid var(--gold-dim); padding-left: 8px;
+}
+.signal-legend strong { color: var(--gold); font-weight: 500; }
+.sig-status { color: var(--gold-dim); font-style: italic; }
+.sig-status.warn { color: var(--amber, #e8a735); }
+.clip-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.clip-meta label {
   font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim);
-  margin-left: 8px;
 }
-.ll-time-controls label:first-child { margin-left: 0; }
-.ll-time-controls input[type="date"], .ll-time-controls input[type="number"] {
-  font-family: var(--mono); font-size: 11px;
-  background: var(--surface); color: var(--text);
+.clip-meta input[type="number"] {
+  font-family: var(--mono); font-size: 11px; width: 52px;
+  background: var(--bg); color: var(--text);
   border: 1px solid var(--border); border-radius: 3px; padding: 3px 6px;
 }
-.ll-time-controls input:focus { outline: 1px solid var(--gold-dim); }
+.clip-meta input:focus { outline: 1px solid var(--gold-dim); }
+
+/* Hot zones — a ranked read of the tract layer, sitting on the map's left
+   edge opposite the two detail panels so a reader can have a ranking and a
+   drill-down open at once. Tract-level on purpose: census_tract is ~96%
+   populated in every month of the record, while addresses are not (see the
+   coverage band on the clip), so this is the grain where a trend is real. */
+#hotzones {
+  position: absolute; top: 12px; left: 12px; z-index: 450;
+  width: 288px; max-width: calc(100% - 24px); max-height: calc(100% - 24px);
+  display: flex; flex-direction: column;
+  background: rgba(20,18,15,0.94); border: 1px solid var(--gold-dim);
+  border-radius: 4px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  backdrop-filter: blur(2px);
+}
+#hotzones.collapsed .hz-body { display: none; }
+#hotzones.collapsed { width: 190px; }
+.hz-head {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;
+  padding: 9px 11px; border-bottom: 1px solid var(--border);
+}
+.hz-title { font-family: var(--serif); font-size: 14px; color: #f5f0e0; }
+.hz-sub { font-size: 9px; color: var(--dim); margin-top: 2px; line-height: 1.4; }
+.hz-collapse {
+  background: transparent; border: none; color: var(--dim); cursor: pointer;
+  font-family: var(--mono); font-size: 14px; line-height: 1; padding: 0 2px; flex-shrink: 0;
+}
+.hz-collapse:hover { color: var(--gold); }
+.hz-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 3px; overflow: hidden; margin: 5px 0 3px; }
+.hz-seg button {
+  font-family: var(--mono); font-size: 9px; padding: 2px 7px;
+  color: var(--muted); background: transparent; border: none; cursor: pointer;
+}
+.hz-seg button.on { background: var(--gold); color: #1a1814; }
+.hz-seg button:not(.on):hover { color: var(--text); background: rgba(255,255,255,0.05); }
+.hz-body { overflow-y: auto; padding: 4px 0 6px; }
+.hz-row {
+  display: grid; grid-template-columns: 20px 1fr auto; gap: 8px; align-items: baseline;
+  padding: 6px 11px; cursor: pointer; border-bottom: 1px solid rgba(42,40,32,0.6);
+}
+.hz-row:last-child { border-bottom: none; }
+.hz-row:hover { background: rgba(196,164,74,0.09); }
+.hz-rank { font-family: var(--mono); font-size: 10px; color: var(--gold-dim); }
+.hz-name { font-size: 11px; color: var(--text); line-height: 1.35; }
+.hz-why { font-size: 9px; color: var(--dim); margin-top: 2px; line-height: 1.45; }
+.hz-why .up { color: #e85d3a; }
+.hz-why .down { color: #7fb0d0; }
+.hz-n { font-family: var(--mono); font-size: 12px; color: var(--gold); font-variant-numeric: tabular-nums; }
+.hz-empty { padding: 12px; font-size: 10px; color: var(--dim); font-style: italic; line-height: 1.5; }
+.hz-note {
+  padding: 8px 11px; font-size: 9px; color: var(--dim); font-style: italic;
+  line-height: 1.5; border-top: 1px solid var(--border);
+}
+
+/* Building/eviction layer — one dot per building, click through to ownership */
+
+.ll-coverage-note { font-size: 10px; color: var(--dim); letter-spacing: 0.02em; }
 .ll-halflife-unit { font-size: 10px; color: var(--dim); }
 #ll-time-reset {
   font-family: var(--mono); font-size: 10px; margin-left: 6px;
@@ -607,15 +744,8 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   border: 1px solid var(--gold-dim); border-radius: 3px; cursor: pointer;
 }
 #ll-time-reset:hover { background: rgba(196,164,74,0.10); }
-.ll-cursor-row {
-  display: flex; align-items: center; gap: 12px;
-  padding: 8px 24px; background: var(--surface); border-bottom: 1px solid var(--border);
-}
-.ll-cursor-label {
-  font-size: 12px; font-weight: 500; min-width: 220px;
-  color: var(--gold); font-variant-numeric: tabular-nums;
-}
-.ll-cursor-row input[type="range"] { flex: 1; min-width: 200px; accent-color: var(--gold); }
+
+
 /* Banner shown while a landlord's whole portfolio is highlighted on the
    map (the holonic step up from one building) — same surface/border
    language as the other control strips above it. */
@@ -1396,13 +1526,17 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
     </form>
   </div>
 
-  <div class="stats-row">
+  <div class="stats-row" id="stats-row">
     <div class="stat-card">
-      <div class="stat-label">Top Districts</div>
+      <button type="button" class="stat-label" id="toggle-districts" aria-expanded="true" aria-controls="top-districts">
+        <span class="stat-caret">▾</span> Top Districts
+      </button>
       <div id="top-districts"></div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Top Attorneys</div>
+      <button type="button" class="stat-label" id="toggle-attorneys" aria-expanded="true" aria-controls="top-attorneys">
+        <span class="stat-caret">▾</span> Top Attorneys
+      </button>
       <div id="top-attorneys"></div>
     </div>
   </div>
@@ -1439,13 +1573,6 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
         <button data-val="asc">Oldest left</button>
       </div>
     </div>
-    <div class="group" id="map-source-group" style="display:none">
-      <label>Source</label>
-      <div class="seg" id="map-source-seg">
-        <button data-val="princeton" class="on">Princeton data</button>
-        <button data-val="scraped">Local scrape</button>
-      </div>
-    </div>
     <div class="group" id="map-mode-group" style="display:none">
       <label>Mode</label>
       <div class="seg" id="map-mode-seg">
@@ -1468,6 +1595,14 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
       <div class="seg" id="ll-layer-seg">
         <button data-val="dots" class="on">Buildings</button>
         <button data-val="heat">Heat map</button>
+      </div>
+    </div>
+    <div class="group" id="ll-signal-group" style="display:none">
+      <label>Colour by</label>
+      <div class="seg" id="ll-signal-seg">
+        <button data-val="volume" class="on" title="How many filings, decayed toward the playhead. Where the most evictions are.">Volume</button>
+        <button data-val="pressure" title="Is this building's landlord filing hard at their OTHER buildings right now? The early warning.">Landlord pressure</button>
+        <button data-val="unusual" title="Is this building's recent rate unusual for ITSELF, against reshuffles of its own history?">Unusual for itself</button>
       </div>
     </div>
     <div class="coverage" id="coverage-headline"></div>
@@ -1509,24 +1644,36 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
         <span>fewer</span><span class="scale-bar"></span><span>more</span>
       </div>
     </div>
-    <div class="ll-controls" id="ll-controls" style="display:none">
-      <div class="ll-time-controls">
-        <label for="ll-start-date">Start</label>
-        <input type="date" id="ll-start-date">
-        <label for="ll-end-date">End</label>
-        <input type="date" id="ll-end-date">
-        <label for="ll-cursor-date" title="The point in time the map's heat is shown as of">Cursor</label>
-        <input type="date" id="ll-cursor-date">
-        <label for="ll-halflife" title="How many months it takes a filing's contribution to a building's heat to fade by half">Stays hot for</label>
-        <input type="number" id="ll-halflife" min="0.5" max="36" step="0.5" style="width:52px">
-        <span class="ll-halflife-unit">mo half-life</span>
-        <button type="button" id="ll-time-reset" title="Reset to the full date range, cursor at the end">Reset</button>
+    <!-- The clip. One strip standing for the whole record, with a filings-per-
+         month histogram as its "waveform" so you can see the shape of what you
+         are trimming before you trim it. Drag the handles to set in/out, drag
+         the body to slide the window at fixed duration, drag anywhere to move
+         the playhead. Space plays. I/O set in/out at the playhead. -->
+    <div class="clip-bar" id="clip-bar" style="display:none">
+      <div class="clip-transport">
+        <button type="button" id="clip-play" class="clip-btn" title="Play the window forward (space)" aria-label="Play">▶</button>
+        <button type="button" id="clip-step-back" class="clip-btn" title="Back one month (←)" aria-label="Back one month">◀|</button>
+        <button type="button" id="clip-step-fwd" class="clip-btn" title="Forward one month (→)" aria-label="Forward one month">|▶</button>
+        <span class="clip-readout" id="clip-readout"></span>
       </div>
-      <span class="ll-coverage-note" id="ll-coverage-note"></span>
-    </div>
-    <div class="ll-cursor-row" id="ll-cursor-row" style="display:none">
-      <span class="ll-cursor-label" id="ll-cursor-label"></span>
-      <input type="range" id="ll-cursor-slider" min="0" max="0" value="0">
+      <div class="clip-track" id="clip-track" tabindex="0" role="group"
+           aria-label="Time window. Arrow keys move the playhead, I and O set in and out points.">
+        <canvas id="clip-hist"></canvas>
+        <div class="clip-window" id="clip-window">
+          <div class="clip-handle clip-handle-in" id="clip-in" title="Drag: window start (I)"></div>
+          <div class="clip-handle clip-handle-out" id="clip-out" title="Drag: window end (O)"></div>
+        </div>
+        <div class="clip-playhead" id="clip-playhead"></div>
+        <div class="clip-ticks" id="clip-ticks"></div>
+      </div>
+      <div class="clip-meta">
+        <label for="ll-halflife" title="How many months it takes one filing's contribution to a building's heat to fade by half">Stays hot</label>
+        <input type="number" id="ll-halflife" min="0.5" max="36" step="0.5">
+        <span class="ll-halflife-unit">mo half-life</span>
+        <button type="button" id="ll-time-reset" title="Reset to the full range, playhead at the end">Reset</button>
+        <span class="ll-coverage-note" id="ll-coverage-note"></span>
+      </div>
+      <div class="signal-legend" id="ll-signal-legend"></div>
     </div>
     <div class="ll-highlight-banner" id="ll-highlight-banner" style="display:none">
       <span id="ll-highlight-text"></span>
@@ -1534,6 +1681,25 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
     </div>
     <div class="map-wrap" id="map-wrap">
       <div id="map"></div>
+      <aside id="hotzones" aria-label="Hot zones">
+        <div class="hz-head">
+          <div>
+            <div class="hz-title">Hot zones</div>
+            <div class="hz-seg" id="hz-seg">
+              <button type="button" data-val="zones" class="on">Zones</button>
+              <button type="button" data-val="groups" title="Sets of tracts whose month-over-month change moves together, discovered from the data">Groups</button>
+            </div>
+            <div class="hz-seg" id="hz-grain-seg" style="display:none">
+              <button type="button" data-val="tract" class="on">Tracts</button>
+              <button type="button" data-val="building">Buildings</button>
+              <button type="button" data-val="owner">Owners</button>
+            </div>
+            <div class="hz-sub" id="hz-sub"></div>
+          </div>
+          <button type="button" class="hz-collapse" id="hz-collapse" title="Collapse">–</button>
+        </div>
+        <div class="hz-body" id="hz-body"></div>
+      </aside>
       <aside id="tract-panel" aria-hidden="true"></aside>
       <aside id="property-panel" aria-hidden="true"></aside>
     </div>
@@ -2013,7 +2179,12 @@ let activeDropdown = null;
 let viewMode = 'cases';       // 'cases' | 'districts' | 'timeline' | 'coverage' | 'map' | 'sources'
 let coverageMode = 'district';// 'district' | 'tract'
 let coverageDir  = 'desc';    // 'desc' = newest on left, 'asc' = oldest on left
-let mapSource = 'princeton';  // 'princeton' | 'scraped'
+// The map draws OUR OWN scrape only. Princeton's Eviction Lab counts remain
+// available where they are a fair comparison (the tract detail panel shows
+// both side by side, and the Coverage tab exists to compare them) -- but the
+// map is a picture of what we scraped, from one source, so nothing on it is
+// silently a blend of two datasets with different collection methods.
+const mapSource = 'scraped';
 let timelineDistrict = 'all'; // 'all' or normalized district key ("1", "5", …)
 let selectedTract = null;     // GEOID of currently-open tract panel
 let selectedRecordDocket = null; // docket of currently-open case panel
@@ -2114,17 +2285,17 @@ function restoreStateFromUrl() {
   if (params.has('tracts')) document.getElementById('layer-tracts').checked = params.get('tracts') !== '0';
   if (params.has('evictions')) document.getElementById('layer-evictions').checked = params.get('evictions') !== '0';
 
+  const sig = params.get('signal');
+  if (sig === 'volume' || sig === 'pressure' || sig === 'unusual') {
+    llSignalMode = sig;
+    document.querySelectorAll('#ll-signal-seg button').forEach(b => b.classList.toggle('on', b.dataset.val === sig));
+  }
   const llmode = params.get('llmode');
   if (llmode === 'dots' || llmode === 'heat') {
     llLayerMode = llmode;
     document.querySelectorAll('#ll-layer-seg button').forEach(b => b.classList.toggle('on', b.dataset.val === llmode));
   }
 
-  const source = params.get('source');
-  if (source === 'princeton' || source === 'scraped') {
-    mapSource = source;
-    document.querySelectorAll('#map-source-seg button').forEach(b => b.classList.toggle('on', b.dataset.val === source));
-  }
   const mode = params.get('mode');
   if (mode === 'alltime' || mode === 'year' || mode === 'trajectory') {
     mapMode = mode;
@@ -2159,11 +2330,11 @@ function syncMapUrl() {
     const evictionsOn = document.getElementById('layer-evictions').checked;
     if (!tractsOn) params.set('tracts', '0');
     if (!evictionsOn) params.set('evictions', '0');
-    if (mapSource !== 'princeton') params.set('source', mapSource);
     if (mapMode !== 'alltime') params.set('mode', mapMode);
     if (mapMode === 'year' && mapYear) params.set('year', mapYear);
     if (mapMode === 'trajectory' && mapMonth) params.set('month', mapMonth);
     if (llLayerMode !== 'dots') params.set('llmode', llLayerMode);
+    if (llSignalMode !== 'volume') params.set('signal', llSignalMode);
     if (llStartTs !== null) {
       params.set('start', toISODate(llStartTs));
       params.set('end', toISODate(llEndTs));
@@ -3317,8 +3488,7 @@ async function renderMapView() {
   // Hide every layer-specific control while (re)loading so nothing shows
   // stale controls for a layer that isn't actually on the map yet.
   document.getElementById('map-controls').style.display = 'none';
-  document.getElementById('ll-controls').style.display = 'none';
-  document.getElementById('ll-cursor-row').style.display = 'none';
+  document.getElementById('clip-bar').style.display = 'none';
   status.textContent = 'Loading map…';
   status.style.display = '';
 
@@ -3335,7 +3505,10 @@ async function renderMapView() {
   }
 
   if (!leafletMap) {
-    leafletMap = L.map('map', { zoomControl: true, attributionControl: false });
+    // Zoom sits bottom-left: the hot-zones panel owns the top-left corner and
+    // the two detail panels own the right edge.
+    leafletMap = L.map('map', { zoomControl: false, attributionControl: false });
+    L.control.zoom({ position: 'bottomleft' }).addTo(leafletMap);
     // Esri's hosted "Dark Gray Canvas" basemap (base + labels, two stacked
     // tile layers) -- free, no API key, no account, ever. Two other free
     // options were tried and rejected first, both live: CARTO's hosted
@@ -3413,7 +3586,7 @@ async function renderMapView() {
     status.style.display = '';
     status.textContent = (!allRows || !allRows.length)
       ? 'No case data loaded yet.'
-      : (mapSource === 'princeton' ? 'Waiting for Princeton CSV…' : 'No scraped cases have census tracts yet.');
+      : 'No scraped cases have census tracts yet.';
   }
   setTimeout(() => leafletMap && leafletMap.invalidateSize(), 50);
 }
@@ -3525,6 +3698,12 @@ async function ensureEvictionsLayer(shouldBuild, status, note) {
         if (t > maxTs) maxTs = t;
       }
       if (!Number.isFinite(minTs)) { minTs = Date.now(); maxTs = Date.now(); }
+      // The clip's track is the WHOLE record and never moves; only the window
+      // inside it does. Snapped to month starts so the track's extent lines up
+      // with the histogram bars drawn against it.
+      llDataMinTs = snapMonth(minTs);
+      llDataMaxTs = Math.max(snapMonth(maxTs), llDataMinTs + MONTH_MS);
+      buildClipHistogram();
       // A shared/bookmarked link may have already asked for a narrower window
       // (restoreStateFromUrl) before the real data range was known — apply it
       // now, clamped so a stale or out-of-range link can't point outside what
@@ -3566,7 +3745,6 @@ function updateMapLayerVisibility() {
     if (tractsReady && !leafletMap.hasLayer(tractLayer)) tractLayer.addTo(leafletMap);
     if (!tractsReady && leafletMap.hasLayer(tractLayer)) leafletMap.removeLayer(tractLayer);
   }
-  document.getElementById('map-source-group').style.display = tractsOn    ? '' : 'none';
   document.getElementById('map-mode-group').style.display   = tractsReady ? '' : 'none';
   document.getElementById('map-controls').style.display     = tractsReady ? '' : 'none';
   if (!tractsReady) document.getElementById('map-year-group').style.display = 'none';
@@ -3581,8 +3759,9 @@ function updateMapLayerVisibility() {
     closePropertyPanel();
   }
   document.getElementById('ll-mode-group').style.display        = evictionsOn    ? '' : 'none';
-  document.getElementById('ll-controls').style.display          = evictionsReady ? '' : 'none';
-  document.getElementById('ll-cursor-row').style.display        = evictionsReady ? '' : 'none';
+  document.getElementById('ll-signal-group').style.display      = evictionsOn    ? '' : 'none';
+  document.getElementById('hotzones').style.display             = evictionsReady ? '' : 'none';
+  document.getElementById('clip-bar').style.display             = evictionsReady ? '' : 'none';
   document.getElementById('ll-highlight-banner').style.display  = (evictionsOn && llHighlightKeys) ? '' : 'none';
   syncMapUrl();
 }
@@ -3664,91 +3843,882 @@ function llMarkerRadius(heat) {
   return Math.min(6 + Math.sqrt(heat) * 3, 24);
 }
 
+/* ────────────────────── Three signals, never one score ───────────────────
+   The map used to colour by decayed VOLUME alone, which is why the largest
+   apartment complexes were permanently the reddest: volume is mostly a
+   proxy for how many doors a place has. These are three different questions
+   about the same window, reported and coloured separately — never summed
+   into one opaque "risk score", because they disagree and the disagreement
+   is the information.
+
+   Each was BACKTESTED before being built (hold out the last 6 months,
+   compute the signal from history only, measure what actually happened) and
+   each is reported below with its own measured number, its dumb baseline,
+   and a control built to fail. The numbers live in SIGNAL_CALIBRATION and
+   are shown in the UI rather than kept in a commit message.
+
+     VOLUME    — best predictor of raw future volume, and it is a one-line
+                 sort. Kept, and labelled as what it is.
+     UNUSUAL   — the licensed windowMean/shuffle pair from eoreader's `nul`,
+                 placed against reshuffles of each unit's OWN history. It
+                 LOSES to the volume sort on prediction (measured: 57.0 vs
+                 101.5 filings/tract). Its value is different: it is the only
+                 one that can say a big steady complex is normal FOR ITSELF,
+                 and the only one that REFUSES when a unit has too little
+                 history to judge.
+     PRESSURE  — the landlord's filing activity at their OTHER buildings.
+                 The one genuinely additive signal: on buildings with ZERO
+                 filings of their own in the window — invisible to every
+                 volume ranking — it separates 4.93x, against a control that
+                 shuffles the ownership pairing and keeps both marginals
+                 (median 0.78x, 0/200 draws reached the observed lift). */
+
+const SIGNAL_CALIBRATION = Object.freeze({
+  measuredOn: 'Walk-forward backtest over 17 strictly-causal cutoffs (each sees only its own past), 77,464 filings, 6-month horizons.',
+  volume:   { label: 'Volume',
+              line: 'Won every one of 17 causal cutoffs: top-20 tracts averaged 119 filings in the next 6 months against 17 for the field. It is a sort, not a model, and nothing here beat it.' },
+  unusual:  { label: 'Unusual for itself',
+              line: 'Real but second: 68 filings vs 17 for the field, and it lost to the plain volume sort at all 17 cutoffs. Its use is different — it is the only one that calls a big steady complex ordinary FOR ITSELF, and the only one that refuses when a place has too little history to judge.' },
+  pressure: { label: 'Landlord pressure',
+              line: 'Narrow and modest. Among buildings with ZERO filings of their own, in a window where address coverage is uniform, those whose landlord was busiest elsewhere saw 1.50x the stratum (0.36 vs 0.24) — 0/200 draws of a shuffled-ownership control reached it. An earlier 4.93x reading was inflated about threefold by uneven address coverage and is withdrawn. As a tract-level ranking it is worthless (indistinguishable from random across all 17 cutoffs); it applies to quiet BUILDINGS only.' },
+});
+
+let llSignalMode = 'volume';        // 'volume' | 'pressure' | 'unusual'
+let llUnusual = null;               // Map<key, {rank, censored}> | null until computed
+let llUnusualState = 'idle';        // 'idle' | 'loading' | 'ready' | 'failed'
+let llUnusualWorker = null, llUnusualSeq = 0, llUnusualTimer = null;
+
+const NUL_CDN = 'https://cdn.jsdelivr.net/gh/clovenbradshaw-ctrl/eoreader6.1@main/nul/index.js';
+const UNUSUAL_WINDOW = 6, UNUSUAL_DRAWS = 100, UNUSUAL_SEED = 0, UNUSUAL_ALPHA = 0.05;
+
+/**
+ * A landlord's filings inside the window at every building EXCEPT this one.
+ * Pure counting — no null needed, because the claim ("this owner is busy
+ * elsewhere right now") is a count, not an inference. The null-tested part
+ * is whether that count predicts anything, and that was settled in the
+ * backtest rather than being recomputed per frame here.
+ */
+function computeLandlordPressure(properties) {
+  const byLandlord = new Map();
+  for (const p of properties) {
+    const name = p.primaryLandlord;
+    if (!name) continue;
+    byLandlord.set(name, (byLandlord.get(name) || 0) + p.countInRange);
+  }
+  const out = new Map();
+  let max = 0;
+  for (const p of properties) {
+    const name = p.primaryLandlord;
+    const elsewhere = name ? (byLandlord.get(name) || 0) - p.countInRange : 0;
+    out.set(p.key, elsewhere);
+    if (elsewhere > max) max = elsewhere;
+  }
+  return { pressure: out, maxPressure: max };
+}
+
+/**
+ * The nul-backed signal, in a worker because it is 5s of arithmetic at this
+ * scale and the clip has to stay draggable while it runs. Debounced: the
+ * playhead moves continuously, and there is no point starting a five-second
+ * job on every frame of a drag.
+ *
+ * Every unit's series is truncated at the playhead first — the question is
+ * "unusual as of the moment being viewed", not "unusual ever" — then
+ * reversed, so `windowMean` (which reads the FIRST window of what it is
+ * given) reads the MOST RECENT months. That detail was found by probing the
+ * real module rather than assuming: burstiness is the largest window
+ * anywhere, windowMean is one window at the front, and mixing them up
+ * silently answers a different question.
+ */
+function requestUnusual() {
+  if (llUnusualTimer) clearTimeout(llUnusualTimer);
+  llUnusualTimer = setTimeout(() => computeUnusual(), 350);
+}
+
+function computeUnusual() {
+  if (!llPropertyIndex || llSignalMode !== 'unusual') return;
+  const seq = ++llUnusualSeq;
+
+  const units = [];
+  for (const p of llPropertyIndex.properties) {
+    const bins = new Map();
+    for (const c of p.cases) {
+      const t = parseUsDate(c.file_date);
+      if (!t || t < llStartTs || t > llCursorTs) continue;
+      const k = snapMonth(t);
+      bins.set(k, (bins.get(k) || 0) + 1);
+    }
+    if (!bins.size) continue;
+    // A dense series across the whole window, not just the months that fired:
+    // the zero months ARE the history a burst is unusual against.
+    const series = [];
+    for (let m = snapMonth(llStartTs); m <= llCursorTs; m = new Date(Date.UTC(new Date(m).getUTCFullYear(), new Date(m).getUTCMonth() + 1, 1)).getTime()) {
+      series.push(bins.get(m) || 0);
+    }
+    if (series.length >= UNUSUAL_WINDOW * 2) units.push({ key: p.key, series });
+  }
+
+  if (!units.length) {
+    // Not "nothing is unusual" — "this window is too short to ask". A test
+    // that cannot run must say so; reporting it as a clean zero is how a
+    // refusal gets mistaken for a finding.
+    llUnusual = null;
+    llUnusualState = 'too-short';
+    updateSignalLegend();
+    return;
+  }
+
+  llUnusualState = 'loading';
+  updateSignalLegend();
+  try {
+    if (!llUnusualWorker) llUnusualWorker = makeUnusualWorker();
+    llUnusualWorker.postMessage({ seq, units, window: UNUSUAL_WINDOW, draws: UNUSUAL_DRAWS, seed: UNUSUAL_SEED });
+  } catch (e) {
+    console.warn('unusual-signal worker failed:', e);
+    llUnusualState = 'failed';
+    updateSignalLegend();
+  }
+}
+
+/* A module worker built from a Blob so this stays a single-file app, importing
+   the REAL nul from the same CDN the Chat tab already uses for eoreader. If
+   the import fails the signal reports 'failed' and the map falls back to
+   volume — it never silently colours by something else. */
+function makeUnusualWorker() {
+  const src = `
+    import * as nul from ${JSON.stringify(NUL_CDN)};
+    self.onmessage = (e) => {
+      const { seq, units, window: W, draws, seed } = e.data;
+      const out = []; const refusals = {};
+      for (const u of units) {
+        const series = [...u.series].reverse();
+        const g = nul.ground({ material: series, draws, window: W, perturbation: 'shuffle', statistic: 'windowMean', seed, via: 'eviction-overwatch' });
+        if (nul.isGap(g)) { refusals[g.gap] = (refusals[g.gap] || 0) + 1; continue; }
+        const observed = nul.STATISTICS.windowMean(series, { window: W });
+        const placed = nul.difference(observed, g);
+        if (nul.isGap(placed)) {
+          if (placed.gap === 'exceeds_witness') out.push([u.key, placed.direction === 'above' ? 0 : 1, placed.direction]);
+          else refusals[placed.gap] = (refusals[placed.gap] || 0) + 1;
+          continue;
+        }
+        out.push([u.key, placed.rank, null]);
+      }
+      self.postMessage({ seq, out, refusals });
+    };
+    self.postMessage({ ready: true });
+  `;
+  const w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })), { type: 'module' });
+  w.onmessage = (e) => {
+    if (e.data.ready) return;
+    if (e.data.seq !== llUnusualSeq) return;   // a newer request already superseded this one
+    llUnusual = new Map(e.data.out.map(([k, rank, censored]) => [k, { rank, censored }]));
+    llUnusual.refusals = e.data.refusals;
+    llUnusualState = 'ready';
+    updateSignalLegend();
+    if (llSignalMode === 'unusual') applyLandlordsTimeFilter();
+  };
+  w.onerror = (err) => {
+    console.warn('unusual-signal worker error:', err.message || err);
+    llUnusualState = 'failed';
+    updateSignalLegend();
+  };
+  return w;
+}
+
+/** What the current colouring means, and what it measured. Always visible. */
+function updateSignalLegend() {
+  const el = document.getElementById('ll-signal-legend');
+  if (!el) return;
+  const cal = SIGNAL_CALIBRATION[llSignalMode];
+  let status = '';
+  if (llSignalMode === 'unusual') {
+    if (llUnusualState === 'loading') status = ' <span class="sig-status">computing…</span>';
+    else if (llUnusualState === 'too-short') status = ` <span class="sig-status warn">window too short to run this test — it needs at least ${UNUSUAL_WINDOW * 2} months; widen the clip</span>`;
+    else if (llUnusualState === 'failed') status = ' <span class="sig-status warn">could not load the null-test module — showing volume instead</span>';
+    else if (llUnusualState === 'ready' && llUnusual) {
+      const refused = Object.values(llUnusual.refusals || {}).reduce((a, b) => a + b, 0);
+      const flagged = [...llUnusual.values()].filter(v => v.rank <= UNUSUAL_ALPHA).length;
+      status = ` <span class="sig-status">${flagged.toLocaleString()} flagged · ${refused.toLocaleString()} refused as too little history to judge</span>`;
+    }
+  }
+  el.innerHTML = `<strong>${escapeHtml(cal.label)}</strong> — ${escapeHtml(cal.line)}${status}`;
+}
+
+/** The colour a dot takes under the active signal. */
+function signalColorFor(p, ctx) {
+  if (llSignalMode === 'pressure') {
+    const v = ctx.pressure?.get(p.key) || 0;
+    if (v >= 40) return '#e85d3a';
+    if (v >= 8) return '#e8a735';
+    if (v > 0) return '#c4a44a';
+    return '#5f5636';
+  }
+  if (llSignalMode === 'unusual' && llUnusualState === 'ready' && llUnusual) {
+    const u = llUnusual.get(p.key);
+    if (!u) return '#4a443a';                       // refused: not enough history to judge
+    if (u.censored === 'above') return '#e85d3a';   // beyond every reshuffle of its own past
+    if (u.rank <= UNUSUAL_ALPHA) return '#e8a735';
+    if (u.rank >= 1 - UNUSUAL_ALPHA) return '#3f6b8a'; // unusually QUIET — cooling, not hot
+    return '#5f5636';
+  }
+  return llMarkerColor(p.heat);
+}
+
+/** The active signal's own reading for this building, shown on hover. */
+function signalTooltipFor(p, ctx) {
+  if (llSignalMode === 'pressure') {
+    const v = ctx.pressure?.get(p.key) || 0;
+    return v > 0
+      ? `<br><span style="color:#e8a735">landlord pressure: ${v} filing${v === 1 ? '' : 's'} at their other buildings</span>`
+      : '<br><span style="color:#8a8272">landlord pressure: none elsewhere in this window</span>';
+  }
+  if (llSignalMode === 'unusual') {
+    if (llUnusualState !== 'ready' || !llUnusual) return '';
+    const u = llUnusual.get(p.key);
+    if (!u) return '<br><span style="color:#8a8272">too little history here to judge</span>';
+    if (u.censored === 'above') return '<br><span style="color:#e85d3a">beyond every reshuffle of its own past</span>';
+    if (u.rank <= UNUSUAL_ALPHA) return `<br><span style="color:#e8a735">unusually busy for itself (rank ${u.rank.toFixed(2)})</span>`;
+    if (u.rank >= 1 - UNUSUAL_ALPHA) return '<br><span style="color:#7fb0d0">unusually quiet for itself</span>';
+    return `<br><span style="color:#8a8272">ordinary for itself (rank ${u.rank.toFixed(2)})</span>`;
+  }
+  return '';
+}
+
+/** The radius a dot takes under the active signal. */
+function signalRadiusFor(p, ctx) {
+  if (llSignalMode === 'pressure') {
+    const v = ctx.pressure?.get(p.key) || 0;
+    return Math.min(6 + Math.sqrt(v) * 2.2, 24);
+  }
+  if (llSignalMode === 'unusual' && llUnusualState === 'ready' && llUnusual) {
+    const u = llUnusual.get(p.key);
+    if (!u) return 5;
+    return u.censored === 'above' ? 16 : u.rank <= UNUSUAL_ALPHA ? 12 : 7;
+  }
+  return llMarkerRadius(p.heat);
+}
+
+/* ─────────────────────────── Hot zones ──────────────────────────────────
+   The ranked answer to "where should I look this week", computed over the
+   clip's current window and re-read every time the window moves.
+
+   TRACT level, deliberately. The walk-forward backtest says the honest
+   ranking here is VOLUME — it won all 17 causal cutoffs — so that is what
+   this ranks by, rather than the more interesting-sounding statistic that
+   measurably lost to it. What the null-tested reading adds is the second
+   line: whether a zone's own recent rate is unusual FOR ITSELF, which is
+   what separates "big place, busy as always" from "something changed here".
+   Both are shown; neither is merged into a score. */
+
+const HOTZONE_COUNT = 12;
+let hzView = 'zones';   // 'zones' | 'groups'
+let hzGrain = 'tract';  // 'tract' | 'building' | 'owner'
+
+function tractDisplayName(geoid) {
+  const info = agg.tractInfo?.[geoid];
+  if (info?.name) return info.name;
+  if (info?.district) return `${info.district} · tract ${geoid}`;
+  return `Tract ${geoid}`;
+}
+
+/** Filings per tract inside [llStartTs, llCursorTs], and the window before it. */
+function computeHotZones() {
+  if (!allRows?.length || llStartTs === null) return null;
+  const span = Math.max(MONTH_MS, llCursorTs - llStartTs);
+  const prevStart = llStartTs - span;
+  const now = new Map(), prev = new Map(), landlords = new Map();
+
+  for (const r of allRows) {
+    const geoid = r.tract_geoid || r.census_tract;
+    if (!geoid) continue;
+    const t = parseUsDate(r.file_date);
+    if (!t) continue;
+    if (t >= llStartTs && t <= llCursorTs) {
+      now.set(geoid, (now.get(geoid) || 0) + 1);
+      const pl = (r.Plaintiff_1 || '').trim();
+      if (pl) {
+        if (!landlords.has(geoid)) landlords.set(geoid, new Map());
+        landlords.get(geoid).set(pl, (landlords.get(geoid).get(pl) || 0) + 1);
+      }
+    } else if (t >= prevStart && t < llStartTs) {
+      prev.set(geoid, (prev.get(geoid) || 0) + 1);
+    }
+  }
+  const zones = [...now.entries()].map(([geoid, n]) => {
+    const before = prev.get(geoid) || 0;
+    const top = [...(landlords.get(geoid) || new Map()).entries()].sort((a, b) => b[1] - a[1])[0] || null;
+    return { geoid, n, before, delta: n - before, topLandlord: top ? top[0] : null, topLandlordN: top ? top[1] : 0 };
+  });
+  zones.sort((a, b) => b.n - a.n);
+  return { zones, span, prevStart, comparable: prev.size > 0 };
+}
+
+/* ───────────── Self-emergent groups of tracts (the next holon up) ────────
+   A census tract is an administrative box, not a thing that behaves. But some
+   tracts DO move together — their month-over-month filing changes rise and
+   fall in step — and those sets are a real holon above the tract and below the
+   city, discovered from the data rather than imposed by a district map.
+
+   Correlation is on month-over-month CHANGE, not level: two big tracts both
+   being big correlates trivially, while two tracts that turn at the same time
+   is the structure worth having. The bar is declared, not tuned, and the
+   CONTROL runs beside it every time — each tract's own months shuffled
+   independently, keeping its exact counts and destroying only the co-timing.
+   Measured on the full record: at 0.6 the real material still binds groups of
+   up to 9 tracts while the control produces ZERO edges; at 0.3 both collapse
+   into one blob and the answer is meaningless. The reader sees both numbers. */
+
+const HOLON_THRESHOLD = 0.6;
+const HOLON_MIN_FILINGS = 60;
+
+function holonMonthlySeries(grain) {
+  const months = [];
+  for (let m = snapMonth(llStartTs); m <= llCursorTs; ) {
+    months.push(m);
+    const d = new Date(m);
+    m = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
+  }
+  const idx = new Map(months.map((m, i) => [m, i]));
+  const keyOf = grain === 'owner' ? (r) => (r.Plaintiff_1 || '').trim() || null
+              : grain === 'building' ? (r) => normalizeAddressKey(r.address_formatted)
+              : (r) => r.tract_geoid || r.census_tract || null;
+  const series = new Map();
+  for (const r of allRows) {
+    const key = keyOf(r);
+    if (!key) continue;
+    const t = parseUsDate(r.file_date);
+    if (!t) continue;
+    const i = idx.get(snapMonth(t));
+    if (i === undefined) continue;
+    if (!series.has(key)) series.set(key, new Array(months.length).fill(0));
+    series.get(key)[i]++;
+  }
+  return { months, series };
+}
+
+/* What "next to each other" means at each grain — and where it means nothing.
+   Tracts must share a boundary. Buildings must be within a short walk, which
+   is the same idea at the smaller scale. OWNERS have no geography: a portfolio
+   is a relation between filings, not places, so no spatial gate applies and
+   the grouping is behaviour alone. Saying that out loud matters, because a
+   reader is entitled to know which groups are neighbourhoods and which are
+   simply people acting alike. */
+const HOLON_GRAINS = Object.freeze({
+  tract:    { label: 'Tracts',    minFilings: 60, gate: 'adjacent',  noun: 'tracts',    gateNote: 'and share a boundary' },
+  building: { label: 'Buildings', minFilings: 12, gate: 'proximity', noun: 'buildings', gateNote: `and sit within ${'400'}m of one another` },
+  owner:    { label: 'Owners',    minFilings: 20, gate: 'none',      noun: 'owners',    gateNote: 'with no spatial gate — a portfolio is not a place' },
+});
+const HOLON_PROXIMITY_M = 400;
+
+function holonDisplayName(grain, id) {
+  if (grain === 'tract') return tractDisplayName(id);
+  if (grain === 'building') return llPropertyIndex?.properties.find(p => p.key === id)?.addressDisplay || id;
+  return id;
+}
+
+/** Metres between two lat/lngs, flat-earth at this scale. */
+function _metres(a, b) {
+  const dy = (a.lat - b.lat) * 111320;
+  const dx = (a.lng - b.lng) * 111320 * Math.cos((a.lat + b.lat) / 2 * Math.PI / 180);
+  return Math.hypot(dx, dy);
+}
+
+const _zdiff = (s) => {
+  const d = s.slice(1).map((v, i) => v - s[i]);
+  const m = d.reduce((a, b) => a + b, 0) / (d.length || 1);
+  const sd = Math.sqrt(d.reduce((a, b) => a + (b - m) ** 2, 0) / (d.length || 1)) || 1;
+  return d.map(v => (v - m) / sd);
+};
+
+/* Which tracts physically touch, from the TIGER polygons themselves.
+   Two tracts are neighbours if their boundaries share a vertex, rounded to
+   ~1m. Census polygons are topologically clean, so adjacent tracts share
+   real vertices rather than merely coming close. Built once per session. */
+let _tractAdjacency = null;
+function tractAdjacency() {
+  if (_tractAdjacency || !tractGeometries) return _tractAdjacency;
+  const byVertex = new Map();
+  const walk = (coords, geoid) => {
+    if (typeof coords[0] === 'number') {
+      const k = `${coords[0].toFixed(5)},${coords[1].toFixed(5)}`;
+      if (!byVertex.has(k)) byVertex.set(k, new Set());
+      byVertex.get(k).add(geoid);
+    } else for (const c of coords) walk(c, geoid);
+  };
+  for (const f of tractGeometries.features || []) {
+    if (f.geometry?.coordinates) walk(f.geometry.coordinates, String(f.properties.GEOID));
+  }
+  const adj = new Map();
+  for (const owners of byVertex.values()) {
+    if (owners.size < 2) continue;
+    for (const a of owners) for (const b of owners) {
+      if (a === b) continue;
+      if (!adj.has(a)) adj.set(a, new Set());
+      adj.get(a).add(b);
+    }
+  }
+  _tractAdjacency = adj;
+  return adj;
+}
+
+/* A group is only a group if it is BOTH contiguous and co-moving. Correlation
+   alone will happily link two tracts on opposite sides of the county, which is
+   a correlation cluster, not a neighbourhood — so adjacency gates every edge
+   and the resulting sets are connected regions by construction. */
+function _linkTracts(vecs, thr, grain = 'tract') {
+  const gate = HOLON_GRAINS[grain]?.gate || 'none';
+  const adj = gate === 'adjacent' ? tractAdjacency() : null;
+  const coords = gate === 'proximity' && llPropertyIndex
+    ? new Map(llPropertyIndex.properties.map(p => [p.key, { lat: p.lat, lng: p.lng }])) : null;
+  const parent = new Map(vecs.map(([id]) => [id, id]));
+  const find = (x) => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
+  let edges = 0, adjacentPairs = 0;
+  for (let i = 0; i < vecs.length; i++) for (let j = i + 1; j < vecs.length; j++) {
+    const idA = vecs[i][0], idB = vecs[j][0];
+    if (gate === 'adjacent' && adj && !(adj.get(idA)?.has(idB))) continue;
+    if (gate === 'proximity' && coords) {
+      const a0 = coords.get(idA), b0 = coords.get(idB);
+      if (!a0 || !b0 || _metres(a0, b0) > HOLON_PROXIMITY_M) continue;
+    }
+    adjacentPairs++;
+    const a = vecs[i][1], b = vecs[j][1];
+    let s = 0; for (let k = 0; k < a.length; k++) s += a[k] * b[k];
+    if (s / (a.length || 1) >= thr) { edges++; const ra = find(idA), rb = find(idB); if (ra !== rb) parent.set(ra, rb); }
+  }
+  const g = new Map();
+  for (const [id] of vecs) { const r = find(id); if (!g.has(r)) g.set(r, []); g.get(r).push(id); }
+  return { edges, adjacentPairs, hasAdjacency: Boolean(adj || coords),
+           groups: [...g.values()].filter(a => a.length >= 2).sort((a, b) => b.length - a.length) };
+}
+
+function computeTractHolons(grain = hzGrain) {
+  const spec = HOLON_GRAINS[grain] || HOLON_GRAINS.tract;
+  const { months, series } = holonMonthlySeries(grain);
+  if (months.length < 6) return { refused: 'window too short — a group needs at least 6 months of change to be visible' };
+  const eligible = [...series.entries()].filter(([, s]) => s.reduce((a, b) => a + b, 0) >= spec.minFilings);
+  if (eligible.length < 4) return { refused: `only ${eligible.length} ${spec.noun} have ${spec.minFilings}+ filings in this window` };
+
+  const vecs = eligible.map(([id, s]) => [id, _zdiff(s)]);
+  const real = _linkTracts(vecs, HOLON_THRESHOLD, grain);
+
+  // The control, run every time and shown every time.
+  let s0 = 20260903; const rnd = () => ((s0 = (s0 * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  const ctrlVecs = eligible.map(([id, s]) => {
+    const c = s.slice();
+    for (let i = c.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [c[i], c[j]] = [c[j], c[i]]; }
+    return [id, _zdiff(c)];
+  });
+  const ctrl = _linkTracts(ctrlVecs, HOLON_THRESHOLD, grain);
+
+  const totals = new Map(eligible.map(([id, s]) => [id, s.reduce((a, b) => a + b, 0)]));
+  return {
+    grain, spec,
+    eligible: eligible.length,
+    months: months.length,
+    groups: real.groups.map(members => ({
+      members,
+      filings: members.reduce((a, id) => a + (totals.get(id) || 0), 0),
+    })),
+    edges: real.edges,
+    control: { edges: ctrl.edges, groups: ctrl.groups.length, largest: ctrl.groups[0]?.length || 0 },
+  };
+}
+
+function renderHolons() {
+  const body = document.getElementById('hz-body');
+  const sub = document.getElementById('hz-sub');
+  const res = computeTractHolons();
+  const gspec = HOLON_GRAINS[hzGrain] || HOLON_GRAINS.tract;
+  if (sub) sub.textContent = `${gspec.noun} that move together · ${toISODate(llStartTs)} → ${toISODate(llCursorTs)}`;
+  if (res.refused) { body.innerHTML = `<div class="hz-empty">${escapeHtml(res.refused)}.</div>`; return; }
+  if (!res.groups.length) {
+    body.innerHTML = `<div class="hz-empty">No group of tracts moves together above the ${HOLON_THRESHOLD} bar in this window.
+      That is a finding, not a failure: of ${res.eligible} eligible ${gspec.noun}, each is moving on its own.</div>`;
+    return;
+  }
+  const biggest = res.groups[0]?.members.length || 0;
+  const percolated = biggest / Math.max(1, res.eligible) > 0.25;
+  const warn = percolated
+    ? `<div class="hz-note" style="border-top:none;color:#e8a735">One group holds ${biggest} of ${res.eligible} ${gspec.noun}
+       (${Math.round(100 * biggest / res.eligible)}%). At this bar everything is linking to everything — that is
+       percolation, not structure, and this grouping should not be read as ${gspec.noun === 'owners' ? 'coordinated owners' : 'neighbourhoods'}.
+       Narrow the window or treat it as one undifferentiated mass.</div>`
+    : '';
+  body.innerHTML = warn + res.groups.map((g, i) => `
+    <div class="hz-row" onclick="highlightHolon(${i})" title="Show this group on the map">
+      <span class="hz-rank">${String.fromCharCode(65 + i)}</span>
+      <span>
+        <span class="hz-name">${g.members.length} ${gspec.noun} moving together</span>
+        <span class="hz-why">${g.members.slice(0, 4).map(m => escapeHtml(holonDisplayName(hzGrain, m).replace(/^Census Tract /, '').slice(0, 30))).join(', ')}${g.members.length > 4 ? ` +${g.members.length - 4}` : ''}</span>
+      </span>
+      <span class="hz-n">${g.filings.toLocaleString()}</span>
+    </div>`).join('')
+    + `<div class="hz-note">Grouped where month-over-month change correlates at ${HOLON_THRESHOLD}+ ${gspec.gateNote}
+       (${res.edges} linked pairs among ${res.eligible} ${gspec.noun} with ${gspec.minFilings}+ filings).
+       Control — each ${gspec.noun.replace(/s$/, '')}'s own months shuffled, counts kept, co-timing destroyed —
+       produced <strong>${res.control.edges} pair${res.control.edges === 1 ? '' : 's'}</strong>
+       and ${res.control.groups} group${res.control.groups === 1 ? '' : 's'} on the same window.
+       ${res.control.edges === 0 ? "The control found nothing, so these groups are the material's own." : 'Read the gap between those two numbers as the strength of the finding.'}</div>`;
+  window._holonGroups = res.groups;
+}
+
+/** Paint one emergent group onto the tract layer. */
+function highlightHolon(i) {
+  const g = window._holonGroups?.[i];
+  if (!g) return;
+  const set = new Set(g.members);
+  if (hzGrain === 'building') return applyLandlordHighlight(g.members, `${g.members.length} buildings moving together`);
+  if (hzGrain === 'owner') {
+    // An owner group has no shape of its own — show every building those
+    // owners file at, which is the nearest honest thing to draw.
+    const keys = (llPropertyIndex?.properties || []).filter(p => set.has(p.primaryLandlord)).map(p => p.key);
+    return keys.length ? applyLandlordHighlight(keys, `${g.members.length} owners moving together`) : undefined;
+  }
+  if (!tractLayer) return;
+  tractLayer.eachLayer(l => {
+    const inGroup = set.has(String(l.feature.properties.GEOID));
+    l.setStyle({ weight: inGroup ? 3 : 1, color: inGroup ? '#e85d3a' : '#2a2820', fillOpacity: inGroup ? 0.9 : 0.35 });
+  });
+}
+
+function renderHotZones() {
+  if (hzView === 'groups') return renderHolons();
+  const body = document.getElementById('hz-body');
+  const sub = document.getElementById('hz-sub');
+  if (!body) return;
+  const res = computeHotZones();
+  if (!res || !res.zones.length) {
+    body.innerHTML = '<div class="hz-empty">No filings with a census tract inside this window. Widen the clip.</div>';
+    if (sub) sub.textContent = '';
+    return;
+  }
+  const { zones, comparable } = res;
+  const months = Math.max(1, Math.round(res.span / MONTH_MS));
+  if (sub) sub.textContent = `by filings · ${toISODate(llStartTs)} → ${toISODate(llCursorTs)} (${months} mo)`;
+
+  const top = zones.slice(0, HOTZONE_COUNT);
+  body.innerHTML = top.map((z, i) => {
+    // "Why" is the comparison to the SAME-LENGTH window immediately before —
+    // the clip's own duration, slid back once. No model, just the two counts.
+    let trend = '';
+    if (comparable) {
+      const pct = z.before ? Math.round(100 * z.delta / z.before) : null;
+      trend = z.delta > 0
+        ? `<span class="up">▲ ${z.delta} more</span> than the previous ${months} mo${pct !== null ? ` (${pct > 0 ? '+' : ''}${pct}%)` : ''}`
+        : z.delta < 0
+          ? `<span class="down">▼ ${Math.abs(z.delta)} fewer</span> than the previous ${months} mo`
+          : `level with the previous ${months} mo`;
+    }
+    const who = z.topLandlord
+      ? `<br>most active filer: ${escapeHtml(z.topLandlord.slice(0, 38))} (${z.topLandlordN})`
+      : '';
+    return `<div class="hz-row" onclick="openTractPanel('${escapeAttr(z.geoid)}')" title="Open this tract">
+      <span class="hz-rank">${i + 1}</span>
+      <span>
+        <span class="hz-name">${escapeHtml(tractDisplayName(z.geoid))}</span>
+        <span class="hz-why">${trend}${who}</span>
+      </span>
+      <span class="hz-n">${z.n}</span>
+    </div>`;
+  }).join('') + `<div class="hz-note">Ranked by filing count — the plainest reading, and the one
+    that beat every cleverer ranking at all 17 causal cutoffs of the backtest. Census tract is
+    ~96% populated in every month of this record; building addresses are not, so zones are the
+    grain where a trend is real.</div>`;
+}
+
 // Re-derives heat under the current start/end/cursor/half-life and redraws
 // both layers. Called on first render and on every control change — cheap
 // enough at this data size to just rebuild rather than diff.
 function applyLandlordsTimeFilter() {
   if (!llPropertyIndex) return;
   const { properties, maxHeat } = computeHeat(llPropertyIndex.properties);
-  buildLandlordsLayers(properties, maxHeat);
+  const ctx = computeLandlordPressure(properties);
+  buildLandlordsLayers(properties, maxHeat, ctx);
   updateLandlordsLayer();
-  const cursorLabel = document.getElementById('ll-cursor-label');
-  if (cursorLabel) {
-    cursorLabel.textContent = `As of ${toISODate(llCursorTs)} · ${properties.length.toLocaleString()} building(s) with filings in range (½-life ${llHalfLifeMonths} mo)`;
+  updateSignalLegend();
+  renderHotZones();
+  if (llSignalMode === 'unusual' && llUnusualState === 'idle') requestUnusual();
+  const note = document.getElementById('ll-coverage-note');
+  if (note) {
+    note.textContent = `${properties.length.toLocaleString()} building(s) with filings in the window`;
   }
-  syncMapUrl();
+  // The URL is rewritten on every playback frame otherwise -- replaceState is
+  // cheap but not free, and a URL that churns 60x a second is not a URL anyone
+  // can copy. The playhead's final position lands when playback stops.
+  if (!llPlaying) syncMapUrl();
 }
 
+
+/* ─────────────────────────── The clip ───────────────────────────────
+   One object standing for the whole record: a filings-per-month histogram
+   (the "waveform"), a draggable in/out window over it, and a playhead. It
+   replaced four date inputs and a slider that did not know about each other
+   -- the reason being that trimming a window is a thing you do by eye
+   against visible content, not by typing dates and hoping.
+
+   llDataMinTs/llDataMaxTs are the track's fixed extent (the whole record).
+   llStartTs/llEndTs are the clip's in/out. llCursorTs is the playhead. */
+
+let llDataMinTs = null, llDataMaxTs = null;
+let llMonthBins = [];          // [{ ts, count }] across the full extent
+let llPlaying = false, llPlayRaf = null, llPlayLast = 0;
+const CLIP_PLAY_MONTHS_PER_SEC = 3;
+
+const MONTH_MS = 30.44 * DAY_MS;
+const clipSpan = () => Math.max(1, llDataMaxTs - llDataMinTs);
+const tsToFrac = (ts) => (ts - llDataMinTs) / clipSpan();
+const fracToTs = (f) => llDataMinTs + Math.min(1, Math.max(0, f)) * clipSpan();
+/* Snap to month starts. A window that begins mid-month is a window whose
+   edges do not line up with the bars you dragged it against. */
+const snapMonth = (ts) => { const d = new Date(ts); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1); };
+
+/* Monthly counts across the whole record, PLUS the address-coverage ratio for
+   each month — and the second half is the load-bearing one.
+
+   Measured on the live snapshot: address/geocode coverage is not uniform. Two
+   multi-month blocks (2023-07..2024-04 and 2024-11..2025-05) carry ZERO
+   geocoded addresses, while census_tract sits at ~96% in every month. A
+   building-level series crossing one of those blocks shows a deep trough that
+   is the ENRICHMENT PIPELINE, not a drop in evictions — and read as a trend it
+   inverts the truth: the quietest-looking buildings there are the ones we
+   simply could not place. So the clip draws coverage explicitly rather than
+   letting a reader mistake a gap in our own data for a change in the world. */
+function buildClipHistogram() {
+  const counts = new Map(), placed = new Map(), total = new Map();
+  for (const p of (llPropertyIndex?.properties || [])) {
+    for (const c of p.cases) {
+      const t = parseUsDate(c.file_date);
+      if (!t) continue;
+      const k = snapMonth(t);
+      counts.set(k, (counts.get(k) || 0) + 1);
+      placed.set(k, (placed.get(k) || 0) + 1);
+    }
+  }
+  // Every dated case, mapped or not — the denominator the dots cannot show.
+  for (const r of (allRows || [])) {
+    const t = parseUsDate(r.file_date);
+    if (!t) continue;
+    const k = snapMonth(t);
+    total.set(k, (total.get(k) || 0) + 1);
+  }
+  const keys = [...new Set([...counts.keys(), ...total.keys()])].sort((a, b) => a - b);
+  llMonthBins = keys.map(ts => {
+    const tot = total.get(ts) || 0;
+    return { ts, count: counts.get(ts) || 0, total: tot, coverage: tot ? (placed.get(ts) || 0) / tot : 0 };
+  });
+}
+
+function drawClipHistogram() {
+  const cv = document.getElementById('clip-hist');
+  if (!cv || !llMonthBins.length) return;
+  const rect = cv.getBoundingClientRect();
+  if (!rect.width) return;                       // hidden; redrawn when shown
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(rect.width * dpr);
+  cv.height = Math.round(rect.height * dpr);
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, rect.width, rect.height);
+
+  const max = Math.max(1, ...llMonthBins.map(b => b.count));
+  const barW = Math.max(1, rect.width / Math.max(1, llMonthBins.length) - 1);
+  const floor = 13;                              // leave room for the tick labels
+  const cov = 4;                                 // the coverage band's own strip
+  const usable = rect.height - floor - cov - 4;
+  for (const b of llMonthBins) {
+    const x = tsToFrac(b.ts) * rect.width;
+    const h = (b.count / max) * usable;
+    // In-window bars read gold, out-of-window bars stay muted: the histogram
+    // itself shows what the current trim actually selects.
+    const inWin = b.ts >= llStartTs && b.ts <= llEndTs;
+    ctx.fillStyle = inWin ? 'rgba(196,164,74,0.85)' : 'rgba(196,164,74,0.22)';
+    ctx.fillRect(x, rect.height - floor - cov - h, barW, h);
+
+    // The coverage band: how much of that month we could actually place on a
+    // map. Red where we placed almost nothing -- those troughs above are ours,
+    // not the city's.
+    const c = b.coverage;
+    ctx.fillStyle = c >= 0.9 ? 'rgba(90,150,90,0.85)'
+                  : c >= 0.4 ? 'rgba(232,167,53,0.85)'
+                  : 'rgba(232,93,58,0.9)';
+    ctx.fillRect(x, rect.height - floor - cov + 1, barW, cov - 1);
+  }
+}
+
+function drawClipTicks() {
+  const el = document.getElementById('clip-ticks');
+  if (!el || !llMonthBins.length) return;
+  const years = [...new Set(llMonthBins.map(b => new Date(b.ts).getUTCFullYear()))];
+  el.innerHTML = years.map(y => {
+    const ts = Date.UTC(y, 0, 1);
+    const f = tsToFrac(ts);
+    if (f < 0 || f > 1) return '';
+    return `<span class="clip-tick" style="left:${(f * 100).toFixed(3)}%">${y}</span>`;
+  }).join('');
+}
+
+/** Push current state into the clip's DOM. The one place the clip is drawn. */
 function setLandlordsTimeInputs() {
-  document.getElementById('ll-start-date').value = toISODate(llStartTs);
-  document.getElementById('ll-end-date').value = toISODate(llEndTs);
-  document.getElementById('ll-cursor-date').value = toISODate(llCursorTs);
-  document.getElementById('ll-halflife').value = llHalfLifeMonths;
-  const slider = document.getElementById('ll-cursor-slider');
-  const totalDays = Math.max(1, Math.round((llEndTs - llStartTs) / DAY_MS));
-  slider.min = 0; slider.max = totalDays;
-  slider.value = Math.round((llCursorTs - llStartTs) / DAY_MS);
+  const hl = document.getElementById('ll-halflife');
+  if (hl) hl.value = llHalfLifeMonths;
+  if (llDataMinTs === null) return;
+  const win = document.getElementById('clip-window');
+  const head = document.getElementById('clip-playhead');
+  const read = document.getElementById('clip-readout');
+  if (win) {
+    const l = Math.max(0, Math.min(100, tsToFrac(llStartTs) * 100));
+    const r = Math.max(0, Math.min(100, tsToFrac(llEndTs) * 100));
+    win.style.left = `${l.toFixed(3)}%`;
+    win.style.width = `${Math.max(0.4, r - l).toFixed(3)}%`;
+  }
+  if (head) head.style.left = `${(tsToFrac(llCursorTs) * 100).toFixed(3)}%`;
+  if (read) {
+    const mo = Math.max(1, Math.round((llEndTs - llStartTs) / MONTH_MS));
+    read.innerHTML = `${toISODate(llStartTs)} <span class="dim">→</span> ${toISODate(llEndTs)}`
+      + ` <span class="dim">· ${mo} mo ·</span> playhead ${toISODate(llCursorTs)}`;
+  }
+  drawClipHistogram();
+  drawClipTicks();
+}
+
+/** Clamp the three marks back into a legal order after any one of them moves. */
+function clipClamp() {
+  llStartTs = Math.min(Math.max(llStartTs, llDataMinTs), llDataMaxTs);
+  llEndTs = Math.min(Math.max(llEndTs, llDataMinTs), llDataMaxTs);
+  if (llEndTs - llStartTs < MONTH_MS) llEndTs = Math.min(llDataMaxTs, llStartTs + MONTH_MS);
+  if (llEndTs - llStartTs < MONTH_MS) llStartTs = Math.max(llDataMinTs, llEndTs - MONTH_MS);
+  llCursorTs = Math.min(Math.max(llCursorTs, llStartTs), llEndTs);
+}
+
+function clipApply() { clipClamp(); setLandlordsTimeInputs(); applyLandlordsTimeFilter(); }
+
+function stopClipPlayback() {
+  llPlaying = false;
+  if (llPlayRaf) cancelAnimationFrame(llPlayRaf);
+  llPlayRaf = null;
+  const b = document.getElementById('clip-play');
+  if (b) { b.textContent = '▶'; b.classList.remove('playing'); b.setAttribute('aria-label', 'Play'); }
+}
+
+/* Playback is the whole reason the histogram is worth having: watching the
+   playhead cross a rising bar and the map light up under it is the fastest
+   way to see something forming. Stops itself at the out point. */
+function toggleClipPlayback() {
+  if (llPlaying) return stopClipPlayback();
+  if (llCursorTs >= llEndTs) llCursorTs = llStartTs;
+  llPlaying = true;
+  llPlayLast = performance.now();
+  const b = document.getElementById('clip-play');
+  if (b) { b.textContent = '❚❚'; b.classList.add('playing'); b.setAttribute('aria-label', 'Pause'); }
+  const step = (now) => {
+    if (!llPlaying) return;
+    const dt = (now - llPlayLast) / 1000;
+    llPlayLast = now;
+    llCursorTs += dt * CLIP_PLAY_MONTHS_PER_SEC * MONTH_MS;
+    if (llCursorTs >= llEndTs) { llCursorTs = llEndTs; clipApply(); return stopClipPlayback(); }
+    clipApply();
+    llPlayRaf = requestAnimationFrame(step);
+  };
+  llPlayRaf = requestAnimationFrame(step);
 }
 
 function bindLandlordsTimeControls() {
-  const startEl = document.getElementById('ll-start-date');
-  const endEl = document.getElementById('ll-end-date');
-  const cursorEl = document.getElementById('ll-cursor-date');
-  const halflifeEl = document.getElementById('ll-halflife');
-  const slider = document.getElementById('ll-cursor-slider');
-  const resetBtn = document.getElementById('ll-time-reset');
+  const track = document.getElementById('clip-track');
+  const win = document.getElementById('clip-window');
+  const inH = document.getElementById('clip-in');
+  const outH = document.getElementById('clip-out');
+  if (!track) return;
 
-  startEl.addEventListener('change', () => {
-    const t = fromISODate(startEl.value);
-    if (!Number.isFinite(t)) return;
-    llStartTs = t;
-    if (llCursorTs < llStartTs) llCursorTs = llStartTs;
-    if (llEndTs < llStartTs) llEndTs = llStartTs;
-    setLandlordsTimeInputs();
-    applyLandlordsTimeFilter();
+  const tsAt = (clientX) => {
+    const r = track.getBoundingClientRect();
+    return fracToTs((clientX - r.left) / Math.max(1, r.width));
+  };
+
+  // One pointer-drag state machine for all four gestures (in, out, slide the
+  // whole window, scrub) rather than four listener sets that could disagree
+  // about which one is active.
+  let drag = null;
+  const onDown = (e, mode) => {
+    e.preventDefault();
+    stopClipPlayback();
+    const t = tsAt(e.clientX);
+    drag = { mode, grabTs: t, startAtGrab: llStartTs, endAtGrab: llEndTs };
+    if (mode === 'window') win.classList.add('dragging');
+    track.setPointerCapture?.(e.pointerId);
+    if (mode === 'scrub') { llCursorTs = snapMonth(t); clipApply(); }
+  };
+  const onMove = (e) => {
+    if (!drag) return;
+    const t = tsAt(e.clientX);
+    if (drag.mode === 'in') llStartTs = snapMonth(t);
+    else if (drag.mode === 'out') llEndTs = snapMonth(t);
+    else if (drag.mode === 'scrub') llCursorTs = snapMonth(t);
+    else if (drag.mode === 'window') {
+      // Slide at fixed duration -- the comparison move: same six months, a
+      // year earlier. Clamped as a unit so the duration never silently shrinks
+      // when the window meets the end of the record.
+      const dur = drag.endAtGrab - drag.startAtGrab;
+      let s = snapMonth(drag.startAtGrab + (t - drag.grabTs));
+      s = Math.min(Math.max(s, llDataMinTs), llDataMaxTs - dur);
+      llStartTs = s; llEndTs = s + dur;
+    }
+    clipApply();
+  };
+  const onUp = () => { if (win) win.classList.remove('dragging'); drag = null; };
+
+  inH?.addEventListener('pointerdown', (e) => { e.stopPropagation(); onDown(e, 'in'); });
+  outH?.addEventListener('pointerdown', (e) => { e.stopPropagation(); onDown(e, 'out'); });
+  win?.addEventListener('pointerdown', (e) => { e.stopPropagation(); onDown(e, 'window'); });
+  track.addEventListener('pointerdown', (e) => onDown(e, 'scrub'));
+  track.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+
+  // Premiere muscle memory: space plays, I/O set in/out at the playhead,
+  // arrows step a month.
+  track.addEventListener('keydown', (e) => {
+    const stepMonth = (dir) => {
+      const d = new Date(llCursorTs);
+      llCursorTs = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + dir, 1);
+      stopClipPlayback(); clipApply();
+    };
+    if (e.key === 'ArrowLeft') { e.preventDefault(); stepMonth(-1); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); stepMonth(1); }
+    else if (e.key === ' ') { e.preventDefault(); toggleClipPlayback(); }
+    else if (e.key === 'i' || e.key === 'I') { e.preventDefault(); llStartTs = llCursorTs; clipApply(); }
+    else if (e.key === 'o' || e.key === 'O') { e.preventDefault(); llEndTs = llCursorTs; clipApply(); }
   });
-  endEl.addEventListener('change', () => {
-    const t = fromISODate(endEl.value);
-    if (!Number.isFinite(t)) return;
-    llEndTs = t;
-    if (llCursorTs > llEndTs) llCursorTs = llEndTs;
-    if (llStartTs > llEndTs) llStartTs = llEndTs;
-    setLandlordsTimeInputs();
-    applyLandlordsTimeFilter();
+
+  document.getElementById('clip-play')?.addEventListener('click', toggleClipPlayback);
+  document.getElementById('clip-step-back')?.addEventListener('click', () => {
+    const d = new Date(llCursorTs);
+    llCursorTs = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1);
+    stopClipPlayback(); clipApply();
   });
-  cursorEl.addEventListener('change', () => {
-    const t = fromISODate(cursorEl.value);
-    if (!Number.isFinite(t)) return;
-    llCursorTs = Math.min(Math.max(t, llStartTs), llEndTs);
-    setLandlordsTimeInputs();
-    applyLandlordsTimeFilter();
+  document.getElementById('clip-step-fwd')?.addEventListener('click', () => {
+    const d = new Date(llCursorTs);
+    llCursorTs = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
+    stopClipPlayback(); clipApply();
   });
-  halflifeEl.addEventListener('change', () => {
-    const v = parseFloat(halflifeEl.value);
+
+  document.getElementById('ll-halflife')?.addEventListener('change', (e) => {
+    const v = parseFloat(e.target.value);
     if (!Number.isFinite(v) || v <= 0) return;
     llHalfLifeMonths = v;
     applyLandlordsTimeFilter();
   });
-  slider.addEventListener('input', () => {
-    llCursorTs = llStartTs + parseInt(slider.value, 10) * DAY_MS;
-    document.getElementById('ll-cursor-date').value = toISODate(llCursorTs);
-    applyLandlordsTimeFilter();
+  document.getElementById('ll-time-reset')?.addEventListener('click', () => {
+    stopClipPlayback();
+    llStartTs = llDataMinTs; llEndTs = llDataMaxTs; llCursorTs = llDataMaxTs; llHalfLifeMonths = 3;
+    clipApply();
   });
-  resetBtn.addEventListener('click', () => {
-    let minTs = Infinity, maxTs = -Infinity;
-    for (const p of llPropertyIndex.properties) for (const c of p.cases) {
-      const t = parseUsDate(c.file_date);
-      if (!t) continue;
-      if (t < minTs) minTs = t;
-      if (t > maxTs) maxTs = t;
-    }
-    llStartTs = minTs; llEndTs = maxTs; llCursorTs = maxTs; llHalfLifeMonths = 3;
-    setLandlordsTimeInputs();
-    applyLandlordsTimeFilter();
-  });
+
+  // The canvas is sized from its rendered box, so it has to be redrawn when
+  // that box changes -- including the first time the tab is shown at all.
+  window.addEventListener('resize', () => { drawClipHistogram(); drawClipTicks(); });
 }
 
-function buildLandlordsLayers(properties, maxHeat) {
+
+function buildLandlordsLayers(properties, maxHeat, ctx = {}) {
   if (llClusterGroup) { leafletMap.removeLayer(llClusterGroup); llClusterGroup = null; }
   llClusterGroup = L.markerClusterGroup({
     maxClusterRadius: 50,
@@ -3768,14 +4738,14 @@ function buildLandlordsLayers(properties, maxHeat) {
 
   for (const p of properties) {
     const marker = L.circleMarker([p.lat, p.lng], {
-      radius: llMarkerRadius(p.heat),
-      fillColor: llMarkerColor(p.heat), color: '#00000066', weight: 1,
+      radius: signalRadiusFor(p, ctx),
+      fillColor: signalColorFor(p, ctx), color: '#00000066', weight: 1,
       fillOpacity: 0.85, className: 'll-dot',
       heat: p.heat,
     });
     const recentStr = p.mostRecentDate ? new Date(p.mostRecentDate).toLocaleDateString() : '—';
     marker.bindTooltip(
-      `<strong>${escapeHtml(p.addressDisplay)}</strong><br>${p.countInRange} filing${p.countInRange === 1 ? '' : 's'} in range · most recent ${recentStr}<br>heat: ${p.heat.toFixed(1)}${p.primaryLandlord ? '<br>' + escapeHtml(p.primaryLandlord) : ''}`,
+      `<strong>${escapeHtml(p.addressDisplay)}</strong><br>${p.countInRange} filing${p.countInRange === 1 ? '' : 's'} in window · most recent ${recentStr}<br>heat: ${p.heat.toFixed(1)}${signalTooltipFor(p, ctx)}${p.primaryLandlord ? '<br>' + escapeHtml(p.primaryLandlord) : ''}`,
       { sticky: true }
     );
     marker.on('click', () => openPropertyPanel(p.key));
@@ -5454,7 +6424,6 @@ function setVisibility() {
   document.getElementById('timeline-district-group').style.display = isTimeline ? '' : 'none';
   document.getElementById('coverage-mode-group').style.display = isCoverage ? '' : 'none';
   document.getElementById('coverage-dir-group').style.display  = isCoverage ? '' : 'none';
-  document.getElementById('map-source-group').style.display    = isMap      ? '' : 'none';
   document.getElementById('map-mode-group').style.display      = isMap      ? '' : 'none';
   document.getElementById('map-layers-group').style.display    = isMap      ? '' : 'none';
   // map-year-group and ll-mode-group are further narrowed (by mapMode /
@@ -5463,6 +6432,7 @@ function setVisibility() {
   if (!isMap) {
     document.getElementById('map-year-group').style.display = 'none';
     document.getElementById('ll-mode-group').style.display  = 'none';
+    document.getElementById('ll-signal-group').style.display = 'none';
   }
 }
 
@@ -5978,22 +6948,22 @@ function bindViewControls() {
       if (viewMode === 'timeline') render();
     });
   }
+  document.querySelectorAll('#ll-signal-seg button').forEach(b => {
+    b.addEventListener('click', () => {
+      llSignalMode = b.dataset.val;
+      document.querySelectorAll('#ll-signal-seg button').forEach(x => x.classList.toggle('on', x === b));
+      // The null-tested signal is the only one that costs anything, so it is
+      // computed on demand rather than kept warm for a mode nobody picked.
+      if (llSignalMode === 'unusual' && llUnusualState !== 'ready') requestUnusual();
+      applyLandlordsTimeFilter();
+      syncMapUrl();
+    });
+  });
   document.querySelectorAll('#ll-layer-seg button').forEach(b => {
     b.addEventListener('click', () => {
       llLayerMode = b.dataset.val;
       document.querySelectorAll('#ll-layer-seg button').forEach(x => x.classList.toggle('on', x === b));
       updateLandlordsLayer();
-      syncMapUrl();
-    });
-  });
-  document.querySelectorAll('#map-source-seg button').forEach(b => {
-    b.addEventListener('click', () => {
-      mapSource = b.dataset.val;
-      document.querySelectorAll('#map-source-seg button').forEach(x => x.classList.toggle('on', x === b));
-      if (viewMode === 'map') {
-        syncMapControls();
-        updateMapColors();
-      }
       syncMapUrl();
     });
   });
@@ -6021,6 +6991,55 @@ function bindViewControls() {
     if (viewMode === 'map') renderMapView();
   });
   document.getElementById('ll-highlight-clear').addEventListener('click', () => clearLandlordHighlight());
+  document.querySelectorAll('#hz-seg button').forEach(b => {
+    b.addEventListener('click', () => {
+      hzView = b.dataset.val;
+      document.querySelectorAll('#hz-seg button').forEach(x => x.classList.toggle('on', x === b));
+      document.getElementById('hz-grain-seg').style.display = hzView === 'groups' ? '' : 'none';
+      // Leaving the groups view drops any group paint it left on the tracts.
+      if (hzView !== 'groups') updateMapColors();
+      renderHotZones();
+    });
+  });
+  document.querySelectorAll('#hz-grain-seg button').forEach(b => {
+    b.addEventListener('click', () => {
+      hzGrain = b.dataset.val;
+      document.querySelectorAll('#hz-grain-seg button').forEach(x => x.classList.toggle('on', x === b));
+      updateMapColors();
+      renderHotZones();
+    });
+  });
+  const hzc = document.getElementById('hz-collapse');
+  hzc?.addEventListener('click', () => {
+    const panel = document.getElementById('hotzones');
+    const next = !panel.classList.contains('collapsed');
+    panel.classList.toggle('collapsed', next);
+    hzc.textContent = next ? '+' : '–';
+    try { localStorage.setItem('eo-hz-collapsed', next ? '1' : '0'); } catch {}
+  });
+  if (localStorage.getItem('eo-hz-collapsed') === '1') {
+    document.getElementById('hotzones')?.classList.add('collapsed');
+    if (hzc) hzc.textContent = '+';
+  }
+
+  // The two summary cards collapse and stay collapsed. They are context, not
+  // the point of the page, and above a map they cost the one thing the map
+  // needs most: vertical room.
+  for (const [btnId, key] of [['toggle-districts', 'districts'], ['toggle-attorneys', 'attorneys']]) {
+    const btn = document.getElementById(btnId);
+    if (!btn) continue;
+    const card = btn.closest('.stat-card');
+    const apply = (collapsed) => {
+      card.classList.toggle('collapsed', collapsed);
+      btn.setAttribute('aria-expanded', String(!collapsed));
+    };
+    apply(localStorage.getItem('eo-collapse-' + key) === '1');
+    btn.addEventListener('click', () => {
+      const next = !card.classList.contains('collapsed');
+      apply(next);
+      try { localStorage.setItem('eo-collapse-' + key, next ? '1' : '0'); } catch {}
+    });
+  }
 }
 
 /* ───────────────────────── Princeton CSV fetch ─────────────────────────
