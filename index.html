@@ -1053,7 +1053,68 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   box-shadow: 0 0 4px rgba(57,255,20,0.7);
 }
 @keyframes live-blink { 50% { opacity: 0; } }
-.live-empty { color: #1f5c1f; font-style: italic; }
+.live-empty { color: #1f5c1f; font-style: italic; padding: 10px 12px; }
+
+/* One column per live worker. A single worker fills the width and looks
+   exactly like the old single-screen view; more workers split it. */
+.live-cols { display: flex; gap: 10px; padding: 0 10px 10px; align-items: stretch; }
+.live-cols .live-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; }
+.live-cols .live-col .live-screen { flex: 1; }
+@media (max-width: 900px) { .live-cols { flex-direction: column; } }
+.live-col-head {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-family: var(--mono); font-size: 11px; color: #2ea82e;
+  padding: 4px 2px 5px;
+}
+/* Each worker gets its own hue so two streams side by side are tellable
+   apart at a glance. --wc is set per column in JS; the green default keeps
+   a single-worker view looking exactly as it always has. */
+.live-col { --wc: #39ff14; }
+.live-col .live-screen {
+  color: var(--wc);
+  border-color: color-mix(in srgb, var(--wc) 22%, #020402);
+  text-shadow: 0 0 2px color-mix(in srgb, var(--wc) 35%, transparent);
+}
+.live-col .live-screen::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--wc) 25%, #020402);
+}
+.live-col .live-line .ts { color: color-mix(in srgb, var(--wc) 45%, #020402); }
+.live-col .live-line .src { color: color-mix(in srgb, var(--wc) 72%, #020402); }
+.live-col .live-line .ok { color: color-mix(in srgb, var(--wc) 80%, #ffffff); }
+.live-col .live-line .redacted {
+  color: var(--wc);
+  background: color-mix(in srgb, var(--wc) 10%, #020402);
+  border-color: color-mix(in srgb, var(--wc) 35%, #020402);
+}
+.live-col-head { color: color-mix(in srgb, var(--wc) 70%, #020402); }
+.live-col-head .name {
+  color: color-mix(in srgb, var(--wc) 85%, #ffffff);
+  font-weight: 600; letter-spacing: .04em;
+}
+.live-col-head .alias {
+  border: 1px solid color-mix(in srgb, var(--wc) 40%, #020402);
+  border-radius: 2px; padding: 0 5px;
+  color: var(--wc);
+  background: color-mix(in srgb, var(--wc) 12%, #020402);
+  letter-spacing: .06em;
+}
+.live-col-head .alias.cooling { border-color: #7a5c1f; color: #ffb020; background: #1f1608; }
+.live-col-head .cw b { color: color-mix(in srgb, var(--wc) 85%, #ffffff); }
+.live-rate .grp.w b { color: var(--gc, #7dff5c); }
+.live-rate .grp.w .lbl { color: var(--gc, #7dff5c); }
+.live-col-head .kind { color: #1f5c1f; }
+.live-col-head .cw { margin-left: auto; color: #2f6b2f; font-variant-numeric: tabular-nums; }
+.live-col-head .cw b { color: #7dff5c; }
+.live-col-head .idle { color: #1f5c1f; font-style: italic; }
+.live-rate .grp {
+  display: flex; gap: 14px; align-items: baseline; padding-right: 14px;
+  border-right: 1px solid #123312; margin-right: 4px; flex-wrap: wrap;
+}
+.live-rate .grp:last-child { border-right: 0; }
+.live-rate .lbl {
+  color: #7dff5c; text-transform: uppercase; letter-spacing: .08em;
+  font-size: 10px; opacity: .8;
+}
 #districts-view .spark span { background: var(--gold-dim); width: 3px; min-height: 1px; }
 
 /* Timeline view (Princeton monthly filings) */
@@ -1505,10 +1566,11 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   font-family: var(--serif); font-size: 13px; line-height: 1.6; color: #ddd5c2;
   background: rgba(196,164,74,0.05); border-left: 2px solid var(--gold-dim); border-radius: 0 3px 3px 0;
 }
-.censored {
-  display: inline-block; width: 0.62em; text-align: center;
-  color: var(--gold-dim); background: rgba(196,164,74,0.12);
-  border-radius: 2px; cursor: help; font-family: var(--mono);
+.injected {
+  margin-left: 5px; padding: 1px 5px;
+  font-family: var(--mono); font-size: 0.82em; color: var(--gold);
+  background: rgba(196,164,74,0.14); border-radius: 2px;
+  cursor: help; font-variant-numeric: tabular-nums;
 }
 .say-note {
   display: block; margin-top: 6px; font-family: var(--sans, inherit);
@@ -1538,6 +1600,44 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 .ra-from { font-family: var(--mono); color: var(--muted); }
 .ra-by { color: var(--dim); font-style: italic; }
 .ra-model { color: var(--dim); font-style: italic; line-height: 1.5; }
+/* The `/` list sits above the composer, not below it, so it never opens off
+   the bottom of a phone screen behind the keyboard. */
+/* A question asked back, with its answers as buttons. */
+.followup {
+  margin-top: 9px; padding: 9px 11px;
+  background: rgba(196,164,74,0.045);
+  border: 1px solid var(--border); border-left: 2px solid var(--gold-dim); border-radius: 0 3px 3px 0;
+}
+.fu-q { font-size: 12px; color: var(--muted); margin-bottom: 7px; }
+.fu-opts { display: flex; flex-wrap: wrap; gap: 5px; }
+.fu-opt {
+  display: inline-flex; align-items: baseline; gap: 6px;
+  font-family: var(--mono); font-size: 11px; padding: 5px 9px;
+  color: var(--text); background: rgba(196,164,74,0.07);
+  border: 1px solid var(--border); border-radius: 3px; cursor: pointer;
+}
+.fu-opt:hover { border-color: var(--gold-dim); background: rgba(196,164,74,0.16); }
+.fu-label { white-space: nowrap; }
+.fu-hint { font-size: 9px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.fu-note { margin-top: 6px; font-size: 9px; color: var(--dim); font-style: italic; }
+
+.slash-box { display: none; }
+.slash-box.open {
+  display: block; max-height: 46vh; overflow-y: auto;
+  margin-bottom: 6px; padding: 4px;
+  background: var(--surface); border: 1px solid var(--gold-dim); border-radius: 4px;
+}
+.slash-row {
+  display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: baseline;
+  width: 100%; text-align: left; padding: 7px 9px;
+  background: transparent; border: 0; border-radius: 3px; cursor: pointer;
+  font-family: var(--mono); font-size: 12px; color: var(--text);
+}
+.slash-row:hover, .slash-row.on { background: rgba(196,164,74,0.14); }
+.slash-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.slash-kind { font-size: 9px; color: var(--dim); font-style: italic; white-space: nowrap; }
+.slash-n { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.slash-empty { padding: 9px; font-size: 11px; color: var(--dim); font-style: italic; }
 .export-strip {
   display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
   margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--surface);
@@ -1643,6 +1743,10 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 }
 
 
+/* The hamburger is a phone control; on a desktop the tabs are already a row
+   and a menu button would be a click where none is needed. */
+.nav-toggle { display: none; }
+
 /* ─── Narrow screens ───────────────────────────────────────────────────────
    The page was built at desktop width and had no breakpoint anywhere, which
    on a phone meant a horizontal scrollbar over the whole document and every
@@ -1665,11 +1769,13 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
      Sources tab. The title, the sign-in and the date stay; the recital goes. */
   header {
     flex-direction: row; align-items: center; justify-content: space-between;
-    gap: 10px; padding: 10px 12px;
+    gap: 8px; padding: 8px 10px; flex-wrap: nowrap;
   }
+  header > div:first-of-type { min-width: 0; flex: 1 1 auto; }
   .subtitle { display: none; }
   .header-right { align-items: flex-end; gap: 2px; }
-  .updated, .bg-sync { text-align: right; font-size: 9px; }
+  .updated, .bg-sync { text-align: right; font-size: 9px; white-space: nowrap; }
+  .header-right { flex: 0 0 auto; }
   h1 { font-size: 17px; line-height: 1.15; }
   .login-btn { padding: 5px 12px; min-height: 32px; }
 
@@ -1678,17 +1784,50 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   .stats-row { padding: 12px 14px; }
   .stat-list { max-height: 180px; }
 
-  /* The view switcher WRAPS rather than scrolling. Scrolling it sideways hid
-     half the tabs behind an edge with nothing to say they were there — on a
-     phone the strip showed Cases, Districts, Timeline, Coverage and simply
-     stopped, so Map, Sources, Live and Chat did not appear to exist. Eight
-     short labels fit two rows; two visible rows beat four hidden tabs. */
-  #view-seg, .seg {
-    display: flex; flex-wrap: wrap; gap: 4px; padding: 4px;
+  /* THE VIEW SWITCHER BECOMES A MENU. Scrolling it sideways hid half the tabs
+     behind an edge with nothing to say they were there; wrapping showed all
+     eight but spent three rows and a quarter of the screen on navigation that
+     is used once and then not again. A phone gets a menu button naming where
+     you are, and the eight views only when asked for. */
+  .nav-toggle {
+    display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
+    font-family: var(--mono); font-size: 11px; min-height: 32px; padding: 4px 9px;
+    max-width: 42vw; overflow: hidden; white-space: nowrap;
+    color: var(--gold); background: transparent;
+    border: 1px solid var(--gold-dim); border-radius: 3px; cursor: pointer;
   }
-  #view-seg button, .seg button {
-    flex: 1 1 auto; min-height: 34px; padding: 6px 10px; font-size: 12px;
+  #nav-current { overflow: hidden; text-overflow: ellipsis; }
+  .nav-bars { font-size: 15px; line-height: 1; }
+  /* The bar that held the tabs has nothing left in it, so it stops taking a
+     row — an empty strip labelled VIEW was pure overhead. */
+  .view-bar > .group > label { display: none; }
+  .view-bar { padding: 0 !important; border: 0 !important; min-height: 0; }
+  .view-bar > .group { padding: 0; margin: 0; }
+  /* FIXED, and anchored to the button in JS. `absolute` put it in whatever
+     ancestor happened to be positioned, which floated it off the top of the
+     screen with the first tabs cut away above the viewport — a menu you
+     cannot see the top of. `top` is set from the button's own rect when it
+     opens, so it lands under the button whatever height the header is. */
+  #view-seg {
+    display: none;
+    position: fixed; left: 8px; right: 8px; z-index: 80;
+    max-height: 62vh; overflow-y: auto;
+    flex-direction: column; gap: 1px; padding: 5px;
+    background: var(--surface); border: 1px solid var(--gold-dim); border-radius: 4px;
+    box-shadow: 0 14px 40px rgba(0,0,0,0.7);
   }
+  body.nav-open #view-seg { display: flex; }
+  #view-seg button {
+    width: 100%; text-align: left; min-height: 34px; padding: 6px 11px; font-size: 13px;
+  }
+  /* A backdrop, so a tap anywhere closes it and the page behind reads as
+     inactive rather than as something you might be about to hit. */
+  body.nav-open::after {
+    content: ''; position: fixed; inset: 0; z-index: 70;
+    background: rgba(0,0,0,0.5);
+  }
+  .seg { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px; }
+  .seg button { flex: 1 1 auto; min-height: 34px; padding: 6px 10px; font-size: 12px; }
   /* Suggestions DO scroll — they are examples, not navigation, and the row
      is visibly clipped mid-chip, which reads as more-to-the-right. */
   .chat-suggestions {
@@ -1709,7 +1848,12 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   #filters > *, .filter-row > * { flex: 0 0 auto; }
   #local-toolbar { padding: 8px 12px; }
   .date-range-filter { flex-wrap: wrap; gap: 6px; }
-  input, select, button { font-size: 16px; }   /* 16px stops iOS zooming on focus */
+  /* 16px ONLY on the text fields you actually type into — that is what stops
+     iOS zooming the page on focus. Applying it to every button and select
+     inflated the whole interface: the model picker, the re-index button and
+     every chip grew by a third for no reason. */
+  input[type="text"], input:not([type]), input[type="search"], textarea { font-size: 16px; }
+  select, button { font-size: 12px; }
 
   /* THE CONTROLS BELONG TO THE CASE TABLE, so on a phone they are only shown
      where they do something. Arriving at the chat tab used to mean scrolling
@@ -1800,14 +1944,20 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   .ra-by::before { content: '— '; }
 
   .span-modal { width: 94vw; max-height: 78vh; }
-  .say { font-size: 14px; }
+  .say { font-size: 13px; padding: 8px 10px; }
+  .data-chip { font-size: 11px; padding: 4px 7px; min-height: 26px; }
+  .chat-msg .bubble td.num { font-size: 12px; }
+  .artifact-title { font-size: 13px; }
+  .export-btn, .span-chip { font-size: 9px; }
+  h1 { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 
 /* Very narrow — a small phone in portrait. */
 @media (max-width: 400px) {
   header { padding: 12px 10px 10px; }
   .stats-row { padding: 10px; }
-  h1 { font-size: 16px; }
+  h1 { font-size: 15px; }
+  .updated { display: none; }   /* the date is in Sources; the title bar is not the place */
   .chart-svg { min-width: 420px; }
 }
 </style>
@@ -1825,6 +1975,10 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 
 <div id="app" style="display:none">
   <header>
+    <button id="nav-toggle" class="nav-toggle" type="button" aria-expanded="false"
+            aria-controls="view-seg" onclick="toggleNav()">
+      <span class="nav-bars" aria-hidden="true">☰</span><span id="nav-current">Cases</span>
+    </button>
     <div>
       <h1>Nashville Eviction Tracker</h1>
       <div class="subtitle" id="subtitle"></div>
@@ -1916,7 +2070,11 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   <div class="toolbar" id="local-toolbar">
     <input id="search" placeholder="Search docket, plaintiff, attorney, address...">
     <div class="filter-row" id="filters"></div>
+    <button type="button" class="filter-btn" id="cv-filter-btn" onclick="toggleCodeViolationsFilter()"
+      title="Only cases at a property with a Metro Codes property-standards request on file (rolling 3-year window)"
+      style="margin-top:8px">Code Violations</button>
     <div id="landlord-filter-chip" style="display:none;margin-top:8px"></div>
+    <div id="holon-filter-chip" style="display:none;margin-top:8px"></div>
     <div class="date-range-filter" id="date-range-filter">
       <label>Filed</label>
       <input type="date" id="date-range-start" title="From (file date)">
@@ -2059,8 +2217,8 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
       <span class="live-meta" id="live-meta"></span>
     </div>
     <div class="live-rate" id="live-rate" style="display:none"></div>
-    <div class="live-screen" id="live-screen">
-      <div class="live-empty">// waiting for scraper feed…<span class="live-cursor"></span></div>
+    <div class="live-cols" id="live-cols">
+      <div class="live-empty" id="live-empty">// waiting for scraper feed…<span class="live-cursor"></span></div>
     </div>
   </div>
 
@@ -2070,16 +2228,27 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
       <span class="chat-status" id="chat-status">idle</span>
       <span class="chat-spans" id="chat-spans"></span>
       <select class="chat-model-select" id="chat-model-select">
-        <option value="Qwen2.5-0.5B-Instruct-q4f16_1-MLC" selected>Qwen2.5 0.5B (~0.5 GB)</option>
+        <!-- Qwen 0.5B removed 2026-09-04. It was the default and it could not
+             hold up its end of either job: asked to say what a dossier showed
+             it wrote "the case with MCCOY is ranked 1775 of the 9,595",
+             assembling a true-sounding sentence out of numbers from different
+             passages; asked to read a question it returned "MDHA, the district
+             manager of the Housing Authority, is not mentioned in this
+             question". Neither is a prompt problem. The model's whole job here
+             is reading a question and writing one sentence with no figures in
+             it, and half a billion parameters is under the floor for that. -->
         <option value="Llama-3.2-1B-Instruct-q4f16_1-MLC">Llama 3.2 1B (~0.9 GB)</option>
-        <option value="Qwen2.5-1.5B-Instruct-q4f16_1-MLC">Qwen2.5 1.5B (~1.5 GB)</option>
+        <option value="Qwen2.5-1.5B-Instruct-q4f16_1-MLC" selected>Qwen2.5 1.5B (~1.5 GB)</option>
       </select>
+      <button class="chat-rebuild" id="chat-clear" type="button" onclick="resetChat()"
+              title="Clear this conversation and re-read the snapshot">Refresh</button>
       <button class="chat-rebuild" id="chat-rebuild" type="button" onclick="rebuildChatDigest()">Re-index data</button>
     </div>
     <div class="chat-screen" id="chat-screen"></div>
     <div class="chat-suggestions" id="chat-suggestions"></div>
+    <div class="slash-box" id="chat-slash"></div>
     <form class="chat-composer" id="chat-composer" onsubmit="event.preventDefault(); submitChat();">
-      <input id="chat-input" placeholder="Ask about the case data — tables and charts are computed live from the snapshot…" autocomplete="off">
+      <input id="chat-input" placeholder="Ask a question, or type / for any landlord, attorney or district…" autocomplete="off">
       <button type="submit" id="chat-send">Send</button>
     </form>
   </div>
@@ -2353,6 +2522,44 @@ async function loadLandlordMapperSnapshot() {
   }
 }
 
+// Metro Codes' own "Property Standards Requests" record -- a public
+// government record (not a third-party inference the way Landlord Mapper's
+// ownership matches are), pulled via scripts/export-code-violations.mjs.
+// Grouped by the SAME normalizeAddressKey() as every other property join in
+// this app. Per its own metadata this dataset covers "a rolling three-year
+// period", not full history -- it goes stale on Metro's own schedule.
+const CV_SNAPSHOT_URL = 'data/code-violations-snapshot.json.gz';
+let codeViolationsByAddressKey = null;
+let cvSnapshotExportedAt = null;
+
+async function loadCodeViolationsSnapshot() {
+  try {
+    const r = await fetch(CV_SNAPSHOT_URL);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const ds = new DecompressionStream('gzip');
+    const text = await new Response(r.body.pipeThrough(ds)).text();
+    const parsed = JSON.parse(text);
+    const byKey = new Map();
+    for (const v of parsed.violations || []) {
+      if (!v.addressKey) continue;
+      if (!byKey.has(v.addressKey)) byKey.set(v.addressKey, []);
+      byKey.get(v.addressKey).push(v);
+    }
+    codeViolationsByAddressKey = byKey;
+    cvSnapshotExportedAt = parsed.exportedAt || null;
+    console.log(`[code-violations] loaded ${parsed.violations?.length || 0} records across ${byKey.size} addresses, captured ${cvSnapshotExportedAt}`);
+  } catch (e) {
+    console.warn('[code-violations] failed to load:', e.message);
+    codeViolationsByAddressKey = new Map();
+  }
+}
+
+function violationsForRow(r) {
+  if (!codeViolationsByAddressKey || !r?.address_formatted) return [];
+  const key = normalizeAddressKey(r.address_formatted);
+  return key ? (codeViolationsByAddressKey.get(key) || []) : [];
+}
+
 function whenIdle(fn, timeout = 1500) {
   if (typeof requestIdleCallback === 'function') {
     return requestIdleCallback(fn, { timeout });
@@ -2563,6 +2770,7 @@ let landlordFilterKey = null;   // merged-owner filter -- not a plain field matc
 let landlordFilterLabel = null;
 let holonFilterFn = null;       // predicate, not a key -- see setHolonFilter()
 let holonFilterLabel = null;
+let cvFilterActive = false;     // Code Violations toggle -- see toggleCodeViolationsFilter()
 
 let viewMode = 'cases';       // 'cases' | 'districts' | 'timeline' | 'coverage' | 'map' | 'sources'
 let coverageDir  = 'desc';    // 'desc' = newest on left, 'asc' = oldest on left
@@ -3342,6 +3550,13 @@ function clearHolonFilter(e) {
   render();
 }
 
+function toggleCodeViolationsFilter() {
+  cvFilterActive = !cvFilterActive;
+  updateFilterBtns();
+  render();
+  syncMapUrl();
+}
+
 function updateFilterBtns() {
   FILTER_FIELDS.forEach(f => {
     const btn = document.getElementById("fbtn-" + f.key);
@@ -3358,6 +3573,8 @@ function updateFilterBtns() {
       btn.textContent = f.label;
     }
   });
+  const cvBtn = document.getElementById('cv-filter-btn');
+  if (cvBtn) cvBtn.className = cvFilterActive ? 'filter-btn active' : 'filter-btn';
   const chip = document.getElementById('landlord-filter-chip');
   if (chip) {
     if (landlordFilterKey) {
@@ -3442,6 +3659,9 @@ function getFiltered() {
   }
   if (holonFilterFn) {
     rows = rows.filter(holonFilterFn);
+  }
+  if (cvFilterActive) {
+    rows = rows.filter(r => violationsForRow(r).length > 0);
   }
   if (globalDateStartTs != null || globalDateEndTs != null) {
     rows = rows.filter(r => {
@@ -6494,6 +6714,22 @@ function formatPleadings(pleadings) {
   }).join('')}</div>`;
 }
 
+// Metro Codes' property standards requests for this case's address, shown
+// on the same timeline widget as pleadings/judgments -- same shape,
+// {date, code, description, detail}, so formatPleadings does the actual
+// rendering rather than a second near-duplicate template.
+function formatCodeViolations(list) {
+  if (!list || !list.length) return '<span class="empty">— none on file (rolling 3-year window) —</span>';
+  const normalized = list.map(v => ({
+    date: v.dateReceived ? new Date(v.dateReceived).toLocaleDateString('en-US') : '',
+    code: v.status,
+    description: v.violationsNoted || v.reportedProblem || '',
+    detail: v.lastActivity ? `${v.lastActivity}${v.lastActResult ? ': ' + v.lastActResult : ''}` : '',
+    has_image: false,
+  }));
+  return formatPleadings(normalized);
+}
+
 function openTractPanel(geoid) {
   closePropertyPanel(); // the two right-edge panels never show at once
   selectedTract = geoid;
@@ -6691,7 +6927,11 @@ function renderRecordPanel(docket) {
       <button type="button" onclick="exportRecord('${safeDocket}', this)" title="Download as CSV">Export CSV</button>
       <button type="button" onclick="printRecord('${safeDocket}', this)" title="Open print view">Print</button>
     </div>
-    <div class="rp-fields">${rowHtml}</div>`;
+    <div class="rp-fields">${rowHtml}</div>
+    <div class="rp-section">
+      <span class="lbl">code violations</span>
+      ${formatCodeViolations(violationsForRow(r))}
+    </div>`;
   panel.classList.add('open');
   panel.setAttribute('aria-hidden', 'false');
 
@@ -7185,9 +7425,100 @@ let liveReconnectTimer = null;
 //     fast case inflating the number, and not a hand-picked
 //     seconds-per-case constant either.
 const LIVE_RECENT_N = 8;
-let liveCaseTimestamps = [];
-let liveEventTimestamps = [];
 let livePeakEventsPerSec = 0;
+
+// Several scrapers now run at once -- one primary doing per-case enrichment
+// and one or more sweep workers re-reading the results grid backwards through
+// history -- so the feed is demultiplexed into a column per worker. The server
+// tags every line with `worker` (a stable slot id) and `kind`; the account
+// ALIAS is read off the log text, because a sweep slot leases whichever
+// account is free at the time and can change between legs.
+let liveWorkers = new Map();
+
+// Sweep completions are global rather than per-worker for the headline rate:
+// "statuses refreshed per hour" is a property of the whole fleet, which is the
+// number that says when the backlog will actually be clear.
+let liveSweepEvents = [];
+const LIVE_RATE_WINDOW_MS = 30 * 60 * 1000;
+
+const LIVE_ALIAS_RE = /\b(?:as|leased|released)\s+([A-Z][A-Z0-9]{2,15})\b/;
+const LIVE_SWEEP_DONE_RE = /^(p\d+-W\d+):\s+(\d+)\s+rows/;
+const LIVE_SWEEP_WINDOW_RE = /^──\s*(p\d+-W\d+):\s*(\d{2}\/\d{2}\/\d{4})\s*[–-]\s*(\d{2}\/\d{2}\/\d{4})/;
+const LIVE_COOLDOWN_RE = /cooling down|backing off|displaced/i;
+
+// Green stays with the primary (it is what the single-worker view has always
+// looked like); sweep slots take the other hues in the order they appear.
+const LIVE_WORKER_COLORS = ['#39ff14', '#22d3ee', '#f59e0b', '#c084fc', '#f472b6'];
+function liveNextColor(kind) {
+  if (kind === 'primary') return LIVE_WORKER_COLORS[0];
+  const used = new Set([...liveWorkers.values()].map(w => w.color));
+  return LIVE_WORKER_COLORS.slice(1).find(c => !used.has(c))
+      || LIVE_WORKER_COLORS[1 + (liveWorkers.size % (LIVE_WORKER_COLORS.length - 1))];
+}
+
+function liveWorkerState(id, kind) {
+  let w = liveWorkers.get(id);
+  if (!w) {
+    w = { id, kind: kind || 'primary', alias: '', cooling: false,
+          caseTs: [], eventTs: [], cases: 0, windows: 0, rows: 0,
+          window: '', el: null, screen: null, lines: 0,
+          color: liveNextColor(kind || 'primary') };
+    liveWorkers.set(id, w);
+    liveEnsureColumns();
+  }
+  if (kind) w.kind = kind;
+  return w;
+}
+
+// Primary first, then sweep slots in name order, so columns don't jump around
+// as workers appear.
+function liveWorkerOrder() {
+  return [...liveWorkers.values()].sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === 'primary' ? -1 : 1;
+    return a.id.localeCompare(b.id);
+  });
+}
+
+function liveEnsureColumns() {
+  const host = document.getElementById('live-cols');
+  if (!host) return;
+  const empty = document.getElementById('live-empty');
+  if (empty) empty.remove();
+  for (const w of liveWorkerOrder()) {
+    if (!w.el) {
+      w.el = document.createElement('div');
+      w.el.className = 'live-col';
+      w.el.innerHTML =
+        `<div class="live-col-head"></div>` +
+        `<div class="live-screen"></div>`;
+      w.el.style.setProperty('--wc', w.color);
+      w.head = w.el.querySelector('.live-col-head');
+      w.screen = w.el.querySelector('.live-screen');
+    }
+    host.appendChild(w.el); // re-append = reorder, children preserved
+  }
+  liveRenderHeads();
+}
+
+function liveRenderHeads() {
+  for (const w of liveWorkers.values()) {
+    if (!w.head) continue;
+    const label = w.kind === 'primary' ? 'enrichment' : 'status sweep';
+    const alias = w.alias
+      ? `<span class="alias${w.cooling ? ' cooling' : ''}">${liveEsc(w.alias)}</span>` : '';
+    let right;
+    if (w.kind === 'primary') {
+      right = `<b>${w.cases}</b> cases`;
+    } else {
+      right = `<b>${w.windows}</b> windows · <b>${w.rows.toLocaleString()}</b> statuses`;
+    }
+    const cur = w.window ? `<span class="kind">${liveEsc(w.window)}</span>` : '';
+    w.head.innerHTML =
+      `<span class="name">${liveEsc(w.id)}</span>` + alias +
+      `<span class="kind">${label}</span>` + cur +
+      `<span class="cw">${right}</span>`;
+  }
+}
 
 const LIVE_TIMESTAMP_RE = /^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s*(.*)$/;
 const LIVE_DOCKET_RE = /\b(\d{2}[A-Z]{2}\d{3,8})\b/g;
@@ -7206,10 +7537,17 @@ function redactDefendantNames(text) {
 
 // Worker login accounts are scraper-internal credentials, not part of the
 // public court record — blank them wherever they show up in log lines.
-const LIVE_REDACT_LITERAL = '[redacted-account]';
+// The server now redacts these on the way out (live_stream.py) and the
+// scraper writes aliases only -- this is the third layer, so a stale cached
+// page or a log line from an older build still can't show an account name.
+const LIVE_REDACT_LITERALS = ['[redacted-account]', '[redacted-account]', '[redacted-account]'];
 function redactWorkerAccount(text) {
   if (!text) return text;
-  return text.split(LIVE_REDACT_LITERAL).join('█'.repeat(LIVE_REDACT_LITERAL.length));
+  for (const lit of LIVE_REDACT_LITERALS) {
+    const re = new RegExp(lit.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+    text = text.replace(re, '█'.repeat(lit.length));
+  }
+  return text;
 }
 
 function liveEsc(s) { return escapeHtmlSafe(String(s == null ? '' : s)); }
@@ -7257,66 +7595,166 @@ function extractCaseCompletion(raw) {
   return cm ? cm[1] : null;
 }
 
-function liveTrackCompletion() {
-  liveCaseTimestamps.push(Date.now());
-  if (liveCaseTimestamps.length > 300) liveCaseTimestamps.shift();
+function liveTrackCompletion(w) {
+  w.caseTs.push(Date.now());
+  w.cases++;
+  if (w.caseTs.length > 300) w.caseTs.shift();
 }
 
-function liveTrackEvent() {
+function liveTrackEvent(w) {
   const now = Date.now();
-  liveEventTimestamps.push(now);
+  w.eventTs.push(now);
   // Only need enough history to cover the 10s window used below.
-  while (liveEventTimestamps.length && now - liveEventTimestamps[0] > 10000) liveEventTimestamps.shift();
+  while (w.eventTs.length && now - w.eventTs[0] > 10000) w.eventTs.shift();
+}
+
+// One completed sweep window = N case statuses re-read in a single search.
+// This is the throughput that decides when the pending backlog is clear.
+function liveTrackSweep(w, rows) {
+  const now = Date.now();
+  w.windows++;
+  w.rows += rows;
+  liveSweepEvents.push({ t: now, rows });
+  while (liveSweepEvents.length && now - liveSweepEvents[0].t > LIVE_RATE_WINDOW_MS) {
+    liveSweepEvents.shift();
+  }
+}
+
+function livePerHour(ms) { return ms > 0 ? Math.round(3600000 / ms) : 0; }
+
+// Cases/hr from the gaps between "✓ DOCKET" completions, pooled across every
+// worker doing enrichment. "now" reads the recent gaps; "ceiling" is the 10th
+// percentile of every gap seen this session -- a measured best pace rather
+// than one lucky fast case, and not a hand-set seconds-per-case constant.
+function liveCaseRates() {
+  const gaps = [];
+  for (const w of liveWorkers.values()) {
+    for (let i = 1; i < w.caseTs.length; i++) gaps.push(w.caseTs[i] - w.caseTs[i - 1]);
+  }
+  if (gaps.length < 1) return null;
+  const recent = gaps.slice(-LIVE_RECENT_N).sort((a, b) => a - b);
+  const sorted = gaps.slice().sort((a, b) => a - b);
+  return {
+    n: gaps.length,
+    now: livePerHour(recent[Math.floor(recent.length / 2)]),
+    ceiling: livePerHour(sorted[Math.max(0, Math.floor(sorted.length * 0.1) - 1)]),
+  };
+}
+
+// Sweep throughput measured over real elapsed time rather than per-window
+// gaps: a window is worth however many statuses its grid actually held, so
+// rows-per-hour is the honest figure and windows-per-hour is the pace.
+function liveSweepRates() {
+  if (liveSweepEvents.length < 1) return null;
+  const now = Date.now();
+  const first = liveSweepEvents[0].t;
+  const span = Math.max(now - first, 1);
+  const rows = liveSweepEvents.reduce((a, e) => a + e.rows, 0);
+  // With a single completion there is no elapsed span to divide by yet, so
+  // fall back to that window's own duration rather than inventing a rate.
+  const usable = liveSweepEvents.length >= 2 ? span : null;
+  return {
+    n: liveSweepEvents.length,
+    windows: liveSweepEvents.length,
+    rows,
+    rowsPerHour: usable ? Math.round(rows / (usable / 3600000)) : null,
+    windowsPerHour: usable ? Math.round(liveSweepEvents.length / (usable / 3600000)) : null,
+  };
 }
 
 function liveRenderRate() {
   const el = document.getElementById('live-rate');
   if (!el) return;
   const now = Date.now();
-  const recentEvents = liveEventTimestamps.filter(t => now - t <= 10000);
+  let recentEvents = [];
+  for (const w of liveWorkers.values()) {
+    recentEvents = recentEvents.concat(w.eventTs.filter(t => now - t <= 10000));
+  }
   const eventsPerSec = recentEvents.length / 10;
   livePeakEventsPerSec = Math.max(livePeakEventsPerSec, eventsPerSec);
 
-  // Shows from the first gap between two completions on -- one sample is a
-  // real (if noisy) measurement, and "n=" makes the confidence level
-  // explicit rather than hiding the number until it's had time to settle.
-  let caseHtml = '';
-  if (liveCaseTimestamps.length >= 2) {
-    const gaps = [];
-    for (let i = 1; i < liveCaseTimestamps.length; i++) gaps.push(liveCaseTimestamps[i] - liveCaseTimestamps[i - 1]);
-    const recentGaps = gaps.slice(-LIVE_RECENT_N).sort((a, b) => a - b);
-    const currentMs = recentGaps[Math.floor(recentGaps.length / 2)];
-    const sortedAll = gaps.slice().sort((a, b) => a - b);
-    const ceilingMs = sortedAll[Math.max(0, Math.floor(sortedAll.length * 0.1) - 1)];
-    const perHour = (ms) => ms > 0 ? Math.round(3600000 / ms) : 0;
-    caseHtml =
-      `<span><b>${perHour(currentMs)}</b> <span class="dim">cases/hr right now (n=${gaps.length})</span></span>` +
-      `<span><b>${perHour(ceilingMs)}</b> <span class="dim">cases/hr ceiling — measured best pace, one worker/one account</span></span>`;
+  const active = [...liveWorkers.values()].filter(w => w.eventTs.length || w.lines);
+  const cr = liveCaseRates();
+  const sr = liveSweepRates();
+
+  const groups = [];
+  const dots = liveWorkerOrder().map(w =>
+    `<span style="color:${w.color}" title="${liveEsc(w.id)}${w.alias ? ' · ' + liveEsc(w.alias) : ''}">●</span>`
+  ).join('');
+  groups.push(
+    `<span class="grp"><span class="lbl">fleet</span>` +
+    `<span>${dots} <b>${active.length || liveWorkers.size}</b> <span class="dim">worker${(active.length || liveWorkers.size) === 1 ? '' : 's'}</span></span>` +
+    `<span><b>${eventsPerSec.toFixed(2)}</b> <span class="dim">events/sec</span></span>` +
+    `<span><b>${livePeakEventsPerSec.toFixed(2)}</b> <span class="dim">peak/sec</span></span></span>`);
+
+  if (cr) {
+    groups.push(
+      `<span class="grp"><span class="lbl">enrichment</span>` +
+      `<span><b>${cr.now}</b> <span class="dim">cases/hr now (n=${cr.n})</span></span>` +
+      `<span><b>${cr.ceiling}</b> <span class="dim">cases/hr ceiling</span></span></span>`);
   }
 
-  if (!caseHtml && recentEvents.length < 2) { el.style.display = 'none'; return; }
+  if (sr) {
+    const rate = sr.rowsPerHour === null
+      ? `<span><b>${sr.rows.toLocaleString()}</b> <span class="dim">statuses (measuring rate…)</span></span>`
+      : `<span><b>${sr.rowsPerHour.toLocaleString()}</b> <span class="dim">statuses/hr</span></span>` +
+        `<span><b>${sr.windowsPerHour}</b> <span class="dim">windows/hr</span></span>`;
+    groups.push(
+      `<span class="grp"><span class="lbl">status sweep</span>${rate}` +
+      `<span><b>${sr.windows}</b> <span class="dim">windows this session</span></span></span>`);
+  }
+
+  // The combined figure: every case record refreshed per hour, whichever
+  // worker touched it. This is the one that says how fast the backlog moves.
+  if (cr && sr && sr.rowsPerHour !== null) {
+    groups.push(
+      `<span class="grp"><span class="lbl">combined</span>` +
+      `<span><b>${(cr.now + sr.rowsPerHour).toLocaleString()}</b> <span class="dim">records refreshed/hr</span></span></span>`);
+  }
+
+  if (!cr && !sr && recentEvents.length < 2) { el.style.display = 'none'; return; }
   el.style.display = '';
-  el.innerHTML =
-    `<span><b>${eventsPerSec.toFixed(2)}</b> <span class="dim">events/sec</span></span>` +
-    `<span><b>${livePeakEventsPerSec.toFixed(2)}</b> <span class="dim">peak events/sec this session</span></span>` +
-    caseHtml;
+  el.innerHTML = groups.join('');
+  liveRenderHeads();
 }
 
-function liveLineHtml(evt) {
+function liveHandleMessage(evt) {
   let payload;
   try { payload = JSON.parse(evt); } catch { payload = { type: 'raw', line: evt }; }
 
+  // Server-side keepalive (see live_stream.py) -- proves the connection is
+  // still delivering bytes, nothing to show.
+  if (payload.type === 'heartbeat') return;
+
+  const wid = payload.worker || 'primary';
+  const w = liveWorkerState(wid, payload.kind);
+
   if (payload.type === 'log') {
+    const clean = decodeUnicodeEscapes(String(payload.line || '')).replace(/\s+/g, ' ').trim();
+    const body = clean.replace(LIVE_TIMESTAMP_RE, '$2').trim();
+
+    // Which account this slot is currently using, and whether it has been
+    // put in cooldown (a shared account we were displaced from).
+    const am = body.match(LIVE_ALIAS_RE);
+    if (am) { w.alias = am[1]; if (!LIVE_COOLDOWN_RE.test(body)) w.cooling = false; }
+    if (LIVE_COOLDOWN_RE.test(body)) w.cooling = true;
+
+    const wm = body.match(LIVE_SWEEP_WINDOW_RE);
+    if (wm) w.window = wm[2] + '–' + wm[3];
+
     // Backlog lines replay near-instantly on connect, not spaced by real
-    // per-case time -- counting them would fake a near-infinite rate.
+    // work -- counting them would fake a near-infinite rate.
     if (!payload.backlog) {
-      liveTrackEvent();
+      liveTrackEvent(w);
       const docket = extractCaseCompletion(payload.line);
-      if (docket) liveTrackCompletion();
+      if (docket) liveTrackCompletion(w);
+      const sm = body.match(LIVE_SWEEP_DONE_RE);
+      if (sm) { liveTrackSweep(w, parseInt(sm[2], 10) || 0); w.window = ''; }
       liveRenderRate();
     }
+
     const f = formatLiveLogLine(payload.line);
-    if (!f) return '';
+    if (!f) return;
     // Show the time this line reached the viewer's own machine, not the
     // scraper server's raw log timestamp — the two clocks/timezones aren't
     // guaranteed to match, and "when did this happen for me" is what matters
@@ -7324,24 +7762,22 @@ function liveLineHtml(evt) {
     const localTime = new Date().toLocaleTimeString([], { hour12: false });
     const timeHtml = `<span class="ts">${liveEsc(localTime)}</span> `;
     const markerHtml = f.marker ? `<span class="${f.markerClass}">${f.marker}</span> ` : '  ';
-    return `<div class="live-line">${timeHtml}${markerHtml}${f.body}</div>`;
+    liveAppend(w, `<div class="live-line">${timeHtml}${markerHtml}${f.body}</div>`);
+    return;
   }
 
   if (payload.type === 'test') {
     const addr = liveEsc(payload.address || '');
-    return `<div class="live-line"><span class="src">[test event]</span> address: ${addr}</div>`;
+    liveAppend(w, `<div class="live-line"><span class="src">[test event]</span> address: ${addr}</div>`);
+    return;
   }
-
-  // Server-side keepalive (see live_stream.py) -- proves the connection is
-  // still actually delivering bytes, nothing to show the user.
-  if (payload.type === 'heartbeat') return '';
 
   // Unknown payload shape — still redact defendant-looking fields before showing it.
   const safe = {};
   for (const [k, v] of Object.entries(payload)) {
     safe[k] = typeof v === 'string' && /defendant/i.test(k) ? '[redacted]' : v;
   }
-  return `<div class="live-line"><span class="src">[${liveEsc(payload.type || 'event')}]</span> ${liveEsc(redactWorkerAccount(redactDefendantNames(JSON.stringify(safe))))}</div>`;
+  liveAppend(w, `<div class="live-line"><span class="src">[${liveEsc(payload.type || 'event')}]</span> ${liveEsc(redactWorkerAccount(redactDefendantNames(JSON.stringify(safe))))}</div>`);
 }
 
 function liveSetStatus(text, isErr) {
@@ -7353,16 +7789,16 @@ function liveSetStatus(text, isErr) {
   if (dot) dot.classList.toggle('on', !isErr);
 }
 
-function liveAppend(html) {
-  if (!html) return;
-  const screen = document.getElementById('live-screen');
-  if (!screen) return;
-  const empty = screen.querySelector('.live-empty');
-  if (empty) empty.remove();
+function liveAppend(w, html) {
+  if (!html || !w || !w.screen) return;
+  const screen = w.screen;
   const atTop = screen.scrollTop < 40;
   screen.insertAdjacentHTML('afterbegin', html);
-  while (screen.children.length > LIVE_MAX_LINES) screen.removeChild(screen.lastChild);
+  // Cap per column, so one chatty worker can't evict another's history.
+  const cap = Math.max(80, Math.floor(LIVE_MAX_LINES / Math.max(1, liveWorkers.size)));
+  while (screen.children.length > cap) screen.removeChild(screen.lastChild);
   if (atTop) screen.scrollTop = 0;
+  w.lines++;
   liveEventCount++;
   liveUpdateMeta();
 }
@@ -7438,7 +7874,7 @@ function connectLiveFeed() {
   };
   liveSource.onmessage = (e) => {
     liveLastMsgAt = Date.now();
-    liveAppend(liveLineHtml(e.data));
+    liveHandleMessage(e.data);
   };
   liveSource.onerror = () => {
     liveSetStatus('disconnected — retrying…', true);
@@ -8065,7 +8501,18 @@ function render() {
   } else {
     disconnectLiveFeed();
   }
+  // Narrow screens hide the case-table controls on the chat tab; the class is
+  // what the stylesheet keys off, so the rule stays in CSS and this stays a
+  // one-line statement of which view is up.
+  document.body.classList.toggle('narrow-chat', viewMode === 'chat');
+  // The menu button says where you are, since the tabs are behind it.
+  const navNow = document.getElementById('nav-current');
+  if (navNow) {
+    const on = document.querySelector('#view-seg button.on');
+    navNow.textContent = on ? on.textContent.trim() : viewMode;
+  }
   if (viewMode === 'chat') {
+    if (!window.__slashBound) { bindChatSlash(); window.__slashBound = true; }
     bootChatView();
   }
   if (viewMode === 'cases') {
@@ -8134,14 +8581,44 @@ function chatSnapshotKey() {
 async function ensureChatEngine() {
   if (!chatApi) {
     chatSetStatus('loading eoreader7 reading organs…', 'busy');
-    // One organ, one dependency: source.js -> measure.js, neither touching
-    // Node — unlike the 6.1 host, whose corpus.js opens with `import fs`.
-    const source = await import(EO7_ORGANS + 'source.js');
+    /* Reading organs, and the kernel the reasoning record is kept in.
+
+       All of it comes through eoreader7 — kernel, adapters and organs are what
+       that repo owns, and `native/` is the seam a surface imports through. The
+       Fold's own modules (aperture, ground-ledger, crown) are ITS surface, not
+       a library, and reaching into them from here would cross the boundary the
+       two repos were separated along. Nothing in this import graph touches
+       Node: source.js -> measure.js, task-log.js -> cube.js, obligations.js ->
+       fold.js -> cube.js, and cube.js imports nothing at all. */
+    const [source, taskLog, obligations, cube, fold] = await Promise.all([
+      import(EO7_ORGANS + 'source.js'),
+      import(EO7_KERNEL + 'task-log.js'),
+      import(EO7_KERNEL + 'obligations.js'),
+      import(EO7_KERNEL + 'cube.js'),
+      import(EO7_KERNEL + 'fold.js'),
+    ]);
     chatApi = {
       chunkSource: source.chunkSource,   // cut the corpus into addressed passages
       retrieve: source.retrieve,         // term-overlap retrieval, no relevance floor
       tokenize: source.tokenize,         // the corpus's own word boundaries and stopwords
       readRange: source.readRange,       // read an address back out of the source
+      // The reasoning record: append-only, typed, projectable.
+      createTaskLog: taskLog.createTaskLog,
+      appendTask: taskLog.append,
+      projectTasks: taskLog.projectTasks,
+      ENTRY_KINDS: taskLog.ENTRY_KINDS,
+      OPERATOR_BASIS: taskLog.OPERATOR_BASIS,
+      checkCubeProgression: taskLog.checkCubeProgression,
+      // What the question requires that nothing here can discharge.
+      obligation: obligations.obligation,
+      openObligation: obligations.openObligation,
+      carryObligations: obligations.carryObligations,
+      cellOf: cube.cellOf,
+      // The fold the conversation accumulates into.
+      receivedGround: fold.receivedGround,
+      eoOperation: fold.eoOperation,
+      deltaFold: fold.deltaFold,
+      applyDelta: fold.applyDelta,
     };
   }
   const modelId = document.getElementById('chat-model-select').value;
@@ -8644,6 +9121,7 @@ async function ensureChatSession(force) {
   chatSources = { [sourceId]: text };
   chatChunks = chatApi.chunkSource(sourceId, text);
   indexChatEntities(chatChunks);
+  buildChatMasters();
   chatDigestKey = key;
   const f = chatFacts;
   document.getElementById('chat-spans').textContent =
@@ -8669,6 +9147,32 @@ async function bootChatView() {
   }
 }
 
+/* Start over. Clears the conversation, drops the derivations it produced, and
+   rebuilds the corpus from whatever the feed holds NOW — the background
+   refetch moves the snapshot under a long session, and a conversation that
+   began three snapshots ago is reasoning over addresses that have shifted. */
+async function resetChat() {
+  chatTurn++;                       // any turn still in flight is abandoned
+  document.getElementById('chat-screen').innerHTML = '';
+  chatDerivations.clear();
+  chatCurrentReading = null;
+  chatFold = null;                  // a new conversation carries no obligations forward
+  chatSlashClose();
+  const input = document.getElementById('chat-input');
+  if (input) input.value = '';
+  const btn = document.getElementById('chat-clear');
+  if (btn) btn.disabled = true;
+  try {
+    await ensureChatSession(true);
+    chatSetStatus(`ready — ${chatEngineModel || 'mechanical'}`, 'on');
+  } catch (e) {
+    chatSetStatus(e.message, 'err');
+  } finally {
+    if (btn) btn.disabled = false;
+    renderChatSuggestions();
+  }
+}
+
 async function rebuildChatDigest() {
   const btn = document.getElementById('chat-rebuild');
   btn.disabled = true;
@@ -8683,15 +9187,12 @@ async function rebuildChatDigest() {
 }
 
 const CHAT_SUGGESTIONS = [
-  "What's the deal with McCoy?",
-  'MCCOY, JENNIFER JO and HIGHLANDS AT THE LAKE',
-  'American Homes 4 Rent by district',
-  'MDHA over time',
-  'How often does a tenant have a lawyer?',
-  'Which census tracts are most likely to have increasing evictions?',
+  'Who files the most evictions?',
+  'Which landlords file most against unrepresented tenants?',
+  'Who are the tenant attorneys?',
+  'Filings per 1,000 residents by district',
   'Which tracts move together, underneath the citywide pattern?',
   'Can you forecast the next six months by district?',
-  'Filings per 1,000 residents by district',
 ];
 
 function renderChatSuggestions() {
@@ -8792,7 +9293,11 @@ function artifactHtml(a) {
     const head = a.head.some(h => h) ? `<thead><tr>${
       a.head.map((h, i) => `<th${i > 0 ? ' class="num"' : ''}>${escapeHtmlSafe(h)}</th>`).join('')
     }</tr></thead>` : '';
-    body = `<div class="artifact-table-wrap"><table>${head}<tbody>${
+    // A ranked list read as stacked blocks stops being a ranking, so it is
+    // marked and keeps its columns (scrolling) on a narrow screen; a fact card
+    // has no order to lose and stacks.
+    const ranked = a.rows.length > 3 && a.head.filter(Boolean).length >= 2;
+    body = `<div class="artifact-table-wrap${ranked ? ' ranked' : ''}"><table>${head}<tbody>${
       a.rows.map(r => `<tr>${r.cells.map((c, i) => {
         // The row's own label is a question too, when the row names something
         // this instrument holds a dossier on.
@@ -9672,6 +10177,19 @@ function chatMeasures() {
   return out;
 }
 
+/* How a person says a measure, against what it is called in the table. */
+const CHAT_MEASURE_SYNONYMS = {
+  'cost burdened renters': 'renter_cost_burdened', 'rent burdened': 'renter_cost_burdened',
+  'cost burdened owners': 'owner_cost_burdened',
+  'child poverty': 'child_poverty', 'poverty rate': 'poverty_rate', 'poverty': 'poverty_rate',
+  'median rent': 'median_rent', 'rents': 'median_rent',
+  'median income': 'median_income', 'household income': 'median_income',
+  'home value': 'median_home_value', 'home values': 'median_home_value',
+  'unemployment': 'unemployment',
+  'money judgments': 'judgments',
+  'tenant representation': 'tenant_counsel', 'tenants with lawyers': 'tenant_counsel',
+};
+
 const CHAT_MEASURE_DEFS = {
   filings: 'eviction filings in this district, all time in the snapshot',
   pending: 'filings still open', closed: 'filings closed',
@@ -9716,6 +10234,43 @@ function chatVetExpression(math, expr, allowed) {
   return { node };
 }
 
+/* "Filings per 1,000 residents" has a mechanical reading, and it is worth
+   taking, because the model got this exact question BACKWARDS — asked for
+   filings per 1,000 residents it wrote `population / filings`, which passes
+   every safety check the firewall applies (both names are real, the
+   arithmetic is arithmetic) and is simply the wrong quantity. A firewall can
+   refuse what is dangerous; it cannot know what was meant. So the common
+   shape is read here instead: "A per N B" is A / B * N, which is what the
+   phrase means, and no model is consulted for it. */
+const CHAT_PER_WORDS = {
+  filings: 'filings', evictions: 'filings', cases: 'filings', 'eviction filings': 'filings',
+  residents: 'population', resident: 'population', people: 'population',
+  population: 'population', person: 'population', capita: 'population',
+  'housing units': 'housing_units', 'housing unit': 'housing_units',
+  units: 'housing_units', unit: 'housing_units', homes: 'housing_units', home: 'housing_units',
+  households: 'housing_units', household: 'housing_units',
+  renters: 'housing_units', renter: 'housing_units', apartments: 'housing_units',
+  judgments: 'judgments', landlords: 'landlords', attorneys: 'attorneys',
+};
+
+function chatReadPer(q) {
+  const t = q.toLowerCase().replace(/,/g, '');
+  const m = t.match(/\b([a-z ]+?)\s+per\s+(?:([\d]+)\s+)?([a-z ]+?)\b(?:\s+(?:by|in|across|for)\b|[?.!]|$)/);
+  if (!m) return null;
+  const pick = (phrase) => {
+    const words = phrase.trim().split(/\s+/);
+    for (let n = Math.min(2, words.length); n >= 1; n--) {
+      const key = words.slice(-n).join(' ');
+      if (CHAT_PER_WORDS[key]) return CHAT_PER_WORDS[key];
+    }
+    return null;
+  };
+  const num = pick(m[1]), den = pick(m[3]);
+  if (!num || !den || num === den) return null;
+  const scale = m[2] ? Number(m[2]) : 1;
+  return scale && scale !== 1 ? `${num} / ${den} * ${scale}` : `${num} / ${den}`;
+}
+
 async function chatMeasureArtifact(expr, label) {
   const math = await ensureChatMath();
   const rows = chatMeasures();
@@ -9734,20 +10289,46 @@ async function chatMeasureArtifact(expr, label) {
     let v;
     try { v = code.evaluate({ ...vars }); } catch (_) { continue; }
     if (typeof v !== 'number' || !Number.isFinite(v)) continue;
-    out.push({ name, v });
+    out.push({ name, v, vars });
   }
   out.sort((a, b) => b.v - a.v);
   const fmt = (v) => Math.abs(v) >= 1000 ? Math.round(v).toLocaleString()
     : Math.abs(v) >= 1 ? v.toFixed(1) : v.toFixed(3);
+  /* SHOWING THE WORK. A computed column is the one place on this page where a
+     figure has no single row behind it to click through to — it was made, not
+     counted, and the only way to check it is to see the substitution. So every
+     row carries the expression with this district's own numbers put in, which
+     is the arithmetic a reader can redo on paper. */
+  const shown = new Set();
+  vet.node.traverse(n => { if (n.type === 'SymbolNode' && allowed.has(n.name)) shown.add(n.name); });
+  const names = [...shown];
+  const substitute = (vars) => {
+    let str = expr;
+    // Longest name first, so `median_income` is not half-replaced by `income`.
+    for (const nm of [...names].sort((a, b) => b.length - a.length)) {
+      str = str.split(nm).join(Number(vars[nm]).toLocaleString());
+    }
+    return str.replace(/\*/g, '×').replace(/\//g, ' ÷ ');
+  };
+  /* The working is only worth a column when there IS working. Asked for the
+     districts with the highest poverty rate, the expression is the bare
+     measure `poverty_rate`, so substituting its value printed the answer
+     twice under two different headings — a column of arithmetic with no
+     arithmetic in it. Shown when the expression computes something, dropped
+     when it just names a figure. */
+  const hasArithmetic = /[+\-*/]/.test(expr);
   return {
-    expr, missing,
+    expr, names,
+    missing,
     artifact: {
-      kind: out.length > 24 ? 'table' : 'chart',
+      kind: 'table',
       title: label || expr,
-      head: ['District', expr],
+      head: hasArithmetic ? ['District', 'Working', 'Result'] : ['District', label || expr],
       rows: out.map(r => ({
         label: `District ${r.name}`, value: r.v,
-        cells: [`District ${r.name}`, fmt(r.v)],
+        cells: hasArithmetic
+          ? [`District ${r.name}`, substitute(r.vars), fmt(r.v)]
+          : [`District ${r.name}`, fmt(r.v)],
         q: `council district ${r.name}`,
       })),
     },
@@ -9913,7 +10494,14 @@ function chatMonthIndex(mk) {
 
 const CHAT_KINDS = [
   { kind: 'defender', words: ['tenant attorney', 'tenant attorneys', 'tenant lawyer', 'tenant lawyers', 'defense attorney', 'defense attorneys', 'defence attorney', 'defender', 'defenders', 'represent tenants', 'representing tenants'], label: "Tenant's attorney", plural: 'tenant attorneys' },
-  { kind: 'landlord', words: ['landlord', 'landlords', 'plaintiff', 'plaintiffs', 'filer', 'filers', 'evictor', 'evictors', 'property owner', 'property owners'], label: 'Landlord', plural: 'landlords' },
+  /* The VERBS are here as well as the nouns. "Who files the most evictions?"
+     names the filer without ever using the word — measured live, that exact
+     question (one of this tab's own suggestions) fell through to "nothing in
+     these records answers that", because the vocabulary knew "filers" and not
+     "files". The verbs stay shorter than "districts", and the longest phrase
+     wins, so "which districts have the most evictions" still reads as a
+     question about districts rather than about whoever filed. */
+  { kind: 'landlord', words: ['landlord', 'landlords', 'plaintiff', 'plaintiffs', 'filer', 'filers', 'evictor', 'evictors', 'property owner', 'property owners', 'files', 'filed', 'filing', 'file', 'evicts', 'evicting'], label: 'Landlord', plural: 'landlords' },
   { kind: 'attorney', words: ['attorney', 'attorneys', 'lawyer', 'lawyers', 'counsel', 'law firm', 'firms'], label: "Plaintiff's attorney", plural: 'plaintiff attorneys' },
   { kind: 'district', words: ['district', 'districts', 'council district', 'council districts'], label: 'District', plural: 'districts' },
 ];
@@ -9988,6 +10576,732 @@ function chatRosterArtifact(kindDef, filter, limit = 25) {
   };
 }
 
+
+/* ─── Reading the question: decomposition before dispatch ───────────────────
+   Every branch below used to test the question with its own regex and return
+   early, which meant the instrument's understanding of a question existed
+   nowhere — it was distributed across a dozen conditionals and could not be
+   shown, exported, or argued with. That is the wrong shape for something a
+   lawyer may have to defend.
+
+   So the question is READ first, into typed elements, and nothing dispatches
+   until it is. Each element records three things: what it is, WHICH WORDS of
+   the question produced it, and WHAT RESOLVED IT — a vocabulary, an index of
+   real parties, a count over the rows, or the model. The reading is rendered
+   under every answer and travels in every export.
+
+   ALMOST ALL OF IT IS MECHANICAL, on purpose. Kind, filter, move, grain,
+   measures, named parties and voids are all decided by matching the question
+   against vocabularies and against the index of parties that actually exist
+   in the docket. The model is consulted for exactly one thing — a question
+   whose move the vocabulary could not read — and what it says is resolved
+   against those same vocabularies before it counts. The reading marks which
+   elements the model touched, so an auditor can see the whole chain and,
+   usually, see that the model was never in it. ────────────────────────────*/
+
+/* Things a person will reasonably ask this docket that the docket does not
+   record. Naming them is the answer; a proxy quietly substituted is not. */
+const CHAT_VOIDS = [
+  { id: 'disposition',
+    words: /\b(win|wins|winning|won|lose|loses|lost|outcome|outcomes|dismissed|dismissal|dismissals|prevail|success|successful|effective|effectiveness|result|results|ruling|verdict|evicted|eviction rate|actually removed)\b/i,
+    asks: 'how cases turned out',
+    why: 'this source records only PENDING and CLOSED. Dismissal, nonsuit, agreed order and judgment for possession are all filed under CLOSED, so who won is not distinguishable here.',
+    need: "the court's own docket entries, case by case" },
+  { id: 'households',
+    words: /\b(famil(y|ies)|children|kids|people|persons|residents affected|how many tenants|household size|displaced)\b/i,
+    asks: 'how many people are affected',
+    why: 'each row is one case, and defendant names are encrypted in this snapshot. There is no household size, no count of occupants, and no way to tell one household filed against twice from two households.',
+    need: 'household composition, which the court record does not carry' },
+  { id: 'rent-owed',
+    words: /\b(rent owed|back rent|arrears|amount owed|how much do they owe|debt)\b/i,
+    asks: 'how much rent was owed',
+    why: 'the only money figure here is a judgment amount, recorded on about 15% of cases after the fact. The rent claimed at filing is not in this source.',
+    need: 'the detainer warrant itself' },
+  { id: 'ownership',
+    words: /\b(who owns|owner of|ownership|bought|purchased|acquired|parent company|LLC behind|really owns)\b/i,
+    asks: 'who actually owns a property',
+    why: 'the plaintiff name is what was filed under, which may be an LLC, a d/b/a, or a management company. This source has no ownership chain and no way to link two names to one owner.',
+    need: 'assessor or Secretary of State records' },
+  { id: 'tenant-identity',
+    words: /\b(tenant name|defendant name|who was evicted|which tenant|same tenant|repeat tenant)\b/i,
+    asks: 'which tenant a case was against',
+    why: 'defendant names are encrypted in this snapshot by design. They cannot be searched, counted or matched across cases.',
+    need: 'nothing available here — this is a deliberate protection, not a gap' },
+];
+
+function chatDetectVoids(text) {
+  return CHAT_VOIDS.concat(CHAT_VOIDS_EXTRA).filter(v => v.words.test(text));
+}
+
+const chatEvidenceWords = (re, text) => {
+  const m = String(text).match(new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g'));
+  return m ? [...new Set(m.map(x => x.trim().toLowerCase()))] : [];
+};
+
+/* The reading itself, kept in eoreader7's OWN reasoning record rather than in
+   an array invented here.
+
+   `createTaskLog` / `append` / `projectTasks` (native/kernel/task-log.js) are
+   an append-only log of typed acts. Every step of reading a question lands as
+   an entry carrying four things the kernel enforces: which of the nine
+   operators the step performed, at which grain — validated against the cube,
+   so a step that names no real address cannot be logged at all — the evidence
+   it stood on, and its OPERATOR_BASIS, which is the part that matters most
+   here. PRODUCED means counted from the rows. DECLARED means matched against
+   a vocabulary this page declares. CONTESTED means two readings tied on the
+   same evidence. ABSENT means no act was earned, and `projectTasks` reports
+   it as an `operator_gap` rather than as a silence.
+
+   A void is not a note in prose; it is an EOObligation (kernel/obligations.js)
+   opened against the question and never resolved. It stays open, in the
+   record, with its grounds — which is what an unanswerable question should
+   leave behind.
+
+   The model is consulted for at most one step, and if it is, that step's
+   basis says so. Every other line of the record is mechanical. */
+function chatReadQuestion(q) {
+  const K = chatApi;
+  const B = K.OPERATOR_BASIS, E = K.ENTRY_KINDS;
+  let log = K.createTaskLog({});
+  let n = 0;
+  const step = ({ op, grain, basis, what, from, result }) => {
+    const task_id = `t${++n}:${what}`;
+    log = K.appendTask(log, {
+      kind: E.PROPOSE, task_id, operator: op, operator_basis: basis, grain,
+      description: what, evidence: (from || []).filter(Boolean),
+    });
+    if (result !== undefined) log = K.appendTask(log, { kind: E.RESULT, task_id, result });
+    return task_id;
+  };
+  const raw = ' ' + q.toLowerCase() + ' ';
+
+  // SIG · Ground — the question arrives as material and is cut into words by
+  // the same tokenizer every passage was cut by.
+  const tokens = K.tokenize(q);
+  step({ op: 'SIG', grain: 'Ground', basis: B.PRODUCED, what: 'words of the question',
+    from: tokens, result: `${tokens.length} content words` });
+
+  const kindDef = chatDetectKind(q);
+  if (kindDef) step({ op: 'SEG', grain: 'Figure', basis: B.DECLARED, what: 'kind of party asked about',
+    from: chatEvidenceWords(new RegExp(`\\b(${kindDef.words.join('|')})\\b`, 'i'), q), result: kindDef.plural });
+
+  const filter = CHAT_ROSTER_FILTERS.find(f => f.words.test(q)) || null;
+  if (filter) step({ op: 'SEG', grain: 'Ground', basis: B.DECLARED, what: 'which filings to count',
+    from: chatEvidenceWords(filter.words, q), result: filter.say });
+
+  const grain = chatDirectionalGrain(q)
+    || (/\btracts?\b|\bcensus\b|\bneighbou?rhood/.test(raw) ? 'tract'
+      : /\bdistricts?\b|\bcouncil\b/.test(raw) ? 'district' : null);
+  if (grain) step({ op: 'SEG', grain: 'Figure', basis: B.DECLARED, what: 'geography asked about',
+    from: chatEvidenceWords(/\b(tracts?|census|neighbou?rhoods?|districts?|council)\b/i, q), result: grain });
+
+  const move = detectChatMove(q);
+  if (move) step({ op: move.op, grain: 'Pattern', basis: B.DECLARED, what: 'what to do',
+    from: move.words.filter(w => raw.includes(w)), result: move.say });
+
+  const measuresNamed = Object.keys(CHAT_MEASURE_DEFS).filter(k => q.toLowerCase().includes(k));
+  if (measuresNamed.length) step({ op: 'EVA', grain: 'Pattern', basis: B.DECLARED, what: 'measures named',
+    from: measuresNamed, result: measuresNamed.join(', ') });
+
+  const intents = [];
+  if (/\b(forecast|predict|prediction|project|projection|expect|ahead|will there be|next month|next year)\b/.test(raw)) intents.push('forecast');
+  if (/\b(group|groups|cluster|clusters|together|emergent|emerge|holon|holons|drill|underneath|beneath)\b/.test(raw)) intents.push('grouping');
+  if (/\bper\b|\bratio\b|\bper capita\b|\bnormali[sz]|\brelative to\b|\bfor every\b|\bper 1,?000\b/.test(raw)) intents.push('ratio');
+  if (chatCausalAsk(q)) intents.push('before-and-after');
+  if (kindDef && /\b(who|which|what|list|top|most|biggest|largest|rank|all)\b/i.test(q)) intents.push('roster');
+  for (const i of intents) step({ op: 'REC', grain: 'Pattern', basis: B.DECLARED, what: `shape of question: ${i}`,
+    from: chatEvidenceWords(/\b(forecast|predict|project|expect|ahead|group|groups|cluster|together|emergent|drill|per|ratio|now that|since they|after they|effective|impact|changed?|who|which|top|most|list)\b/i, q), result: i });
+
+  /* A forecast, a grouping or a ratio names no party by construction, and
+     asking the index for one is what turned "next SIX months" into a landlord
+     called SIX SOUTH. A ROSTER is different: "which attorneys file for MDHA"
+     is a roster question that names a party, and the party is the whole point
+     of it. So a roster still consults the index; the other shapes do not. */
+  const structural = intents.some(i => i !== 'roster');
+  const named = structural ? [] : resolveChatEntities(q);
+  for (const p of named) {
+    step({ op: 'DEF', grain: 'Figure',
+      basis: p.tied ? B.CONTESTED : B.PRODUCED,
+      what: `party: ${p.entity.name}`, from: p.on,
+      result: `${p.entity.kind}, ${p.entity.cases.toLocaleString()} filings — named by ${p.on.length} of the ${p.entity.nameTokens.length} words of its name${p.tied ? ', tied with another party on the same words' : ''}` });
+  }
+  if (structural) step({ op: 'NUL', grain: 'Figure', basis: B.DECLARED,
+    what: 'no party looked for', from: [], result: 'this question names a shape of analysis, not a party, so the index of parties was not consulted' });
+
+  // Voids: obligations opened against the question, discharged by nothing.
+  const voids = chatDetectVoids(q);
+  const openObligations = voids.map(v => {
+    const ob = K.obligation({
+      id: `void:${v.id}`, distinction: v.asks,
+      grounds: chatEvidenceWords(v.words, q),
+      consequences: [v.need], openedAt: new Date().toISOString(),
+    });
+    log = K.appendTask(log, {
+      kind: E.PROPOSE, task_id: `void:${v.id}`,
+      description: v.asks, evidence: ob.grounds,
+    });
+    return ob;
+  });
+
+  /* A WORD SPENT ON A VOID CANNOT ALSO NAME A PARTY. "How long does a case
+     take to close?" opened the duration void on the words "how long" — and
+     then matched a landlord called LONG,JAMES on "long", and reported that
+     one company's figures underneath the notice that the question was
+     unanswerable. The word was already accounted for; it is not evidence of
+     anybody. Parties matched only on words the void claimed are dropped. */
+  if (voids.length && named.length) {
+    const spent = new Set(voids.flatMap(v => chatEvidenceWords(v.words, q).flatMap(w => chatTokens(w))));
+    const kept = named.filter(p => !p.on.every(t => spent.has(t)));
+    if (kept.length !== named.length) {
+      log = K.appendTask(log, {
+        kind: E.PROPOSE, task_id: 'void-claimed-words',
+        description: 'parties dropped: matched only on words already spent naming what the record lacks',
+        evidence: [...spent],
+      });
+      named.length = 0; named.push(...kept);
+    }
+  }
+
+  const tasks = K.projectTasks(log);
+  const progression = K.checkCubeProgression ? K.checkCubeProgression(log) : null;
+  return {
+    question: q, tokens, log, tasks, progression,
+    kindDef, filter, grain, move, intents, named, voids, openObligations,
+    modelConsulted: null,
+    get unread() { return !this.move && !this.intents.length && !this.named.length && !this.kindDef; },
+  };
+}
+
+/* The record, shown. Collapsed by default; opened it is the whole chain —
+   every act, the operator and grain it landed at, the words it stood on, and
+   on what standing it was taken. */
+function chatReadingHtml(reading) {
+  const K = chatApi;
+  const rows = reading.tasks.map(t => {
+    const basis = t.operator_basis === K.OPERATOR_BASIS.PRODUCED ? 'counted from the rows'
+      : t.operator_basis === K.OPERATOR_BASIS.DECLARED ? 'matched against a declared vocabulary'
+      : t.operator_basis === K.OPERATOR_BASIS.CONTESTED ? 'two readings tied on the same words'
+      : t.operator_basis === K.OPERATOR_BASIS.DERIVED ? 'derived from earlier steps'
+      : t.operator_gap || 'no act earned';
+    const cell = t.cell && !t.cell.gap ? `${t.operator}·${t.grain}` : '—';
+    return `<tr><td class="ra-role">${escapeHtmlSafe(cell)}</td>`
+      + `<td class="ra-val">${escapeHtmlSafe(t.description || t.task_id)}`
+      + (t.result ? `<span class="ra-detail">${escapeHtmlSafe(String(t.result))}</span>` : '') + `</td>`
+      + `<td class="ra-from">${t.evidence?.length ? escapeHtmlSafe('“' + t.evidence.slice(0, 8).join('”, “') + '”') : '—'}</td>`
+      + `<td class="ra-by">${escapeHtmlSafe(basis)}</td></tr>`;
+  }).join('');
+  const obs = reading.openObligations.length
+    ? `<div class="ra-model"><strong>Open, and not dischargeable here:</strong> `
+      + reading.openObligations.map(o => escapeHtmlSafe(`${o.distinction} — would need ${o.consequences[0]}`)).join('; ') + `.</div>`
+    : '';
+  const model = reading.modelConsulted
+    ? `<div class="ra-model">The model was asked one thing: ${escapeHtmlSafe(reading.modelConsulted.forWhat)}. It replied “${escapeHtmlSafe(String(reading.modelConsulted.said).replace(/\s+/g, ' ').slice(0, 120))}”, which was then resolved against the same vocabularies above. No figure in the answer came from it.</div>`
+    : `<div class="ra-model">No model ran. Every step above was settled by counting the rows or by matching declared vocabulary.</div>`;
+  return `<details class="reading-audit"><summary>How this question was read — ${reading.tasks.length} steps</summary>`
+    + `<table class="ra-table"><thead><tr><th>act</th><th>read as</th><th>from the words</th><th>on what standing</th></tr></thead>`
+    + `<tbody>${rows || '<tr><td colspan="4">nothing in this question matched anything this record holds</td></tr>'}</tbody></table>`
+    + obs + model + `</details>`;
+}
+
+
+/* ─── The model may speak, and may not count ────────────────────────────────
+   Everything above this line is arithmetic, and arithmetic does not explain
+   itself. A table saying district 19 rose 318 to 919 is not the same as
+   someone saying the filings there nearly tripled while representation stayed
+   near zero. That second sentence is worth having, and a model can write it.
+
+   What it cannot do is produce a figure. Not "should not" — cannot: every
+   digit in what it writes is REMOVED before the sentence is rendered, and the
+   removal is visible, so a reader can see that the instrument took a number
+   out rather than that the model happened not to use one. The numbers are all
+   already on screen, in the table the sentence sits under, where each one has
+   an address and a working behind it.
+
+   THE FOLD IT IS GIVEN is not the rows and not the corpus. It is the result
+   that was just computed, written out in words — the same facts the reader is
+   looking at, so the sentence cannot be about anything else. It gets no
+   passages to roam in, so there is nothing else for it to reach for. */
+
+const CHAT_SAY_PROMPT = [
+  'You write ONE sentence under a table of eviction court figures, saying what it shows.',
+  'Name the party or place that stands out and what is notable about it. Nothing else.',
+  'Write no numbers at all — not digits, not words like "many" or "a third". The figures are added afterwards from the table.',
+  'Do not describe the table, the columns, the method, or what anything "indicates" or "suggests". Do not explain what a row means.',
+  'One sentence. Plain words. Stop.',
+].join('\n');
+
+/* Numbers the model writes are not kept and not merely deleted — the real one
+   is PUT IN. Each row of the table it was shown has a label and a value, so a
+   sentence that says "filings" beside a party can have that party's actual
+   filing count attached to the word, from the table, where it is right.
+
+   Two things this fixes at once. The model never has to be trusted with a
+   figure, and the sentence stops being vague: "MDHA is at the top for filings"
+   becomes "MDHA is at the top for filings (1,614)". Any digits it wrote anyway
+   are dropped, because they came from nowhere.
+
+   Operates on the RAW text and escapes as it goes. The first version escaped
+   first and ran a digit regex over the result, which ate the digits inside
+   HTML entities — `&#39;` became `&#▮;` and rendered as literal mojibake in
+   the middle of a sentence. */
+const CHAT_NUMBER_WORDS = /\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|dozen|twenty|thirty|forty|fifty|hundred|hundreds|thousand|thousands|million|millions|half|third|quarter|percent|per cent)\b/gi;
+
+function chatValueMap(artifact) {
+  const map = [];
+  for (const r of (artifact.rows || []).slice(0, 20)) {
+    const label = String(chatCellText(r.cells[0])).replace(/^District /, '').trim();
+    /* The SECOND column, not the last. A roster's last column is the share of
+       its cases where a tenant had counsel, so injecting it produced "MDHA
+       5.4%" under a sentence about who files the most — a true figure
+       answering a question nobody asked. The second column is what the table
+       is ordered by, which is what the sentence is about. */
+    const value = String(chatCellText(r.cells[1] ?? r.cells[r.cells.length - 1])).trim();
+    if (label && value && label !== value && label.length > 2) map.push({ label, value });
+  }
+  // Longest label first, so "median household income" is not matched as "income".
+  return map.sort((x, y) => y.label.length - x.label.length);
+}
+
+function chatSayRender(raw, artifact) {
+  const values = chatValueMap(artifact);
+  let removed = 0, injected = 0;
+  // Strip the model's own figures from the raw text first.
+  let text = raw.replace(/\b\d[\d,.]*\s*%?/g, () => { removed++; return ''; })
+                .replace(CHAT_NUMBER_WORDS, () => { removed++; return ''; })
+                .replace(/\s{2,}/g, ' ').replace(/\s+([,.;])/g, '$1').trim();
+  // Then attach the real one wherever the sentence names something the table
+  // measured. Case-insensitive, first occurrence only, never twice.
+  let out = '';
+  let i = 0;
+  const used = new Set();
+  const lower = text.toLowerCase();
+  const hits = [];
+  for (const v of values) {
+    if (used.has(v.label.toLowerCase())) continue;
+    const at = lower.indexOf(v.label.toLowerCase());
+    if (at === -1) continue;
+    if (hits.some(h => at < h.end && at + v.label.length > h.at)) continue;
+    hits.push({ at, end: at + v.label.length, v });
+    used.add(v.label.toLowerCase());
+  }
+  hits.sort((x, y) => x.at - y.at);
+  for (const h of hits) {
+    out += escapeHtmlSafe(text.slice(i, h.end));
+    out += `<span class="injected" title="from the table above, not from the model">${escapeHtmlSafe(h.v.value)}</span>`;
+    injected++;
+    i = h.end;
+  }
+  out += escapeHtmlSafe(text.slice(i));
+  return { html: out, removed, injected, text };
+}
+
+/* The fold: WHAT WAS FOUND, not how it was worked out. */
+function chatFoldOf(artifact, extra) {
+  const rows = artifact.rows || [];
+  const label = (r) => String(chatCellText(r.cells[0])).trim();
+  const lines = [artifact.title];
+  if (rows.length > 2) {
+    lines.push(`Highest first: ${rows.slice(0, 6).map(label).join(', ')}.`);
+    if (rows.length > 8) lines.push(`Lowest: ${rows.slice(-3).map(label).reverse().join(', ')}.`);
+  } else {
+    for (const r of rows.slice(0, 10)) {
+      const k = label(r), v = String(chatCellText(r.cells[1] ?? '')).replace(/\d[\d,.%$]*/g, '').trim();
+      if (k) lines.push(v ? `${k}: ${v}` : k);
+    }
+  }
+  if (extra) lines.push(extra);
+  return lines.join('\n');
+}
+
+/* A sentence about the method, or about what a row "indicates", is not a
+   reading of the result. Measured live on both models. */
+const CHAT_META_TALK = /\b(comput\w+|calculat\w+|divid\w+|multipl\w+|indicates?|suggests?|shows? that|this table|the table|the data|the figures|the columns?|the rows?|dataset|you were asked|the question asks|in a table|as follows|i (?:will|can|would))\b/i;
+
+async function chatSay(artifact, question, extra) {
+  if (!chatEngine || !artifact) return null;
+  try {
+    const r = await chatEngine.chat.completions.create({
+      messages: [
+        { role: 'system', content: CHAT_SAY_PROMPT },
+        { role: 'user', content: `The question asked: ${question}\n\nWhat was computed:\n${chatFoldOf(artifact, extra)}` },
+      ],
+      temperature: 0.2,
+      max_tokens: 90,
+    });
+    let raw = (r.choices[0].message.content || '').trim();
+    if (!raw) return null;
+    // Keep only whole sentences — a reply cut off by the token limit ends
+    // mid-clause, and half a sentence is worse than none.
+    const sentences = raw.match(/[^.!?]+[.!?]/g);
+    if (!sentences) return null;
+    raw = sentences.slice(0, 2).join(' ').trim();
+    if (CHAT_META_TALK.test(raw)) return null;
+    if (raw.split(/\s+/).length > 45) return null;
+    const { html, removed, injected } = chatSayRender(raw, artifact);
+    if (!html.replace(/<[^>]+>/g, '').trim()) return null;
+    const note = injected
+      ? `${injected} figure${injected > 1 ? 's' : ''} filled in from the table`
+      : removed ? `${removed} figure${removed > 1 ? 's' : ''} the model wrote were dropped` : null;
+    return `<div class="say">${html}`
+      + (note ? `<span class="say-note">${note} — every number here is counted, not written</span>` : '')
+      + `</div>`;
+  } catch (e) {
+    console.warn('[eo/chat] say failed:', e);
+    return null;
+  }
+}
+
+
+/* ─── /  — reaching any party by name ───────────────────────────────────────
+   There are 9,595 landlords, 625 plaintiff attorneys, 187 tenant attorneys
+   and 35 districts on this docket, and almost none of them can be guessed.
+   The name index already knows every one; typing `/` opens it.
+
+   This is not autocomplete over a wordlist. Each row is a real party with its
+   own dossier passage and its own filing count, matched on the words of its
+   name and ranked by how much of the name you have typed and how many
+   filings it carries — so `/mc` reaches McCoy before it reaches a landlord
+   with one case whose name happens to start the same way. Choosing one asks
+   the ordinary question about it, so nothing reachable here is unreachable by
+   typing, and the answer is the same answer either way. */
+
+const CHAT_SLASH_MAX = 8;
+
+function chatSlashSearch(term) {
+  if (!chatEntities.length) return [];
+  const t = term.trim().toLowerCase();
+  if (!t) {
+    // Bare `/` — the busiest of each kind, so the list is never empty and
+    // always says what sort of thing lives behind it.
+    const out = [];
+    for (const kind of ['attorney', 'landlord', 'defender', 'district']) {
+      out.push(...chatEntities.filter(e => e.kind === kind).sort((a, b) => b.cases - a.cases).slice(0, 2));
+    }
+    return out;
+  }
+  const parts = t.split(/\s+/).filter(Boolean);
+  const scored = [];
+  for (const e of chatEntities) {
+    const name = e.name.toLowerCase();
+    if (!parts.every(p => name.includes(p))) continue;
+    // A name that STARTS with what was typed is what was meant more often
+    // than one that merely contains it; beyond that, the busier party first.
+    const starts = name.startsWith(t) ? 2 : name.split(/[\s,]+/).some(w => w.startsWith(parts[0])) ? 1 : 0;
+    scored.push({ e, starts, cases: e.cases });
+  }
+  scored.sort((a, b) => b.starts - a.starts || b.cases - a.cases || a.e.name.localeCompare(b.e.name));
+  return scored.slice(0, CHAT_SLASH_MAX).map(x => x.e);
+}
+
+const CHAT_KIND_LABEL = {
+  attorney: "plaintiff's attorney", landlord: 'landlord',
+  defender: "tenant's attorney", district: 'council district',
+};
+
+let chatSlashIndex = -1;
+
+function chatSlashRender(term) {
+  const box = document.getElementById('chat-slash');
+  if (!box) return;
+  const hits = chatSlashSearch(term);
+  chatSlashIndex = hits.length ? 0 : -1;
+  if (!hits.length) {
+    box.innerHTML = `<div class="slash-empty">No party on this docket matches “${escapeHtmlSafe(term)}”.</div>`;
+    box.classList.add('open');
+    return;
+  }
+  box.innerHTML = hits.map((e, i) => `<button type="button" class="slash-row${i === 0 ? ' on' : ''}" data-name="${escapeHtmlSafe(e.name)}">`
+    + `<span class="slash-name">${escapeHtmlSafe(e.name)}</span>`
+    + `<span class="slash-kind">${escapeHtmlSafe(CHAT_KIND_LABEL[e.kind] || e.kind)}</span>`
+    + `<span class="slash-n">${e.cases.toLocaleString()}</span></button>`).join('');
+  box.classList.add('open');
+}
+
+function chatSlashClose() {
+  const box = document.getElementById('chat-slash');
+  if (box) { box.classList.remove('open'); box.innerHTML = ''; }
+  chatSlashIndex = -1;
+}
+
+function chatSlashPick(name) {
+  const input = document.getElementById('chat-input');
+  chatSlashClose();
+  if (input) input.value = '';
+  askChat(name);
+}
+
+function bindChatSlash() {
+  const input = document.getElementById('chat-input');
+  const box = document.getElementById('chat-slash');
+  if (!input || !box) return;
+  input.addEventListener('input', () => {
+    const v = input.value;
+    if (v.startsWith('/')) chatSlashRender(v.slice(1)); else chatSlashClose();
+  });
+  input.addEventListener('keydown', (e) => {
+    const rows = [...box.querySelectorAll('.slash-row')];
+    if (!box.classList.contains('open') || !rows.length) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      chatSlashIndex = (chatSlashIndex + (e.key === 'ArrowDown' ? 1 : rows.length - 1)) % rows.length;
+      rows.forEach((r, i) => r.classList.toggle('on', i === chatSlashIndex));
+      rows[chatSlashIndex].scrollIntoView({ block: 'nearest' });
+    } else if (e.key === 'Enter' && chatSlashIndex >= 0) {
+      e.preventDefault(); chatSlashPick(rows[chatSlashIndex].dataset.name);
+    } else if (e.key === 'Escape') { chatSlashClose(); }
+  });
+  box.addEventListener('click', (e) => {
+    const row = e.target.closest('.slash-row');
+    if (row) chatSlashPick(row.dataset.name);
+  });
+  input.addEventListener('blur', () => setTimeout(chatSlashClose, 150));
+}
+
+
+/* ─── Two more things this record cannot do, named ─────────────────────────*/
+const CHAT_VOIDS_EXTRA = [
+  { id: 'duration',
+    words: /\b(how long|duration|days to|time to (close|resolve|judgment)|takes? to (close|resolve)|speed|backlog|how quickly)\b/i,
+    asks: 'how long a case takes',
+    why: 'there is no court event date here except the filing date. `last_changed` looks like a resolution date and is not one — it is when this project last saw the row change, which for almost every case is the day it was scraped (it differs from first_seen on 5 rows in 4,000, and only by days).',
+    need: 'the disposition date from the court docket' },
+  { id: 'address',
+    words: /\b(my building|this building|my address|at \d+ |street|which properties|repeat filer at|same building|this property)\b/i,
+    asks: 'what has happened at a particular address',
+    why: 'the case rows carry no address. They carry a census tract and a council district, which is how the map places them, but not a street address — so no question can be asked here about one building.',
+    need: 'the property-level snapshot behind the Map tab, which is keyed by address' },
+];
+
+/* ─── A rate, over time ─────────────────────────────────────────────────────
+   "Has tenant representation improved?" is not a count and not a ranking; it
+   is one number per month, and the number is a share. Worth its own move
+   because the honest version carries a warning a bare chart would not: an
+   attorney appears on a case AFTER it is filed, so the most recent months
+   always look like the worst months, and on this docket they look like zero. */
+const CHAT_RATES = [
+  { id: 'representation',
+    words: /\b(representation|represented|tenant counsel|tenants? (with|have) (a )?lawyer|right to counsel)\b/i,
+    label: 'Share of filings where an attorney appeared for the tenant',
+    row: (r) => !!String(r.Def_Attorney || '').trim(),
+    lags: true,
+    caveat: 'An attorney appears on a case after it is filed, so the newest months are always understated — a case filed last month may still get counsel. Read the recent end as incomplete, not as a collapse.' },
+  { id: 'judgment',
+    words: /\b(money judgment|judgment rate|judgments entered)\b/i,
+    label: 'Share of filings with a money judgment amount recorded',
+    row: (r) => { const a = Number(r.judgment_amount); return Number.isFinite(a) && a > 0; },
+    lags: true,
+    caveat: 'A judgment is entered after filing, so the newest months are understated for the same reason.' },
+  { id: 'pending',
+    words: /\b(still open|pending rate|share pending)\b/i,
+    label: 'Share of filings still open',
+    row: (r) => String(r.status || '').toUpperCase() === 'PENDING',
+    lags: false, caveat: null },
+];
+
+function chatRateArtifact(rate) {
+  const m = new Map();
+  for (const r of allRows) {
+    const k = caseFileDateToMonth(r.file_date); if (!k) continue;
+    let e = m.get(k); if (!e) m.set(k, e = { n: 0, hit: 0 });
+    e.n++; if (rate.row(r)) e.hit++;
+  }
+  const keys = sortMonthsAsc([...m.keys()]);
+  if (keys.length < 6) return null;
+  const rows = keys.map(k => {
+    const e = m.get(k);
+    return { label: k, value: e.n ? (e.hit / e.n) * 100 : 0,
+      cells: [k, `${((e.hit / e.n) * 100).toFixed(2)}%`, `${e.hit.toLocaleString()} of ${e.n.toLocaleString()}`] };
+  });
+  const first = rows.slice(0, 12), last = rows.slice(-24, -12);   // skip the lagging tail
+  const avg = (a) => a.reduce((x, y) => x + y.value, 0) / (a.length || 1);
+  return {
+    artifact: { kind: 'chart', title: rate.label,
+      head: ['Month', 'Share', 'Count'], rows },
+    summary: `${avg(first).toFixed(2)}% in the first year, ${avg(last).toFixed(2)}% a year before the end`,
+    caveat: rate.caveat,
+    predicate: { op: 'REC', intent: 'rate over time', rate: rate.id, measure: rate.label,
+      months: keys.length, lagWarning: rate.caveat || null },
+  };
+}
+
+/* ─── Two measures, against each other ──────────────────────────────────────
+   "Are evictions worse in majority-Black neighborhoods?" asks whether two
+   things move together across the city. That is a correlation, and a
+   correlation without a null is a number that always looks like something:
+   with 35 districts, r of 0.3 arrives by chance often enough to be worthless
+   on its own. So one side is shuffled against the other, many times, and what
+   is reported is how many of those shuffles the real pairing beat. */
+const CHAT_CORR_DRAWS = 2000;
+const CHAT_CORR_SEED = 'eviction-overwatch/correlation';
+
+function chatCorrelate(xName, yName) {
+  const rows = chatMeasures();
+  const xs = [], ys = [];
+  for (const vars of rows.values()) {
+    const a = vars[xName], b = vars[yName];
+    if (a == null || b == null) continue;
+    xs.push(a); ys.push(b);
+  }
+  if (xs.length < 8) return null;
+  const r = chatCorr(xs, ys);
+  const rng = chatDyn ? chatDyn.createSeededRng(CHAT_CORR_SEED) : Math.random;
+  let beat = 0;
+  for (let i = 0; i < CHAT_CORR_DRAWS; i++) {
+    const sh = chatDyn ? chatDyn.shuffled(ys, rng) : ys.slice().sort(() => Math.random() - 0.5);
+    if (Math.abs(r) > Math.abs(chatCorr(xs, sh))) beat++;
+  }
+  return { r, beat, draws: CHAT_CORR_DRAWS, n: xs.length };
+}
+
+
+/* ─── The master object: one filer, many names ──────────────────────────────
+   MDHA appears on this docket seven times — "MDHA", "M D H A", "MDHA DBA
+   HAYNES GARDEN APARTMENTS", "M D H A D/B/A 8200 MCCRORY" and three more —
+   and its dossier said 1,614 filings when the seven together carry 2,332.
+   Mid-America Apartments files under fifteen names. Across the docket 815
+   groups of names collapse to one filer each, covering 41,293 filings: more
+   than half of everything here. A tenant organiser asking who evicts most in
+   their district was reading a ranking split across a company's own aliases.
+
+   WHAT THIS IS, EXACTLY. A name-shape grouping: case folded, punctuation
+   dropped, the trade name after "d/b/a" removed, corporate suffixes removed,
+   and a run of single letters closed up so "M D H A" meets "MDHA". Two names
+   are grouped when what is left is identical — not similar, identical.
+
+   WHAT IT IS NOT, and this matters more. It is NOT ownership. Two companies
+   can share a name and share nothing else; one owner can hold property under
+   names with nothing in common. This record has no ownership chain — that is
+   already a declared void here — so the grouping is a claim about STRINGS ON
+   FILINGS, and it is presented as one: every master shows the names it
+   combined, and the separate filings stay addressable underneath it. The
+   court record is what was filed; this is a reading of it, offered, never
+   substituted silently. */
+
+function chatMasterKey(name) {
+  let s = String(name || '').toUpperCase();
+  s = s.split(/\bD\s?\/?\s?B\s?\/?\s?A\b/)[0];      // the trade name is a mask over the filer
+  s = s.replace(/[.,'"()&]/g, ' ');
+  s = s.replace(/\b(L\s?L\s?C|L\s?P|LLP|INC|CORP|CO|LTD|TRUST|COMPANY|PARTNERSHIP|ASSOCIATES|PROPERTIES|APARTMENTS|APTS|HOMES)\b/g, ' ');
+  s = s.replace(/\s+/g, ' ').trim();
+  if (/^(?:[A-Z] )+[A-Z]$/.test(s)) s = s.replace(/ /g, '');
+  return s.length >= 3 ? s : null;
+}
+
+let chatMasters = null;      // key -> { key, label, members[], cases }
+
+function buildChatMasters() {
+  const m = new Map();
+  for (const e of chatFacts.landlords) {
+    const k = chatMasterKey(e.name); if (!k) continue;
+    let g = m.get(k); if (!g) m.set(k, g = { key: k, members: [], cases: 0 });
+    g.members.push(e); g.cases += e.cases;
+  }
+  chatMasters = new Map();
+  for (const [k, g] of m) {
+    if (g.members.length < 2) continue;
+    g.members.sort((a, b) => b.cases - a.cases);
+    // The label is the SHORTEST member name, which is almost always the bare
+    // filer with the trade names stripped off it.
+    g.label = g.members.reduce((a, b) => (a.name.length <= b.name.length ? a : b)).name;
+    chatMasters.set(k, g);
+  }
+  return chatMasters;
+}
+
+function chatMasterFor(entity) {
+  if (!entity || entity.kind !== 'landlord' || !chatMasters) return null;
+  const g = chatMasters.get(chatMasterKey(entity.name));
+  return g && g.members.length > 1 ? g : null;
+}
+
+/* The combined facts. Summed from the members' own tallies rather than by
+   re-walking the rows, so the master is exactly the parts and cannot drift
+   from them. */
+function chatMasterFacts(group) {
+  const merge = (get) => {
+    const out = new Map();
+    for (const e of group.members) for (const [k, v] of get(e)) out.set(k, (out.get(k) || 0) + v);
+    return out;
+  };
+  const sum = (f) => group.members.reduce((a, e) => a + f(e), 0);
+  const amounts = group.members.flatMap(e => e.judgmentAmounts);
+  return {
+    kind: 'landlord', name: group.label, isMaster: true, group,
+    cases: group.cases,
+    pending: sum(e => e.pending), closed: sum(e => e.closed),
+    withTenantCounsel: sum(e => e.withTenantCounsel),
+    withJudgment: sum(e => e.withJudgment),
+    judgmentTotal: sum(e => e.judgmentTotal), judgmentAmounts: amounts,
+    buckets: merge(e => e.buckets), districts: merge(e => e.districts),
+    months: merge(e => e.months), counterparties: merge(e => e.counterparties),
+    opposing: merge(e => e.opposing), caseTypes: merge(e => e.caseTypes),
+    first: Math.min(...group.members.map(e => e.first ?? Infinity)),
+    last: Math.max(...group.members.map(e => e.last ?? -Infinity)),
+    rank: null, of: null, ref: group.members[0].ref,
+    nameTokens: [], counterpartiesSize: 0,
+  };
+}
+
+function chatMasterArtifact(group) {
+  const f = chatMasterFacts(group);
+  const total = chatFacts.total;
+  const art = entityProfileArtifact(f);
+  art.title = `${group.label} — all ${group.members.length} names it files under`;
+  // The members, each still its own question, so nothing is buried by combining.
+  art.rows.unshift({ label: 'names', value: 0, cells: ['Names combined',
+    { links: group.members.map(e => ({ label: e.name, q: e.name, count: e.cases })) }] });
+  return { artifact: art, facts: f,
+    predicate: { op: 'SYN', intent: 'master object', key: group.key,
+      label: group.label, members: group.members.map(e => ({ name: e.name, filings: e.cases })),
+      rule: 'names grouped when they are identical after case folding, punctuation removal, dropping the trade name after d/b/a, dropping corporate suffixes, and closing up runs of single letters',
+      isNotOwnership: 'this groups strings on filings. It is not an ownership finding, and this record carries no ownership chain.',
+      combinedFilings: group.cases } };
+}
+
+/* ─── Asking back ───────────────────────────────────────────────────────────
+   Some questions cannot be answered because they have not finished being
+   asked. Three McCoys share a name; a party has been named but not what to do
+   with it; a ratio has a numerator and no denominator; nothing matched at all.
+
+   Guessing at those is how an instrument tells you something confidently
+   wrong. Refusing them is how it becomes useless. So it asks — and every
+   option it offers is a REAL question it can answer, generated from what was
+   actually resolved, so nothing is offered that would then fail. Pressing one
+   asks it, exactly as if it had been typed. */
+function chatFollowUp(prompt, options, note) {
+  if (!options.length) return null;
+  return `<div class="followup">`
+    + `<div class="fu-q">${escapeHtmlSafe(prompt)}</div>`
+    + `<div class="fu-opts">${options.map(o =>
+        `<button type="button" class="fu-opt" data-q="${escapeHtmlSafe(o.q)}">`
+        + `<span class="fu-label">${escapeHtmlSafe(o.label)}</span>`
+        + (o.hint ? `<span class="fu-hint">${escapeHtmlSafe(o.hint)}</span>` : '')
+        + `</button>`).join('')}</div>`
+    + (note ? `<div class="fu-note">${escapeHtmlSafe(note)}</div>` : '')
+    + `</div>`;
+}
+
+/* What can be done with a party, given what this record holds about it. Only
+   moves with something behind them are offered — a landlord with one filing
+   is not offered a trend. */
+function chatNextMoves(e) {
+  const opts = [];
+  if (e.districts && e.districts.size > 1)
+    opts.push({ label: 'Where', q: `${e.name} by district`, hint: `${e.districts.size} districts` });
+  if (e.months && e.months.size > 6)
+    opts.push({ label: 'Over time', q: `${e.name} over time`, hint: `${e.months.size} months` });
+  if (e.counterparties && e.counterparties.size > 1) {
+    const label = { attorney: 'Which landlords', landlord: 'Which attorneys', defender: 'Opposed whom', district: 'Who files here' }[e.kind];
+    opts.push({ label, q: `which ${e.kind === 'landlord' ? 'attorneys' : 'landlords'} for ${e.name}`, hint: `${e.counterparties.size}` });
+  }
+  if (e.cases > 20)
+    opts.push({ label: 'Representation', q: `how often does a tenant have a lawyer against ${e.name}`, hint: `${chatPct(e.withTenantCounsel, e.cases)}` });
+  const busiest = e.counterparties ? chatTopList(e.counterparties, 1)[0] : null;
+  if (busiest && busiest[1] > 1)
+    opts.push({ label: `With ${String(busiest[0]).slice(0, 24)}`, q: `${e.name} and ${busiest[0]}`, hint: `${busiest[1]} together` });
+  return opts;
+}
+
 /* ─── Derivations: a result that can leave this page and still be checkable ──
    Every table this tab produces is a claim about 78,000 court records, and a
    claim a lawyer might put in front of somebody else. So it is not rendered
@@ -10014,6 +11328,45 @@ function chatRosterArtifact(kindDef, filter, limit = 25) {
    cannot say which snapshot it came from cannot be checked at all. ───────── */
 
 const chatDerivations = new Map();
+let chatCurrentReading = null;
+/* THE CONVERSATION'S FOLD. Every turn lands as a delta on it, so the session
+   accumulates rather than restarting: an obligation opened three questions ago
+   is still open now, carried forward each turn with its persistence counted,
+   because nothing here has discharged it. `receivedGround` seeds it; each
+   turn's reading becomes operations and `applyDelta` advances the sequence. */
+let chatFold = null;
+
+function chatFoldTurn(reading, refs) {
+  const K = chatApi;
+  if (!K?.receivedGround) return null;
+  chatFold ||= K.receivedGround({});
+  const ops = [];
+  // Each step of the reading is an act at a real cube address.
+  for (const t of reading.tasks) {
+    if (!t.operator || !t.grain) continue;
+    try {
+      ops.push(K.eoOperation({
+        id: `${chatFold.sequence}:${t.task_id}`,
+        op: t.operator, grain: t.grain,
+        witness: refs.length ? refs[0] : null,
+        inputs: t.evidence || [], outputs: t.result ? [String(t.result)] : [],
+      }));
+    } catch (_) { /* a step that names no real cell simply does not land */ }
+  }
+  // Voids land as obligations, which is what keeps them alive across turns.
+  for (const ob of reading.openObligations) {
+    try { ops.push(K.openObligation(ob, { witness: reading.question, grain: 'Pattern', op: 'DEF' })); }
+    catch (_) {}
+  }
+  if (!ops.length) return chatFold;
+  try {
+    chatFold = K.applyDelta(chatFold, K.deltaFold(ops, { question: reading.question }));
+    // Anything still open gains a turn of persistence — the record of how long
+    // a question has gone unanswered is itself worth keeping.
+    if (K.carryObligations) chatFold = { ...chatFold, obligations: K.carryObligations(chatFold) };
+  } catch (e) { console.warn('[eo/chat] fold failed:', e); }
+  return chatFold;
+}
 let chatDerivationSeq = 0;
 
 function chatDerive({ question, op, subject, join, dockets, refs, routed, artifact }) {
@@ -10043,8 +11396,28 @@ function chatDerive({ question, op, subject, join, dockets, refs, routed, artifa
         ? { id: chatEngineModel, role: 'routing only', said: routed,
             note: 'the model was asked which party and which move the question meant; it was resolved against the name index and the move vocabulary, and no figure in this result passed through it' }
         : { id: null, role: 'not consulted', note: 'this result was resolved from the question mechanically; no model ran' },
+      // The whole reasoning record, as the kernel projected it.
+      reading: chatCurrentReading ? {
+        question: chatCurrentReading.question,
+        steps: chatCurrentReading.tasks.map(t => ({
+          act: t.cell && !t.cell.gap ? `${t.operator}·${t.grain}` : null,
+          read_as: t.description, result: t.result,
+          from_words: t.evidence, standing: t.operator_basis, gap: t.operator_gap || null,
+        })),
+        openObligations: chatCurrentReading.openObligations.map(o => ({
+          id: o.id, schema: o.schema, asks: o.distinction,
+          grounds: o.grounds, wouldNeed: o.consequences, status: o.status,
+        })),
+        model: chatCurrentReading.modelConsulted || 'not consulted',
+      } : null,
+      fold: chatFold ? {
+        schema: chatFold.schema, sequence: chatFold.sequence,
+        openObligations: (chatFold.obligations || []).filter(o => o.status === 'open')
+          .map(o => ({ id: o.id, asks: o.distinction, turnsOpen: o.persistence })),
+      } : null,
       corpus: {
         engine: 'eoreader7',
+        kernel: ['kernel/task-log.js', 'kernel/obligations.js', 'kernel/cube.js'],
         commit: EO7_COMMIT,
         organs: ['source.js::chunkSource', 'source.js::retrieve', 'source.js::tokenize', 'source.js::readRange'],
         passages: chatChunks ? chatChunks.length : 0,
@@ -10459,7 +11832,7 @@ async function askChat(q) {
     const refs = sp ? [sp.ref] : [];
     const d = chatDerive({ question: q, op: 'SEG', subject: null, refs, artifact });
     addChatMessage('assistant', artifactHtml(artifact), chatProvStrip(
-      `computed from ${allRows.length.toLocaleString()} live rows — no model involved`, refs) + chatExportStrip(d));
+      `computed from ${allRows.length.toLocaleString()} live rows — no model involved`, refs, reading) + chatExportStrip(d));
     return;
   }
 
@@ -10470,15 +11843,72 @@ async function askChat(q) {
      to name somebody, and the name index has no way to know it was a duration.
      Analytical questions about places are settled here, before any name is
      resolved, so a stray word inside one cannot be read as a party. */
+  /* ONE READING, BUILT ONCE, DRIVING EVERYTHING BELOW. Every branch used to
+     re-test the question with its own regex; now they read from the record. */
+  const reading = chatReadQuestion(q);
+  chatCurrentReading = reading;
+  /* SURF, ON EVERY TURN. The corpus is read for this question whatever the
+     answer turns out to be, so every reply carries passages that can be opened
+     — the roster, the computed measure and the forecast used to ship with no
+     provenance at all, which made them the only answers on the page a reader
+     could not check against the record. */
+  const turnRefs = (chatApi.retrieve(chatChunks, q, 3) || []).map(c => c.ref);
+  /* FOLD, ON EVERY TURN. The reading becomes operations on the conversation's
+     own fold, so obligations opened earlier are still open now. */
+  chatFoldTurn(reading, turnRefs);
   const askedRaw = ' ' + q.toLowerCase() + ' ';
-  const analytic = /\b(forecast|predict|prediction|project|projection|expect|ahead|group|groups|cluster|clusters|together|emergent|emerge|holon|holons|drill|underneath|beneath|per capita|per 1,?000|ratio|normali[sz])\b/.test(askedRaw)
-    || chatDirectionalGrain(q) != null
-    || (!!chatDetectKind(q) && /\b(who|which|what|list|top|most|biggest|largest|rank|all)\b/i.test(q));
+  const analytic = reading.intents.length > 0;
+
+  /* WHAT CANNOT BE ANSWERED IS SAID FIRST, and said whether or not something
+     else can be answered alongside it. A question that asks about case
+     outcomes gets told, plainly, that outcomes are not in this record — before
+     it gets a number that is in it and might be mistaken for one.
+
+     These are the obligations the reading opened. None of them is discharged
+     by anything here, and `resolveObligation` is deliberately never called on
+     them: they stay open in the record and in the export. */
+  if (reading.openObligations.length) {
+    const body = reading.voids.map(v =>
+      `<p><strong>${escapeHtmlSafe(v.asks[0].toUpperCase() + v.asks.slice(1))} is not in this record.</strong> `
+      + `${escapeHtmlSafe(v.why.charAt(0).toUpperCase() + v.why.slice(1))} Answering it would need ${escapeHtmlSafe(v.need)}.</p>`).join('');
+    const alt = chatFollowUp('What this record can answer instead:', [
+      { label: 'Who files', q: 'which landlords file the most', hint: 'ranked' },
+      { label: 'Who defends', q: 'who are the tenant attorneys', hint: '187' },
+      { label: 'Against unrepresented tenants', q: 'which landlords file most against unrepresented tenants' },
+      { label: 'Money judgments', q: 'what share of cases end in a money judgment' },
+      { label: 'Where it is rising', q: 'where are things headed by district' },
+    ]) || '';
+    addChatMessage('assistant', body + alt, chatProvStrip(
+      `${reading.openObligations.length} open obligation${reading.openObligations.length > 1 ? 's' : ''} — recorded, not discharged`,
+      turnRefs, reading));
+  }
+  /* Naming what the record cannot hold IS an answer, and the catch-all at the
+     bottom must not repeat it. Guarding on "no intent" was not enough: "do
+     tenants with a lawyer get better OUTCOMES" opens the disposition void and
+     also reads as a before-and-after question, so it had an intent, fell
+     through, and was told twice — once precisely, once generically. */
+  const voidAnswered = reading.openObligations.length > 0;
+  /* When the question named no party and no place, the void is the WHOLE
+     answer and the turn ends there. "How long does a case take?" was being
+     told what is missing and then handed a rates table it had not asked for —
+     the follow-up beneath the void already offers what IS available, chosen
+     by a person rather than volunteered. A question that DID name a party
+     ("MDHA outcomes") carries on, because that party's card is still worth
+     having beside the notice. */
+  if (voidAnswered && !reading.named.some(n => n.best) && !reading.grain) return;
+
 
   /* Resolve the question mechanically first: which party, which move. Most
      questions carry both in their own words and never need the model. */
-  let named = analytic ? [] : resolveChatEntities(q);
-  let move = detectChatMove(q);
+  let named = reading.named;
+  /* "Which months do landlords file most?" scores one hit for SIG ("most") and
+     one for REC ("months"), and on a tie the earlier operator kept the lead —
+     so a question about WHEN was answered with a ranking of WHO. When the
+     question names a unit of time, the move is the one about time. */
+  let move = (/\b(month|months|monthly|season|seasonal|time of year|over time|by year)\b/i.test(q)
+    && !reading.named.some(n => n.best))
+    ? (CHAT_MOVES.find(m => m.op === 'REC') || reading.move)
+    : reading.move;
   let routed = null;
 
   /* The model is called only for what the resolver could not read out of the
@@ -10500,6 +11930,7 @@ async function askChat(q) {
       });
       if (myTurn !== chatTurn) return;
       routed = (r.choices[0].message.content || '').trim();
+      reading.modelConsulted = { forWhat: 'which party and which action this question meant, because the vocabularies could not read it', said: routed };
       // Resolved against the corpus, not trusted. A party it names counts only
       // if the name index already knew that party; a move counts only if the
       // words are in the move vocabulary. An invented name resolves to nothing
@@ -10550,14 +11981,24 @@ async function askChat(q) {
       dockets: chatRowsFor(entity).map(r => r.docket),
       artifact: card,
     });
-    addChatMessage('assistant', artifactHtml(card), chatProvStrip(
+    const say = await chatSay(card, q, `${entity.name} is a ${entity.kind} on this docket.`);
+    addChatMessage('assistant', artifactHtml(card) + (say || ''), chatProvStrip(
       ties.length
         ? `${on} — ${ties.length + 1} parties match on identical evidence; this is the one on the most filings${how}`
         : `${on} · counted from ${allRows.length.toLocaleString()} live rows${how}`,
-      entity.ref ? [entity.ref] : []) + chatExportStrip(d));
+      entity.ref ? [entity.ref] : [], reading) + chatExportStrip(d));
     const others = named.filter(n => !n.best);
-    if (others.length) {
-      addChatMessage('assistant', `${ties.length ? 'Same name, different party' : 'Also matched'}: `
+    /* A tie is a question, not a footnote. Three people called McCoy match the
+       same word on the same evidence; the busiest is shown because something
+       has to be, and then it asks which was meant. */
+    if (ties.length) {
+      const fu = chatFollowUp(`“${best.on.join(' ')}” matches ${ties.length + 1} parties. Which did you mean?`,
+        named.map(n => ({ label: n.entity.name, q: n.entity.name,
+          hint: `${CHAT_KIND_LABEL[n.entity.kind]}, ${n.entity.cases.toLocaleString()}` })),
+        'Shown above is the one on the most filings.');
+      if (fu) addChatMessage('assistant', fu);
+    } else if (others.length) {
+      addChatMessage('assistant', `Also matched: `
         + others.map(n => chatLink(n.entity.name, n.entity.name, n.entity.cases.toLocaleString())).join(' '));
     }
   }
@@ -10595,16 +12036,17 @@ async function askChat(q) {
       }
     }
   }
-  if (entity && partner && chatCausalAsk(q)) {
+  if (entity && partner && reading.intents.includes('before-and-after')) {
     const iv = chatInterventionArtifact(entity, partner.entity)
       || chatInterventionArtifact(partner.entity, entity);
     if (iv) {
       const refs = [entity.ref, partner.entity.ref].filter(Boolean);
       const d = chatDerive({ question: q, op: 'CON', subject: best, routed, refs,
         join: iv.predicate, dockets: iv.dockets, artifact: iv.artifact });
-      addChatMessage('assistant', artifactHtml(iv.artifact), chatProvStrip(
+      const sayI = await chatSay(iv.artifact, q, `Some of what was asked is not in this record at all.`);
+      addChatMessage('assistant', artifactHtml(iv.artifact) + (sayI || ''), chatProvStrip(
         `counted from ${allRows.length.toLocaleString()} live rows, split at ${iv.switchMonth}`,
-        refs) + chatExportStrip(d));
+        refs, reading) + chatExportStrip(d));
       return;
     }
   }
@@ -10616,9 +12058,10 @@ async function askChat(q) {
       question: q, op: 'CON', subject: best, routed, refs,
       join: j.predicate, dockets: j.dockets, artifact: j.artifact,
     });
-    addChatMessage('assistant', artifactHtml(j.artifact), chatProvStrip(
+    const sayJ = await chatSay(j.artifact, q);
+    addChatMessage('assistant', artifactHtml(j.artifact) + (sayJ || ''), chatProvStrip(
       `${j.dockets.length.toLocaleString()} of ${allRows.length.toLocaleString()} rows match both — counted, not estimated`,
-      refs) + chatExportStrip(d));
+      refs, reading) + chatExportStrip(d));
     return;
   }
 
@@ -10626,37 +12069,138 @@ async function askChat(q) {
        "which are climbing"   -> the trend table
        "what will happen"     -> the backtested forecast
        "what moves together"  -> the drill through emergent groups            */
-  const grain = chatDirectionalGrain(q) || (routed ? chatDirectionalGrain(routed) : null);
-  const asks = ' ' + (q + ' ' + (routed || '')).toLowerCase() + ' ';
-  const wantsForecast = /\b(forecast|predict|prediction|will|expect|next month|next year|project|projection|ahead)\b/.test(asks);
-  const wantsGroups = /\b(group|groups|cluster|clusters|together|emergent|emerge|pattern|patterns|holon|holons|drill|underneath|beneath)\b/.test(asks);
+  const grain = reading.grain;
+  const wantsForecast = reading.intents.includes('forecast');
+  const wantsGroups = reading.intents.includes('grouping');
 
   /* A question naming a KIND rather than a party — "who are the tenant
      attorneys", "which landlords file most against unrepresented tenants" —
      is a roster, and it is answered before any name is looked for. */
-  const kindDef = chatDetectKind(q);
-  const wantsRoster = !!kindDef && /\b(who|which|what|list|top|most|biggest|largest|rank|all)\b/i.test(q)
-    && !/\bper\b|\bratio\b|\bforecast\b|\bpredict\b/i.test(q);
+  const kindDef = reading.kindDef;
+  // A roster question that named a party is answered by that party's own
+  // dossier — its counterparties ARE the roster being asked for, already
+  // scoped to it, which a citywide list is not.
+  /* A RATE OVER TIME. "Has tenant representation improved?" is a share per
+     month, not a count and not a ranking, and it needs its own warning. */
+  const rateAsked = /\b(over time|trend|improved|improving|getting (better|worse)|rising|falling|by month|each year|has .* changed)\b/i.test(q)
+    ? CHAT_RATES.find(rt => rt.words.test(q)) : null;
+  if (rateAsked && !reading.named.some(n => n.best)) {
+    const rr = chatRateArtifact(rateAsked);
+    if (rr) {
+      const dr = chatDerive({ question: q, op: 'REC', subject: null, refs: [],
+        join: rr.predicate, dockets: null, artifact: rr.artifact });
+      addChatMessage('assistant', artifactHtml(rr.artifact), chatProvStrip(
+        `${escapeHtmlSafe(rr.summary)} — counted from ${allRows.length.toLocaleString()} live rows`,
+        turnRefs, reading) + chatExportStrip(dr));
+      if (rr.caveat) addChatMessage('assistant', `<p class="method-note">${escapeHtmlSafe(rr.caveat)}</p>`);
+      return;
+    }
+  }
+
+  /* TWO MEASURES AGAINST EACH OTHER, with a null. */
+  const corrAsked = /\b(worse in|correlat|associated with|related to|go together|linked to|more likely in|compared with)\b/i.test(q)
+    ? (() => {
+        const found = Object.entries(CHAT_MEASURE_SYNONYMS)
+          .concat(Object.keys(CHAT_MEASURE_DEFS).map(k => [k.replace(/_/g, ' '), k]))
+          .sort((a, b) => b[0].length - a[0].length)
+          .filter(([phrase]) => new RegExp(`\\b${phrase}\\b`, 'i').test(q))
+          .map(([, key]) => key);
+        // A racial or economic phrase names a demographic side; filings are
+        // the other side unless a second measure was named outright.
+        const demo = { 'black': 'pct_black', 'white': 'pct_white', 'hispanic': 'pct_hispanic',
+          'latino': 'pct_hispanic', 'poor': 'poverty_rate', 'poorer': 'poverty_rate' };
+        for (const [w, k] of Object.entries(demo)) if (new RegExp(`\\b${w}\\b`, 'i').test(q)) found.push(k);
+        const uniq = [...new Set(found)];
+        return uniq.length ? { x: uniq[0], y: uniq[1] || 'filings' } : null;
+      })() : null;
+  if (corrAsked && !reading.named.some(n => n.best)) {
+    await ensureChatDynamics();
+    const c = chatCorrelate(corrAsked.x, corrAsked.y);
+    if (c) {
+      const strong = c.beat === c.draws;
+      const dir = c.r > 0 ? 'together' : 'in opposite directions';
+      const art = { kind: 'table',
+        title: `${CHAT_MEASURE_DEFS[corrAsked.x]} against ${CHAT_MEASURE_DEFS[corrAsked.y]}`,
+        head: ['', ''],
+        rows: [
+          { label: 'a', value: 0, cells: ['Do they move together across districts',
+            strong ? `Yes — they move ${dir}, more strongly than any of ${c.draws.toLocaleString()} random pairings of the same numbers`
+              : `Not reliably — ${(c.draws - c.beat).toLocaleString()} of ${c.draws.toLocaleString()} random pairings of the same numbers did as well or better`] },
+          { label: 'b', value: 0, cells: ['How closely', `${c.r.toFixed(2)} on a scale where 1 is exact and 0 is nothing`] },
+          { label: 'c', value: 0, cells: ['Districts compared', String(c.n)] },
+          { label: 'd', value: 0, cells: ['What this is not',
+            'a cause. Two things measured across the same 35 districts can move together because a third thing drives both — rents, housing age, where the large complexes were built. This says they travel together, and nothing about why.'] },
+        ] };
+      const dc = chatDerive({ question: q, op: 'CON', subject: null, refs: [],
+        join: { op: 'CON', intent: 'correlation', x: corrAsked.x, y: corrAsked.y,
+          xMeans: CHAT_MEASURE_DEFS[corrAsked.x], yMeans: CHAT_MEASURE_DEFS[corrAsked.y],
+          pearson: c.r, districts: c.n,
+          nullModel: `one side shuffled against the other ${c.draws} times with a seeded shuffle`,
+          beatDraws: c.beat, seed: CHAT_CORR_SEED,
+          warning: 'association across districts, not causation' },
+        dockets: null, artifact: art });
+      addChatMessage('assistant', artifactHtml(art), chatProvStrip(
+        `${c.n} districts · one side shuffled against the other ${c.draws.toLocaleString()} times`,
+        turnRefs, reading) + chatExportStrip(dc));
+      return;
+    }
+  }
+
+  /* A question that names a MEASURE and asks which places have the most of it
+     is a ranking on that measure, not on filings. "Which districts have the
+     most cost burdened renters" came back as districts ranked by filing count
+     — the right rows in the wrong order, which is worse than no answer. This
+     runs BEFORE the roster, because the roster would otherwise claim it. */
+  const measureAsked = /\b(most|highest|worst|lowest|least|top|rank)\b/i.test(q)
+    ? Object.entries(CHAT_MEASURE_SYNONYMS)
+        .sort((a, b) => b[0].length - a[0].length)
+        .find(([phrase]) => new RegExp(`\\b${phrase}\\b`, 'i').test(q))
+    : null;
+  if (measureAsked && !reading.intents.includes('ratio') && !reading.named.some(n => n.best)) {
+    const mr = await chatMeasureArtifact(measureAsked[1], `Districts by ${CHAT_MEASURE_DEFS[measureAsked[1]]}`);
+    if (mr && !mr.error) {
+      const dm = chatDerive({ question: q, op: 'EVA', subject: null, refs: [],
+        join: { op: 'EVA', intent: 'ranked measure', expression: mr.expr,
+          readFrom: measureAsked[0], measure: CHAT_MEASURE_DEFS[measureAsked[1]] },
+        dockets: null, artifact: mr.artifact });
+      const sayN = await chatSay(mr.artifact, q);
+      addChatMessage('assistant', artifactHtml(mr.artifact) + (sayN || ''), chatProvStrip(
+        `districts ranked by ${escapeHtmlSafe(CHAT_MEASURE_DEFS[measureAsked[1]])}, from the Metro Social Services district profile`,
+        turnRefs, reading) + chatExportStrip(dm));
+      return;
+    }
+  }
+
+  /* "Which months do landlords file most?" mentions landlords and asks for a
+     ranking, so the roster fired and listed landlords — an answer to a
+     question nobody asked. A question about WHEN is a time series; the kind
+     word in it is naming whose filings, not what to list. */
+  const asksTime = /\b(month|months|monthly|season|seasonal|time of year|when)\b/i.test(q);
+  const wantsRoster = reading.intents.includes('roster')
+    && !asksTime
+    && !reading.named.some(n => n.best)
+    && !reading.intents.includes('ratio') && !reading.intents.includes('forecast');
   if (wantsRoster) {
-    const filter = CHAT_ROSTER_FILTERS.find(f => f.words.test(q)) || null;
+    const filter = reading.filter;
     const ros = chatRosterArtifact(kindDef, filter);
     if (ros) {
       const sp = chatApi.retrieve(chatChunks, kindDef.plural, 1)[0];
       const refs = sp ? [sp.ref] : [];
       const d = chatDerive({ question: q, op: 'SIG', subject: null, refs,
         join: ros.predicate, dockets: null, artifact: ros.artifact });
-      addChatMessage('assistant', artifactHtml(ros.artifact), chatProvStrip(
+      const sayR = await chatSay(ros.artifact, q);
+      addChatMessage('assistant', artifactHtml(ros.artifact) + (sayR || ''), chatProvStrip(
         `${ros.total.toLocaleString()} ${kindDef.plural} in the record`
         + (filter ? `, counted over the ${ros.scanned.toLocaleString()} filings ${filter.say}` : `, counted over all ${allRows.length.toLocaleString()} filings`)
-        + ` — showing the top ${ros.artifact.rows.length}`, refs) + chatExportStrip(d));
+        + ` — showing the top ${ros.artifact.rows.length}`, refs.length ? refs : turnRefs, reading) + chatExportStrip(d));
       return;
     }
   }
 
   /* A ratio question — anything asking for one quantity against another —
      goes to the measure layer, where mathjs computes it per district. */
-  const wantsMeasure = !entity && (/\bper\b|\bratio\b|\bper capita\b|\bnormali[sz]|\brelative to\b|\bcompared to\b|\bagainst\b|\bdivided by\b|\bfor every\b|\bper 1,?000\b/.test(askedRaw)
-    || /[+\-*/]/.test(q) && Object.keys(CHAT_MEASURE_DEFS).some(k => q.includes(k)));
+  const wantsMeasure = !entity && (reading.intents.includes('ratio')
+    || (/[+\-*/]/.test(q) && Object.keys(CHAT_MEASURE_DEFS).some(k => q.includes(k))));
   if (wantsMeasure) {
     chatBusy = true;
     document.getElementById('chat-send').disabled = true;
@@ -10665,7 +12209,7 @@ async function askChat(q) {
       // If the question already IS an expression, it is used as written and no
       // model runs at all.
       const direct = Object.keys(CHAT_MEASURE_DEFS).some(k => q.includes(k)) && /[+\-*/]/.test(q);
-      let expr = direct ? q.trim() : null;
+      let expr = direct ? q.trim() : chatReadPer(q);
       let said = null;
       if (!expr && chatEngine) {
         const r = await chatEngine.chat.completions.create({
@@ -10687,14 +12231,17 @@ async function askChat(q) {
       }
       const d = chatDerive({ question: q, op: 'EVA', subject: null, routed: said, refs: [],
         join: { op: 'EVA', intent: 'computed measure', expression: m.expr,
+          measuresUsed: m.names,
+          working: m.artifact.rows.map(r => `District ${r.label.replace(/^District /, '')}: ${r.cells[1]} = ${r.cells[2]}`),
           engine: 'mathjs 12.4.2, expression vetted on its parsed tree before evaluation',
           measures: Object.fromEntries(Object.entries(CHAT_MEASURE_DEFS)),
           perDistrict: true,
           districtsWithoutTheData: m.missing },
         dockets: null, artifact: m.artifact });
-      addChatMessage('assistant', artifactHtml(m.artifact), chatProvStrip(
-        `computed as <code>${escapeHtmlSafe(m.expr)}</code> for each district from ${allRows.length.toLocaleString()} live rows`
-        + (m.missing ? ` · ${m.missing} districts left out, the profile has no figure for them` : ''), []) + chatExportStrip(d));
+      const sayM = await chatSay(m.artifact, q, `Each row is the same arithmetic with that district's own figures.`);
+      addChatMessage('assistant', artifactHtml(m.artifact) + (sayM || ''), chatProvStrip(
+        `computed by mathjs as <code>${escapeHtmlSafe(m.expr)}</code>, one district at a time, from ${allRows.length.toLocaleString()} live rows`
+        + (m.missing ? ` · ${m.missing} districts left out, the profile has no figure for them` : ''), turnRefs, reading) + chatExportStrip(d));
       return;
     } catch (e) {
       console.warn('[eo/chat] measure failed:', e);
@@ -10720,7 +12267,7 @@ async function askChat(q) {
         const d1 = chatDerive({ question: q, op: 'REC', subject: null, routed, refs: [], join: f.method, dockets: null, artifact: f.scoreboard });
         addChatMessage('assistant', artifactHtml(f.scoreboard)
           + `<p class="method-note">${escapeHtmlSafe(f.scoreboard.note)}</p>`, chatProvStrip(
-          `${f.areas} ${g2 === 'tract' ? 'tracts' : 'districts'} · ${f.method.shapeChosenBy}`, []) + chatExportStrip(d1));
+          `${f.areas} ${g2 === 'tract' ? 'tracts' : 'districts'} · ${f.method.shapeChosenBy}`, turnRefs, reading) + chatExportStrip(d1));
         if (f.forecast) {
           const d2 = chatDerive({ question: q, op: 'REC', subject: null, routed, refs: [], join: f.method, dockets: null, artifact: f.forecast });
           addChatMessage('assistant', artifactHtml(f.forecast), chatProvStrip(
@@ -10749,7 +12296,7 @@ async function askChat(q) {
             strongest: l.real[0], nullAtThatPosition: l.nullMax[0] })),
         }, dockets: null, artifact: h.artifact });
       addChatMessage('assistant', artifactHtml(h.artifact), chatProvStrip(
-        `${h.names.length} ${g2 === 'tract' ? 'tracts' : 'districts'} over ${h.axis.length} months · ${tests} tests, each against ${CHAT_HOLON_DRAWS} time-shifted comparisons`, []) + chatExportStrip(d));
+        `${h.names.length} ${g2 === 'tract' ? 'tracts' : 'districts'} over ${h.axis.length} months · ${tests} tests, each against ${CHAT_HOLON_DRAWS} time-shifted comparisons`, turnRefs, reading) + chatExportStrip(d));
       addChatMessage('assistant', `<p class="method-note">Each level asks one question. The first: does the whole city move together? Then that shared movement is <em>subtracted</em>, and the same question is asked of what is left — which is how a group that was hidden underneath the citywide rhythm becomes visible. It stops when nothing in the remainder beats the comparison. The comparison slides each area's own history to a random offset, keeping its trend and its seasons and destroying only its alignment with everyone else, which is exactly what a group claims. ${tests} such tests were run here, so a group marked “barely” alike is one to treat with suspicion.</p>`);
       return;
     } catch (e) {
@@ -10778,7 +12325,8 @@ async function askChat(q) {
         dockets: null,
         artifact: t.artifact,
       });
-      addChatMessage('assistant', artifactHtml(t.artifact), chatProvStrip(
+      const sayT = await chatSay(t.artifact, q, `Only areas whose rise beat every shuffled comparison are listed.`);
+      addChatMessage('assistant', artifactHtml(t.artifact) + (sayT || ''), chatProvStrip(
         `${t.considered} ${grain === 'tract' ? 'tracts' : 'districts'} measured across ${t.axis.length} months, each checked against ${CHAT_DRAWS} reshuffles of its own months — `
         + `${t.found.length} climbed by more than any reshuffle did`
         + `${t.tooShort ? `; ${t.tooShort} had too few months to measure` : ''}`,
@@ -10797,6 +12345,42 @@ async function askChat(q) {
     }
   }
 
+  /* THE COMBINED VIEW, when the question asks for it or when the name has
+     siblings. Offered, never substituted: the card above is what was filed
+     under that exact name, and this is what the same filer carries across all
+     of them. */
+  const group = chatMasterFor(entity);
+  if (group) {
+    const wantsCombined = /\b(combined?|all names|altogether|as one|master|total|every name|aliases|together)\b/i.test(q);
+    if (wantsCombined) {
+      const mo = chatMasterArtifact(group);
+      const dm = chatDerive({ question: q, op: 'SYN', subject: best, routed, refs: turnRefs,
+        join: mo.predicate, dockets: null, artifact: mo.artifact });
+      const sayM = await chatSay(mo.artifact, q, `${group.label} files under ${group.members.length} different names.`);
+      addChatMessage('assistant', artifactHtml(mo.artifact) + (sayM || ''), chatProvStrip(
+        `${group.members.length} names combined by name shape — not an ownership finding, and the separate filings stay addressable`,
+        turnRefs, reading) + chatExportStrip(dm));
+      return;
+    }
+    const fuM = chatFollowUp(
+      `${escapeHtmlSafe(group.label)} also files under ${group.members.length - 1} other name${group.members.length > 2 ? 's' : ''} on this docket.`,
+      [{ label: `Combine all ${group.members.length}`, q: `${group.label} all names combined`, hint: `${group.cases.toLocaleString()} filings` },
+       ...group.members.filter(e => e.name !== entity.name).slice(0, 4)
+         .map(e => ({ label: e.name, q: e.name, hint: e.cases.toLocaleString() }))],
+      'Grouped by the shape of the name, not by ownership — this record has no ownership chain.');
+    if (fuM) addChatMessage('assistant', fuM);
+  }
+
+  /* A party was named but not what to ask about it. Rather than stopping at
+     the card, offer the moves this particular party actually has material for.
+     Runs here, after the join branch, because it must know whether a second
+     party was named — offering "what about MDHA?" under a join of MDHA and
+     McCoy would be asking a question already answered above it. */
+  if (entity && !partner && op === 'DEF') {
+    const fu2 = chatFollowUp(`What about ${entity.name}?`, chatNextMoves(entity));
+    if (fu2) addChatMessage('assistant', fu2);
+  }
+
   /* Then the move itself, when it asks for something the card does not show. */
   if (op !== 'DEF') {
     const art = chatMoveArtifact(op, entity);
@@ -10808,9 +12392,10 @@ async function askChat(q) {
         dockets: entity ? chatRowsFor(entity).map(r => r.docket) : null,
         artifact: art,
       });
-      addChatMessage('assistant', artifactHtml(art), chatProvStrip(
+      const sayA = await chatSay(art, q);
+      addChatMessage('assistant', artifactHtml(art) + (sayA || ''), chatProvStrip(
         `counted from ${allRows.length.toLocaleString()} live rows — no model involved${entity ? '' : how}`,
-        refs) + chatExportStrip(d));
+        refs, reading) + chatExportStrip(d));
       return;
     }
   }
@@ -10819,20 +12404,33 @@ async function askChat(q) {
 
   /* NUL — nothing in the records answers this. Said plainly, with what the
      records DO carry, rather than filled in. */
+  if (voidAnswered) return;
+
   const near = chatApi.retrieve(chatChunks, q, 3);
+  /* Nothing matched. Rather than a dead end, ask what is being looked for —
+     the four kinds this record is made of, each a real question. */
+  const f = chatFacts || {};
+  const ask = chatFollowUp('I could not read that as a question about these records. What are you after?', [
+    { label: 'A landlord', q: 'which landlords file the most', hint: `${(f.landlords?.length || 0).toLocaleString()}` },
+    { label: "A landlord's attorney", q: 'which attorneys file the most', hint: `${f.attorneys?.length || 0}` },
+    { label: "A tenant's attorney", q: 'who are the tenant attorneys', hint: `${f.defenders?.length || 0}` },
+    { label: 'A council district', q: 'which districts have the most filings', hint: `${f.districts?.length || 0}` },
+    { label: 'Where it is rising', q: 'where are things headed by district' },
+    { label: 'A named party', q: '/', hint: 'type / to search' },
+  ]) || '';
   addChatMessage('assistant',
-    `<p>Nothing in these records answers that. They hold one row per detainer warrant: who filed, which attorney, which council district, the filing date, whether the case is pending or closed, and any money judgment amount. They do not record why a case closed, so who won is not in here.</p>`
-    + `<p>Ask about a party by name — ${chatLink('MCCOY, JENNIFER JO', 'MCCOY, JENNIFER JO')} ${chatLink('MDHA', 'MDHA')} — or a ${chatLink('council district', 'council district 19')}.</p>`,
-    near.length ? chatProvStrip('nearest passages in the record', near.map(c => c.ref)) : '');
+    `<p>Nothing in these records answers that as written. They hold one row per detainer warrant: who filed, which attorney, whether anyone appeared for the tenant, which council district and census tract, the filing date, whether the case is pending or closed, and any money judgment amount. They do not record why a case closed, so who won is not in here.</p>` + ask,
+    near.length ? chatProvStrip('nearest passages in the record', near.map(c => c.ref), reading) : '');
 }
 
 /* One provenance strip, one shape, everywhere — every answer says what it was
    counted from and offers the bytes back. */
-function chatProvStrip(note, refs) {
+function chatProvStrip(note, refs, reading) {
   return `<div class="prov-strip"><span class="prov-label">provenance</span>`
     + `<span class="prov-note">${note}</span>`
     + (refs || []).map(r => spanChipHtml(r)).join('')
-    + `</div>`;
+    + `</div>`
+    + (reading ? chatReadingHtml(reading) : '');
 }
 
 function spanChipHtml(ref, opts) {
@@ -10901,6 +12499,30 @@ function bindRowClicks() {
     openRecordPanel(tr.dataset.docket);
   });
 }
+
+/* Open and close the phone menu. Any view chosen closes it, and so does a tap
+   anywhere else — a menu that stays open over the answer it was used to reach
+   is a menu in the way. */
+function toggleNav(force) {
+  const open = force != null ? force : !document.body.classList.contains('nav-open');
+  document.body.classList.toggle('nav-open', open);
+  const btn = document.getElementById('nav-toggle');
+  const seg = document.getElementById('view-seg');
+  if (btn) btn.setAttribute('aria-expanded', String(open));
+  // Anchored to the button itself, measured at the moment it opens, so the
+  // header can be any height and the menu still lands beneath it.
+  if (seg) {
+    if (open && btn) seg.style.top = Math.round(btn.getBoundingClientRect().bottom + 6) + 'px';
+    else seg.style.top = '';
+  }
+}
+document.addEventListener('click', (e) => {
+  if (!document.body.classList.contains('nav-open')) return;
+  if (e.target.closest('#nav-toggle')) return;
+  if (e.target.closest('#view-seg')) { toggleNav(false); return; }
+  toggleNav(false);
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') toggleNav(false); });
 
 function bindViewControls() {
   bindDateRangeFilter();
@@ -11495,6 +13117,7 @@ document.addEventListener("keydown", e => {
 })();
 loadData();
 loadLandlordMapperSnapshot();  // independent of case data; races the main load, doesn't block it
+loadCodeViolationsSnapshot();  // same -- independent join, races the main load
 </script>
 </body>
 </html>
