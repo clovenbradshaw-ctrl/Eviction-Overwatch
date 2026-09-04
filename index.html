@@ -1066,12 +1066,42 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   font-family: var(--mono); font-size: 11px; color: #2ea82e;
   padding: 4px 2px 5px;
 }
-.live-col-head .name { color: #7dff5c; font-weight: 600; letter-spacing: .04em; }
+/* Each worker gets its own hue so two streams side by side are tellable
+   apart at a glance. --wc is set per column in JS; the green default keeps
+   a single-worker view looking exactly as it always has. */
+.live-col { --wc: #39ff14; }
+.live-col .live-screen {
+  color: var(--wc);
+  border-color: color-mix(in srgb, var(--wc) 22%, #020402);
+  text-shadow: 0 0 2px color-mix(in srgb, var(--wc) 35%, transparent);
+}
+.live-col .live-screen::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--wc) 25%, #020402);
+}
+.live-col .live-line .ts { color: color-mix(in srgb, var(--wc) 45%, #020402); }
+.live-col .live-line .src { color: color-mix(in srgb, var(--wc) 72%, #020402); }
+.live-col .live-line .ok { color: color-mix(in srgb, var(--wc) 80%, #ffffff); }
+.live-col .live-line .redacted {
+  color: var(--wc);
+  background: color-mix(in srgb, var(--wc) 10%, #020402);
+  border-color: color-mix(in srgb, var(--wc) 35%, #020402);
+}
+.live-col-head { color: color-mix(in srgb, var(--wc) 70%, #020402); }
+.live-col-head .name {
+  color: color-mix(in srgb, var(--wc) 85%, #ffffff);
+  font-weight: 600; letter-spacing: .04em;
+}
 .live-col-head .alias {
-  border: 1px solid #1f5c1f; border-radius: 2px; padding: 0 5px;
-  color: #39ff14; background: #0c1f0c; letter-spacing: .06em;
+  border: 1px solid color-mix(in srgb, var(--wc) 40%, #020402);
+  border-radius: 2px; padding: 0 5px;
+  color: var(--wc);
+  background: color-mix(in srgb, var(--wc) 12%, #020402);
+  letter-spacing: .06em;
 }
 .live-col-head .alias.cooling { border-color: #7a5c1f; color: #ffb020; background: #1f1608; }
+.live-col-head .cw b { color: color-mix(in srgb, var(--wc) 85%, #ffffff); }
+.live-rate .grp.w b { color: var(--gc, #7dff5c); }
+.live-rate .grp.w .lbl { color: var(--gc, #7dff5c); }
 .live-col-head .kind { color: #1f5c1f; }
 .live-col-head .cw { margin-left: auto; color: #2f6b2f; font-variant-numeric: tabular-nums; }
 .live-col-head .cw b { color: #7dff5c; }
@@ -7416,12 +7446,23 @@ const LIVE_SWEEP_DONE_RE = /^(p\d+-W\d+):\s+(\d+)\s+rows/;
 const LIVE_SWEEP_WINDOW_RE = /^──\s*(p\d+-W\d+):\s*(\d{2}\/\d{2}\/\d{4})\s*[–-]\s*(\d{2}\/\d{2}\/\d{4})/;
 const LIVE_COOLDOWN_RE = /cooling down|backing off|displaced/i;
 
+// Green stays with the primary (it is what the single-worker view has always
+// looked like); sweep slots take the other hues in the order they appear.
+const LIVE_WORKER_COLORS = ['#39ff14', '#22d3ee', '#f59e0b', '#c084fc', '#f472b6'];
+function liveNextColor(kind) {
+  if (kind === 'primary') return LIVE_WORKER_COLORS[0];
+  const used = new Set([...liveWorkers.values()].map(w => w.color));
+  return LIVE_WORKER_COLORS.slice(1).find(c => !used.has(c))
+      || LIVE_WORKER_COLORS[1 + (liveWorkers.size % (LIVE_WORKER_COLORS.length - 1))];
+}
+
 function liveWorkerState(id, kind) {
   let w = liveWorkers.get(id);
   if (!w) {
     w = { id, kind: kind || 'primary', alias: '', cooling: false,
           caseTs: [], eventTs: [], cases: 0, windows: 0, rows: 0,
-          window: '', el: null, screen: null, lines: 0 };
+          window: '', el: null, screen: null, lines: 0,
+          color: liveNextColor(kind || 'primary') };
     liveWorkers.set(id, w);
     liveEnsureColumns();
   }
@@ -7450,6 +7491,7 @@ function liveEnsureColumns() {
       w.el.innerHTML =
         `<div class="live-col-head"></div>` +
         `<div class="live-screen"></div>`;
+      w.el.style.setProperty('--wc', w.color);
       w.head = w.el.querySelector('.live-col-head');
       w.screen = w.el.querySelector('.live-screen');
     }
@@ -7636,9 +7678,12 @@ function liveRenderRate() {
   const sr = liveSweepRates();
 
   const groups = [];
+  const dots = liveWorkerOrder().map(w =>
+    `<span style="color:${w.color}" title="${liveEsc(w.id)}${w.alias ? ' · ' + liveEsc(w.alias) : ''}">●</span>`
+  ).join('');
   groups.push(
     `<span class="grp"><span class="lbl">fleet</span>` +
-    `<span><b>${active.length || liveWorkers.size}</b> <span class="dim">worker${(active.length || liveWorkers.size) === 1 ? '' : 's'}</span></span>` +
+    `<span>${dots} <b>${active.length || liveWorkers.size}</b> <span class="dim">worker${(active.length || liveWorkers.size) === 1 ? '' : 's'}</span></span>` +
     `<span><b>${eventsPerSec.toFixed(2)}</b> <span class="dim">events/sec</span></span>` +
     `<span><b>${livePeakEventsPerSec.toFixed(2)}</b> <span class="dim">peak/sec</span></span></span>`);
 
@@ -9076,6 +9121,7 @@ async function ensureChatSession(force) {
   chatSources = { [sourceId]: text };
   chatChunks = chatApi.chunkSource(sourceId, text);
   indexChatEntities(chatChunks);
+  buildChatMasters();
   chatDigestKey = key;
   const f = chatFacts;
   document.getElementById('chat-spans').textContent =
@@ -11107,6 +11153,111 @@ function chatCorrelate(xName, yName) {
   return { r, beat, draws: CHAT_CORR_DRAWS, n: xs.length };
 }
 
+
+/* ─── The master object: one filer, many names ──────────────────────────────
+   MDHA appears on this docket seven times — "MDHA", "M D H A", "MDHA DBA
+   HAYNES GARDEN APARTMENTS", "M D H A D/B/A 8200 MCCRORY" and three more —
+   and its dossier said 1,614 filings when the seven together carry 2,332.
+   Mid-America Apartments files under fifteen names. Across the docket 815
+   groups of names collapse to one filer each, covering 41,293 filings: more
+   than half of everything here. A tenant organiser asking who evicts most in
+   their district was reading a ranking split across a company's own aliases.
+
+   WHAT THIS IS, EXACTLY. A name-shape grouping: case folded, punctuation
+   dropped, the trade name after "d/b/a" removed, corporate suffixes removed,
+   and a run of single letters closed up so "M D H A" meets "MDHA". Two names
+   are grouped when what is left is identical — not similar, identical.
+
+   WHAT IT IS NOT, and this matters more. It is NOT ownership. Two companies
+   can share a name and share nothing else; one owner can hold property under
+   names with nothing in common. This record has no ownership chain — that is
+   already a declared void here — so the grouping is a claim about STRINGS ON
+   FILINGS, and it is presented as one: every master shows the names it
+   combined, and the separate filings stay addressable underneath it. The
+   court record is what was filed; this is a reading of it, offered, never
+   substituted silently. */
+
+function chatMasterKey(name) {
+  let s = String(name || '').toUpperCase();
+  s = s.split(/\bD\s?\/?\s?B\s?\/?\s?A\b/)[0];      // the trade name is a mask over the filer
+  s = s.replace(/[.,'"()&]/g, ' ');
+  s = s.replace(/\b(L\s?L\s?C|L\s?P|LLP|INC|CORP|CO|LTD|TRUST|COMPANY|PARTNERSHIP|ASSOCIATES|PROPERTIES|APARTMENTS|APTS|HOMES)\b/g, ' ');
+  s = s.replace(/\s+/g, ' ').trim();
+  if (/^(?:[A-Z] )+[A-Z]$/.test(s)) s = s.replace(/ /g, '');
+  return s.length >= 3 ? s : null;
+}
+
+let chatMasters = null;      // key -> { key, label, members[], cases }
+
+function buildChatMasters() {
+  const m = new Map();
+  for (const e of chatFacts.landlords) {
+    const k = chatMasterKey(e.name); if (!k) continue;
+    let g = m.get(k); if (!g) m.set(k, g = { key: k, members: [], cases: 0 });
+    g.members.push(e); g.cases += e.cases;
+  }
+  chatMasters = new Map();
+  for (const [k, g] of m) {
+    if (g.members.length < 2) continue;
+    g.members.sort((a, b) => b.cases - a.cases);
+    // The label is the SHORTEST member name, which is almost always the bare
+    // filer with the trade names stripped off it.
+    g.label = g.members.reduce((a, b) => (a.name.length <= b.name.length ? a : b)).name;
+    chatMasters.set(k, g);
+  }
+  return chatMasters;
+}
+
+function chatMasterFor(entity) {
+  if (!entity || entity.kind !== 'landlord' || !chatMasters) return null;
+  const g = chatMasters.get(chatMasterKey(entity.name));
+  return g && g.members.length > 1 ? g : null;
+}
+
+/* The combined facts. Summed from the members' own tallies rather than by
+   re-walking the rows, so the master is exactly the parts and cannot drift
+   from them. */
+function chatMasterFacts(group) {
+  const merge = (get) => {
+    const out = new Map();
+    for (const e of group.members) for (const [k, v] of get(e)) out.set(k, (out.get(k) || 0) + v);
+    return out;
+  };
+  const sum = (f) => group.members.reduce((a, e) => a + f(e), 0);
+  const amounts = group.members.flatMap(e => e.judgmentAmounts);
+  return {
+    kind: 'landlord', name: group.label, isMaster: true, group,
+    cases: group.cases,
+    pending: sum(e => e.pending), closed: sum(e => e.closed),
+    withTenantCounsel: sum(e => e.withTenantCounsel),
+    withJudgment: sum(e => e.withJudgment),
+    judgmentTotal: sum(e => e.judgmentTotal), judgmentAmounts: amounts,
+    buckets: merge(e => e.buckets), districts: merge(e => e.districts),
+    months: merge(e => e.months), counterparties: merge(e => e.counterparties),
+    opposing: merge(e => e.opposing), caseTypes: merge(e => e.caseTypes),
+    first: Math.min(...group.members.map(e => e.first ?? Infinity)),
+    last: Math.max(...group.members.map(e => e.last ?? -Infinity)),
+    rank: null, of: null, ref: group.members[0].ref,
+    nameTokens: [], counterpartiesSize: 0,
+  };
+}
+
+function chatMasterArtifact(group) {
+  const f = chatMasterFacts(group);
+  const total = chatFacts.total;
+  const art = entityProfileArtifact(f);
+  art.title = `${group.label} — all ${group.members.length} names it files under`;
+  // The members, each still its own question, so nothing is buried by combining.
+  art.rows.unshift({ label: 'names', value: 0, cells: ['Names combined',
+    { links: group.members.map(e => ({ label: e.name, q: e.name, count: e.cases })) }] });
+  return { artifact: art, facts: f,
+    predicate: { op: 'SYN', intent: 'master object', key: group.key,
+      label: group.label, members: group.members.map(e => ({ name: e.name, filings: e.cases })),
+      rule: 'names grouped when they are identical after case folding, punctuation removal, dropping the trade name after d/b/a, dropping corporate suffixes, and closing up runs of single letters',
+      isNotOwnership: 'this groups strings on filings. It is not an ownership finding, and this record carries no ownership chain.',
+      combinedFilings: group.cases } };
+}
+
 /* ─── Asking back ───────────────────────────────────────────────────────────
    Some questions cannot be answered because they have not finished being
    asked. Three McCoys share a name; a party has been named but not what to do
@@ -12192,6 +12343,32 @@ async function askChat(q) {
       document.getElementById('chat-send').disabled = false;
       chatSetStatus(`ready — ${chatEngineModel || 'mechanical'}`, 'on');
     }
+  }
+
+  /* THE COMBINED VIEW, when the question asks for it or when the name has
+     siblings. Offered, never substituted: the card above is what was filed
+     under that exact name, and this is what the same filer carries across all
+     of them. */
+  const group = chatMasterFor(entity);
+  if (group) {
+    const wantsCombined = /\b(combined?|all names|altogether|as one|master|total|every name|aliases|together)\b/i.test(q);
+    if (wantsCombined) {
+      const mo = chatMasterArtifact(group);
+      const dm = chatDerive({ question: q, op: 'SYN', subject: best, routed, refs: turnRefs,
+        join: mo.predicate, dockets: null, artifact: mo.artifact });
+      const sayM = await chatSay(mo.artifact, q, `${group.label} files under ${group.members.length} different names.`);
+      addChatMessage('assistant', artifactHtml(mo.artifact) + (sayM || ''), chatProvStrip(
+        `${group.members.length} names combined by name shape — not an ownership finding, and the separate filings stay addressable`,
+        turnRefs, reading) + chatExportStrip(dm));
+      return;
+    }
+    const fuM = chatFollowUp(
+      `${escapeHtmlSafe(group.label)} also files under ${group.members.length - 1} other name${group.members.length > 2 ? 's' : ''} on this docket.`,
+      [{ label: `Combine all ${group.members.length}`, q: `${group.label} all names combined`, hint: `${group.cases.toLocaleString()} filings` },
+       ...group.members.filter(e => e.name !== entity.name).slice(0, 4)
+         .map(e => ({ label: e.name, q: e.name, hint: e.cases.toLocaleString() }))],
+      'Grouped by the shape of the name, not by ownership — this record has no ownership chain.');
+    if (fuM) addChatMessage('assistant', fuM);
   }
 
   /* A party was named but not what to ask about it. Rather than stopping at
