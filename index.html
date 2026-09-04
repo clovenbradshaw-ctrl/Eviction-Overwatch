@@ -981,6 +981,12 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 .live-redact-note {
   font-size: 10px; color: #2f6b2f; margin-left: 12px;
 }
+.live-rate {
+  font-family: var(--mono); font-size: 11px; color: #2ea82e;
+  padding: 0 10px 10px; display: flex; gap: 18px; flex-wrap: wrap;
+}
+.live-rate b { color: #7dff5c; font-variant-numeric: tabular-nums; }
+.live-rate .dim { color: #1f5c1f; }
 .live-screen {
   height: 520px;
   overflow-y: auto;
@@ -1007,6 +1013,8 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 }
 .live-line .ts { color: #1f7a1f; }
 .live-line .src { color: #2ea82e; }
+.live-line .src.live-docket { cursor: pointer; text-decoration: underline dotted; }
+.live-line .src.live-docket:hover { color: #7dff5c; text-decoration-style: solid; }
 .live-line .ok { color: #7dff5c; }
 .live-line .redacted {
   background: #0c1f0c;
@@ -1822,6 +1830,7 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
       <span class="live-redact-note">defendant names auto-redacted</span>
       <span class="live-meta" id="live-meta"></span>
     </div>
+    <div class="live-rate" id="live-rate" style="display:none"></div>
     <div class="live-screen" id="live-screen">
       <div class="live-empty">// waiting for scraper feed…<span class="live-cursor"></span></div>
     </div>
@@ -6739,6 +6748,22 @@ let liveEventCount = 0;
 let liveStarted = false;
 let liveReconnectTimer = null;
 
+// Throughput, measured, not guessed. Two views on the same idea, kept
+// separate since they answer different questions:
+//   - events/sec: raw log-line rate over the last 10s -- the simplest
+//     "is it actively doing something right now" pulse, independent of
+//     what step it's on.
+//   - cases/hr: derived from "✓ DOCKET" completion lines, which is what
+//     actually clears the backlog. "Going at" reads off the most recent
+//     few gaps; "could reach" reads off the 10th-percentile gap across
+//     everything seen this session -- a measured best pace, not one lucky
+//     fast case inflating the number, and not a hand-picked
+//     seconds-per-case constant either.
+const LIVE_RECENT_N = 8;
+let liveCaseTimestamps = [];
+let liveEventTimestamps = [];
+let livePeakEventsPerSec = 0;
+
 const LIVE_TIMESTAMP_RE = /^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s*(.*)$/;
 const LIVE_DOCKET_RE = /\b(\d{2}[A-Z]{2}\d{3,8})\b/g;
 
@@ -6781,7 +6806,7 @@ function formatLiveLogLine(raw) {
   if (!line) return null;
 
   line = redactWorkerAccount(redactDefendantNames(line));
-  line = liveEsc(line).replace(LIVE_DOCKET_RE, '<span class="src">$1</span>');
+  line = liveEsc(line).replace(LIVE_DOCKET_RE, '<span class="src live-docket" onclick="jumpToDocket(\'$1\')" title="Jump to this case in the table">$1</span>');
 
   let marker = '·', markerClass = '';
   if (/^={5,}$/.test(line.replace(/<[^>]+>/g, ''))) {
@@ -6795,11 +6820,76 @@ function formatLiveLogLine(raw) {
   return { time, marker, markerClass, body: line };
 }
 
+// A standalone "✓ DOCKET" line marks one case fully processed -- distinct
+// from "✓ Extracted address: ..." or any other in-progress step, which
+// also start with a checkmark but have more on the line.
+const LIVE_CASE_DONE_RE = /^✓\s+(\d{2}[A-Z]{2}\d{3,8})\s*$/;
+function extractCaseCompletion(raw) {
+  let line = decodeUnicodeEscapes(String(raw || '')).replace(/\s+/g, ' ').trim();
+  const m = line.match(LIVE_TIMESTAMP_RE);
+  if (m) line = m[2].trim();
+  const cm = line.match(LIVE_CASE_DONE_RE);
+  return cm ? cm[1] : null;
+}
+
+function liveTrackCompletion() {
+  liveCaseTimestamps.push(Date.now());
+  if (liveCaseTimestamps.length > 300) liveCaseTimestamps.shift();
+}
+
+function liveTrackEvent() {
+  const now = Date.now();
+  liveEventTimestamps.push(now);
+  // Only need enough history to cover the 10s window used below.
+  while (liveEventTimestamps.length && now - liveEventTimestamps[0] > 10000) liveEventTimestamps.shift();
+}
+
+function liveRenderRate() {
+  const el = document.getElementById('live-rate');
+  if (!el) return;
+  const now = Date.now();
+  const recentEvents = liveEventTimestamps.filter(t => now - t <= 10000);
+  const eventsPerSec = recentEvents.length / 10;
+  livePeakEventsPerSec = Math.max(livePeakEventsPerSec, eventsPerSec);
+
+  // Shows from the first gap between two completions on -- one sample is a
+  // real (if noisy) measurement, and "n=" makes the confidence level
+  // explicit rather than hiding the number until it's had time to settle.
+  let caseHtml = '';
+  if (liveCaseTimestamps.length >= 2) {
+    const gaps = [];
+    for (let i = 1; i < liveCaseTimestamps.length; i++) gaps.push(liveCaseTimestamps[i] - liveCaseTimestamps[i - 1]);
+    const recentGaps = gaps.slice(-LIVE_RECENT_N).sort((a, b) => a - b);
+    const currentMs = recentGaps[Math.floor(recentGaps.length / 2)];
+    const sortedAll = gaps.slice().sort((a, b) => a - b);
+    const ceilingMs = sortedAll[Math.max(0, Math.floor(sortedAll.length * 0.1) - 1)];
+    const perHour = (ms) => ms > 0 ? Math.round(3600000 / ms) : 0;
+    caseHtml =
+      `<span><b>${perHour(currentMs)}</b> <span class="dim">cases/hr right now (n=${gaps.length})</span></span>` +
+      `<span><b>${perHour(ceilingMs)}</b> <span class="dim">cases/hr ceiling — measured best pace, one worker/one account</span></span>`;
+  }
+
+  if (!caseHtml && recentEvents.length < 2) { el.style.display = 'none'; return; }
+  el.style.display = '';
+  el.innerHTML =
+    `<span><b>${eventsPerSec.toFixed(2)}</b> <span class="dim">events/sec</span></span>` +
+    `<span><b>${livePeakEventsPerSec.toFixed(2)}</b> <span class="dim">peak events/sec this session</span></span>` +
+    caseHtml;
+}
+
 function liveLineHtml(evt) {
   let payload;
   try { payload = JSON.parse(evt); } catch { payload = { type: 'raw', line: evt }; }
 
   if (payload.type === 'log') {
+    // Backlog lines replay near-instantly on connect, not spaced by real
+    // per-case time -- counting them would fake a near-infinite rate.
+    if (!payload.backlog) {
+      liveTrackEvent();
+      const docket = extractCaseCompletion(payload.line);
+      if (docket) liveTrackCompletion();
+      liveRenderRate();
+    }
     const f = formatLiveLogLine(payload.line);
     if (!f) return '';
     // Show the time this line reached the viewer's own machine, not the
@@ -6816,6 +6906,10 @@ function liveLineHtml(evt) {
     const addr = liveEsc(payload.address || '');
     return `<div class="live-line"><span class="src">[test event]</span> address: ${addr}</div>`;
   }
+
+  // Server-side keepalive (see live_stream.py) -- proves the connection is
+  // still actually delivering bytes, nothing to show the user.
+  if (payload.type === 'heartbeat') return '';
 
   // Unknown payload shape — still redact defendant-looking fields before showing it.
   const safe = {};
@@ -6845,16 +6939,56 @@ function liveAppend(html) {
   while (screen.children.length > LIVE_MAX_LINES) screen.removeChild(screen.lastChild);
   if (atTop) screen.scrollTop = 0;
   liveEventCount++;
-  const meta = document.getElementById('live-meta');
-  if (meta) meta.textContent = `${liveEventCount} event${liveEventCount === 1 ? '' : 's'}`;
+  liveUpdateMeta();
 }
 
 const LIVE_CONNECT_TIMEOUT_MS = 8000;
 let liveConnectTimeoutTimer = null;
 
+// EventSource can go quietly dead without ever firing onerror — a laptop
+// sleep/wake, a WiFi or VPN blip, a half-open TCP connection nobody
+// tore down. readyState stays OPEN and the UI just... stops, looking
+// exactly like nothing is happening rather than like a connection
+// problem. The server sends a real heartbeat event at least every 15s
+// (see live_stream.py) specifically so this can be detected: if NO
+// message of any kind — heartbeat or real log line — has arrived in
+// LIVE_STALE_MS, the connection is treated as dead and force-reconnected.
+const LIVE_STALE_MS = 40000;
+const LIVE_WATCHDOG_TICK_MS = 5000;
+let liveLastMsgAt = 0;
+let liveWatchdogTimer = null;
+
+function liveUpdateMeta() {
+  const meta = document.getElementById('live-meta');
+  if (!meta) return;
+  const countText = `${liveEventCount} event${liveEventCount === 1 ? '' : 's'}`;
+  if (!liveLastMsgAt) { meta.textContent = countText; return; }
+  const secsAgo = Math.round((Date.now() - liveLastMsgAt) / 1000);
+  const agoText = secsAgo < 2 ? 'just now' : `${secsAgo}s ago`;
+  meta.textContent = `${countText} · last update ${agoText}`;
+}
+
+function liveStartWatchdog() {
+  if (liveWatchdogTimer) return;
+  liveWatchdogTimer = setInterval(() => {
+    liveUpdateMeta();
+    liveRenderRate(); // decay events/sec toward 0 during quiet stretches, not just on new events
+    if (liveSource && liveLastMsgAt && (Date.now() - liveLastMsgAt) > LIVE_STALE_MS) {
+      liveSetStatus('connection went quiet — reconnecting…', true);
+      liveRetry();
+    }
+  }, LIVE_WATCHDOG_TICK_MS);
+}
+
+function liveStopWatchdog() {
+  clearInterval(liveWatchdogTimer);
+  liveWatchdogTimer = null;
+}
+
 function liveRetry() {
   clearTimeout(liveConnectTimeoutTimer);
   if (liveSource) { liveSource.close(); liveSource = null; }
+  liveLastMsgAt = 0;
   clearTimeout(liveReconnectTimer);
   liveReconnectTimer = setTimeout(connectLiveFeed, LIVE_RECONNECT_MS);
 }
@@ -6864,6 +6998,7 @@ function connectLiveFeed() {
   if (!('EventSource' in window)) { liveSetStatus('unsupported browser', true); return; }
   liveSetStatus('connecting…');
   liveSource = new EventSource(LIVE_URL);
+  liveStartWatchdog();
   clearTimeout(liveConnectTimeoutTimer);
   liveConnectTimeoutTimer = setTimeout(() => {
     if (liveSource && liveSource.readyState !== EventSource.OPEN) {
@@ -6873,13 +7008,31 @@ function connectLiveFeed() {
   }, LIVE_CONNECT_TIMEOUT_MS);
   liveSource.onopen = () => {
     clearTimeout(liveConnectTimeoutTimer);
+    liveLastMsgAt = Date.now();
     liveSetStatus('connected — watching scraper');
   };
-  liveSource.onmessage = (e) => liveAppend(liveLineHtml(e.data));
+  liveSource.onmessage = (e) => {
+    liveLastMsgAt = Date.now();
+    liveAppend(liveLineHtml(e.data));
+  };
   liveSource.onerror = () => {
     liveSetStatus('disconnected — retrying…', true);
     liveRetry();
   };
+}
+
+// Every docket number streamed through the live log is clickable -- jumps
+// to the Cases view with that docket in the search box, same "click
+// through, filter the existing table, don't open a modal" pattern as
+// every other entity click-through in the app.
+function jumpToDocket(docket) {
+  viewMode = 'cases';
+  document.querySelectorAll('#view-seg button').forEach(b => b.classList.toggle('on', b.dataset.val === 'cases'));
+  const searchEl = document.getElementById('search');
+  if (searchEl) searchEl.value = docket;
+  render();
+  syncMapUrl();
+  document.getElementById('table-header')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function renderLiveView() {
@@ -6891,6 +7044,7 @@ function renderLiveView() {
 function disconnectLiveFeed() {
   clearTimeout(liveReconnectTimer);
   clearTimeout(liveConnectTimeoutTimer);
+  liveStopWatchdog();
   if (liveSource) { liveSource.close(); liveSource = null; }
   liveStarted = false;
   liveSetStatus('disconnected');
