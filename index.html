@@ -1601,31 +1601,6 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
     <div class="filter-row" id="filters"></div>
   </div>
 
-  <!-- Sits under the filters/search on purpose, and is filter-aware
-       (buildStats reads getFiltered(), not allRows) -- these are a summary
-       of what's currently shown, not a fixed all-time ranking that ignores
-       whatever the reader just filtered down to. -->
-  <div class="stats-row" id="stats-row">
-    <div class="stat-card">
-      <button type="button" class="stat-label" id="toggle-districts" aria-expanded="true" aria-controls="top-districts">
-        <span class="stat-caret">▾</span> Top Districts
-      </button>
-      <div id="top-districts" class="stat-list"></div>
-    </div>
-    <div class="stat-card">
-      <button type="button" class="stat-label" id="toggle-attorneys" aria-expanded="true" aria-controls="top-attorneys">
-        <span class="stat-caret">▾</span> Top Attorneys
-      </button>
-      <div id="top-attorneys" class="stat-list"></div>
-    </div>
-    <div class="stat-card">
-      <button type="button" class="stat-label" id="toggle-landlords" aria-expanded="true" aria-controls="top-landlords">
-        <span class="stat-caret">▾</span> Top Landlords
-      </button>
-      <div id="top-landlords" class="stat-list"></div>
-    </div>
-  </div>
-
   <div class="table-header" id="table-header">
     <div class="result-count" id="result-count"></div>
     <div class="export-wrap">
@@ -1750,6 +1725,32 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
       <input id="chat-input" placeholder="Ask about the case data — tables and charts are computed live from the snapshot…" autocomplete="off">
       <button type="submit" id="chat-send">Send</button>
     </form>
+  </div>
+
+  <!-- Below every view's own controls on purpose (search/filters on Cases,
+       the timeline scrubber + layer toggles on Map, etc.) -- these are a
+       summary of what's currently shown there, not a fixed all-time
+       ranking sitting above the controls that produce the view. Also
+       filter-aware: buildStats() reads getFiltered(), not allRows. -->
+  <div class="stats-row" id="stats-row">
+    <div class="stat-card">
+      <button type="button" class="stat-label" id="toggle-districts" aria-expanded="true" aria-controls="top-districts">
+        <span class="stat-caret">▾</span> Top Districts
+      </button>
+      <div id="top-districts" class="stat-list"></div>
+    </div>
+    <div class="stat-card">
+      <button type="button" class="stat-label" id="toggle-attorneys" aria-expanded="true" aria-controls="top-attorneys">
+        <span class="stat-caret">▾</span> Top Attorneys
+      </button>
+      <div id="top-attorneys" class="stat-list"></div>
+    </div>
+    <div class="stat-card">
+      <button type="button" class="stat-label" id="toggle-landlords" aria-expanded="true" aria-controls="top-landlords">
+        <span class="stat-caret">▾</span> Top Landlords
+      </button>
+      <div id="top-landlords" class="stat-list"></div>
+    </div>
   </div>
 </div>
 
@@ -2602,6 +2603,21 @@ function buildStats() {
 // filter shows up at all, and its contribution to the owner's total is
 // just the filtered cases, not every case that property ever had.
 let landlordAgg = null;
+// portfolioUrl is shaped .../search/{property_oid}/{landlord_ct_id}/{landlord_oid}/portfolio
+// -- property_oid is the SEARCHED-FROM property's own id, not the owner's,
+// so it differs for every building the same owner holds. Using the whole
+// URL as a grouping key fragmented one real owner (e.g. MDHA, 635
+// buildings) into a separate group per building instead of one combined
+// total. landlord_ct_id:landlord_oid is the part that's actually stable
+// across that owner's whole portfolio.
+function landlordNetworkKey(portfolioUrl) {
+  if (!portfolioUrl) return null;
+  const parts = portfolioUrl.split('/').filter(Boolean);
+  const i = parts.indexOf('search');
+  if (i === -1 || parts.length < i + 4) return portfolioUrl; // shouldn't happen; fall back rather than crash
+  return `${parts[i + 2]}:${parts[i + 3]}`;
+}
+
 function buildLandlordAggregation(filteredRows) {
   if (!llPropertyIndex) return [];
   const keepDockets = new Set(filteredRows.map(r => r.docket));
@@ -2612,7 +2628,7 @@ function buildLandlordAggregation(filteredRows) {
     const assertion = lmSnapshotByKey ? lmSnapshotByKey.get(p.key) : null;
     const matched = assertion && assertion.status === 'matched' && assertion.data;
     const groupKey = matched
-      ? 'lm:' + (assertion.data.portfolioUrl || assertion.data.networkName)
+      ? 'lm:' + (landlordNetworkKey(assertion.data.portfolioUrl) || assertion.data.networkName)
       : 'raw:' + (p.primaryLandlord || '(no plaintiff on file)');
     if (!byGroup.has(groupKey)) {
       byGroup.set(groupKey, {
