@@ -7744,17 +7744,30 @@ function redactDefendantNames(text) {
 
 // Worker login accounts are scraper-internal credentials, not part of the
 // public court record — blank them wherever they show up in log lines.
-// The server now redacts these on the way out (live_stream.py) and the
-// scraper writes aliases only -- this is the third layer, so a stale cached
-// page or a log line from an older build still can't show an account name.
-const LIVE_REDACT_LITERALS = ['[redacted-account]', '[redacted-account]', '[redacted-account]'];
+// Third layer of account-name redaction, behind the scraper writing aliases
+// only and live_stream.py redacting on the way out. It exists for a stale
+// cached page or a line from an older build.
+//
+// NOTE: never list the real account names here. This file is public, so a
+// literal blocklist would publish exactly what it is meant to hide. Instead,
+// anything standing in an account-name slot is masked unless it looks like one
+// of the aliases the scraper emits (EPSILON / SIGMA / ALPHA, or ACCT-xxxxxx for
+// an account with no alias mapping). Over-redacting is the safe failure here.
+const LIVE_ALIAS_SHAPE = /^(?:[A-Z]{3,12}|ACCT-[0-9A-F]{6})$/;
+const LIVE_ACCOUNT_SLOTS = [
+  /\bas\s+([A-Za-z0-9._-]{3,40})(?=\)|\s|$)/g,
+  /\buser\s*[=:]\s*([A-Za-z0-9._-]{3,40})/gi,
+  /\b(?:leased|released|account)\s+([A-Za-z0-9._-]{3,40})/gi,
+];
 function redactWorkerAccount(text) {
   if (!text) return text;
-  for (const lit of LIVE_REDACT_LITERALS) {
-    const re = new RegExp(lit.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
-    text = text.replace(re, '█'.repeat(lit.length));
+  let out = String(text);
+  for (const re of LIVE_ACCOUNT_SLOTS) {
+    out = out.replace(re, (m, val) => LIVE_ALIAS_SHAPE.test(val)
+      ? m
+      : m.slice(0, m.length - val.length) + '█'.repeat(Math.min(val.length, 16)));
   }
-  return text;
+  return out;
 }
 
 function liveEsc(s) { return escapeHtmlSafe(String(s == null ? '' : s)); }
