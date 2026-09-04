@@ -8099,6 +8099,22 @@ function resolveChatEntities(q) {
     // Strictly positive: a token sitting in every passage has an idf of zero
     // and names nobody, however many entities happen to contain it.
     if (!on.length || score <= 0) continue;
+    /* NAMING SOMETHING MEANS SAYING MOST OF ITS NAME.
+
+       With 9,595 landlords on this docket, almost every English word sits
+       inside some company name, so a single shared word is not evidence that
+       a question named anybody. Measured live, "what share of cases end in a
+       money judgment, and for how much?" returned a dossier on TOO MUCH
+       PARTNERSHIP — one filing, matched on "much" — joined against WEST END
+       TERRACE, matched on "end". Both are one token of a three-token name.
+
+       The rule is the one already used elsewhere in this file for common
+       terms, applied to names: more of the name said than left out. It is
+       what naming means, not a tuned bar. "MDHA" (one token, all of it) and
+       "MCCOY, JENNIFER JO" (mccoy of mccoy/jennifer) both clear it; one word
+       of "TOO MUCH PARTNERSHIP", "WEST END TERRACE" or "GREEN HILLS MIXED
+       USE, LLC D/B/A VERTIS GREEN HILLS" does not. */
+    if (on.length * 2 < e.nameTokens.length) continue;
     /* Weighted by HOW MUCH OF THE NAME the question actually used. Sharing one
        word with a five-word company name is a mention; saying every word of a
        name is naming it. Measured live: "what is the dismissal rate in district
@@ -8110,11 +8126,43 @@ function resolveChatEntities(q) {
   }
   scored.sort((a, b) => b.score - a.score || b.entity.cases - a.entity.cases);
   const top = scored[0];
-  return scored.slice(0, 5).map(x => ({
-    ...x,
-    best: x === top,
-    tied: !!top && x !== top && x.score === top.score,
-  }));
+  if (!top) return [];
+
+  /* ONE CANDIDATE PER PIECE OF EVIDENCE, not the top five overall.
+
+     A flat top-five is wrong whenever a question names two parties, and it
+     failed exactly there: "MDHA ... now that they use mccoy" returned MDHA and
+     four other names containing "mdha", and McCoy — the entire point of the
+     question — never made the list, because every MDHA variant outscored it.
+     Rank is the wrong axis. What matters is which WORDS of the question a
+     candidate answers to: "mdha" and "mccoy" are two different pieces of
+     evidence, and each deserves its own best match. So candidates are grouped
+     by the token set they matched on, and each group contributes its
+     strongest. Same-name rivals still surface, as ties on the best group. */
+  const byEvidence = new Map();
+  for (const x of scored) {
+    const k = [...x.on].sort().join('|');
+    if (!byEvidence.has(k)) byEvidence.set(k, x);
+  }
+  const bestKey = [...top.on].sort().join('|');
+  const out = [{ ...top, best: true, tied: false }];
+  // Rivals on the SAME evidence as the winner — the same name worn by others.
+  for (const x of scored) {
+    if (x === top || x.score !== top.score) continue;
+    if ([...x.on].sort().join('|') !== bestKey) continue;
+    out.push({ ...x, best: false, tied: true });
+    if (out.length >= 4) break;
+  }
+  // Then the best match for every OTHER piece of evidence in the question.
+  for (const [k, x] of byEvidence) {
+    if (k === bestKey) continue;
+    // Evidence wholly contained in the winner's is not a second party, it is
+    // the same party named less completely.
+    if (x.on.every(t => top.on.includes(t))) continue;
+    out.push({ ...x, best: false, tied: false });
+    if (out.length >= 7) break;
+  }
+  return out;
 }
 
 /* The profile card: every figure computed from the live rows, no model
@@ -8216,7 +8264,9 @@ const CHAT_SUGGESTIONS = [
   'MDHA over time',
   'How often does a tenant have a lawyer?',
   'Which census tracts are most likely to have increasing evictions?',
-  'Where are things headed by district?',
+  'Which tracts move together, underneath the citywide pattern?',
+  'Can you forecast the next six months by district?',
+  'Filings per 1,000 residents by district',
 ];
 
 function renderChatSuggestions() {
@@ -8390,7 +8440,11 @@ async function ensureChatDynamics() {
     import(EO7_KERNEL + 'dmd.js'),
     import(EO7_KERNEL + 'rng.js'),
   ]);
-  chatDyn = { dmd: dmdMod.dmd, createSeededRng: rngMod.createSeededRng, shuffled: rngMod.shuffled };
+  chatDyn = {
+    dmd: dmdMod.dmd,
+    economySVD: dmdMod.economySVD, matmul: dmdMod.matmul, transpose: dmdMod.transpose,
+    createSeededRng: rngMod.createSeededRng, shuffled: rngMod.shuffled,
+  };
 }
 
 /* Monthly counts per area, on ONE shared month axis. A month an area filed
@@ -8510,7 +8564,7 @@ async function chatTrendArtifact(grain) {
     // freezing the tab — 300 tracts is a real wait and a silent one reads
     // as a hang.
     if (++done % 12 === 0) {
-      chatSetStatus(`fitting dynamics and its null — ${done} of ${eligible.length} ${grain === 'tract' ? 'tracts' : 'districts'}…`, 'busy');
+      chatSetStatus(`measuring direction and checking it against chance — ${done} of ${eligible.length} ${grain === 'tract' ? 'tracts' : 'districts'}…`, 'busy');
       await new Promise(r => setTimeout(r, 0));
     }
     const t = chatTrend(name, s, { delays: CHAT_DELAYS, draws: CHAT_DRAWS, seed: CHAT_SEED });
@@ -8535,19 +8589,27 @@ async function chatTrendArtifact(grain) {
   return {
     artifact: {
       kind: 'table',
+      /* PLAIN WORDS ON SCREEN. The method is real and the reader is entitled
+         to it, but "expanding dynamics that beat their own null" is three
+         pieces of jargon in one line and tells a lawyer nothing. What the
+         result actually says is: filings are climbing here, and we checked
+         that the climb isn't something the arithmetic invented. That is what
+         it now says. The eigenvalue, the embedding, the draw count and the
+         seed all still ship, in the exported derivation, where an expert who
+         wants to check the work will look for them. */
       title: found.length
-        ? `Where filings are headed — ${found.length} of ${considered} ${grain === 'tract' ? 'tracts' : 'districts'} with expanding dynamics that beat their own null`
-        : `No ${grain === 'tract' ? 'tract' : 'district'} shows expansion that survives its own null`,
+        ? `Filings are climbing in ${found.length} of ${considered} ${grain === 'tract' ? 'tracts' : 'districts'}`
+        : `No ${grain === 'tract' ? 'tract' : 'district'} is climbing by more than chance would produce`,
       // Two different spans, labelled as two different spans. The trend is
       // fitted over the WHOLE window; the last-two-years column is a separate
       // fact and is allowed to disagree with it, which on a district that rose
       // for four years and then plateaued it will.
-      head: [label, 'Trend', 'First yr → last yr', 'Prior yr → last yr', 'All filings'],
+      head: [label, 'Climbing by', 'First year → last year', 'Year before → last year', 'All filings'],
       rows: rows.length ? rows : [{
         label: 'none', value: 0,
-        cells: [`${considered} ${grain === 'tract' ? 'tracts' : 'districts'} tested`,
+        cells: [`${considered} ${grain === 'tract' ? 'tracts' : 'districts'} checked`,
           '—', '—',
-          'every expanding fit was matched by the same series shuffled',
+          'every apparent climb was matched by the same months in a shuffled order',
           '—'],
       }],
     },
@@ -8569,6 +8631,934 @@ async function chatTrendArtifact(grain) {
       window: axis.length ? `${axis[0]} to ${axis[axis.length - 1]}` : null,
       droppedPartialMonth: droppedPartial,
       warning: 'growth is the direction this area\'s own past dynamics are carrying, measured against a null. It is not a forecast, and it does not account for anything outside the filing record.',
+    },
+  };
+}
+
+
+/* ─── Forecasting, and the reason the trend table refuses to call itself one ─
+   The trend table fits each area's direction over its whole history and stops.
+   That is a reading of the past. Turning it into a forecast takes one more
+   step and one much harder one: project the operator forward, and then SHOW
+   THAT PROJECTING IT FORWARD ACTUALLY WORKS.
+
+   The second step is the whole thing. Any model will emit a number for next
+   month. The question is whether that number is better than the two guesses
+   anybody can make without a model:
+
+     persistence   next month looks like last month
+     seasonal      next month looks like the same month a year ago
+
+   These are the null. They are not strawmen — on monthly filing counts
+   seasonal-naive is a genuinely strong forecaster, and a model that cannot
+   beat it has learned nothing that the calendar did not already say.
+
+   HOW IT IS CHECKED. Walk-forward, out of sample. Cut the history at a month,
+   fit on everything before the cut ONLY, predict the months after it, and
+   compare against what actually happened. Then move the cut forward and do it
+   again. Every prediction scored is one the model had not seen, and the score
+   is the mean absolute error in filings — a number in the units of the thing,
+   not a correlation.
+
+   WHAT IS PUBLISHED. The forecast ships only where it beat both baselines out
+   of sample, per horizon. Where it did not, the table says which baseline won
+   and by how much, and shows that baseline's numbers instead. A model that
+   loses is a finding, not a failure to hide.
+
+   THE CORRELATION ACROSS AREAS IS THE POINT. This fits every area AT ONCE, as
+   one state vector, so a mode shared across districts — the thing that makes
+   a wave move through a city rather than a district move alone — is available
+   to the fit. That is what a per-area fit structurally cannot see, and it is
+   the only reason to expect a model to beat the calendar at all. ─────────── */
+
+const CHAT_HORIZON = 6;      // months predicted from each cut
+const CHAT_ORIGINS = 30;     // cuts walked forward; half choose the shape, half score it
+
+function chatMatrix(series, names) {
+  return names.map(n => series.get(n));
+}
+
+/* THE STATE CARRIES MEMORY. A one-step map on this month's counts alone has
+   nowhere to keep a season: it must predict next August from this July and
+   nothing else. Stacking `delays` consecutive months into the state gives the
+   operator the recent past to work from, which is the only way a linear map
+   can represent "Augusts are busy". Column t of the stack is
+   [x_t; x_{t-1}; ...; x_{t-delays+1}], every area's counts in each block. */
+function chatStack(M, delays) {
+  const T = M[0].length;
+  const cols = T - delays + 1;
+  const H = [];
+  for (let d = 0; d < delays; d++) {
+    for (const row of M) H.push(row.slice(delays - 1 - d, delays - 1 - d + cols));
+  }
+  return H;   // (areas*delays) x cols, newest block first
+}
+
+/* One DMD step-ahead operator fitted on the stacked history up to `upTo`.
+   `rank` is DECLARED — full numerical rank on a matrix this shape fits its own
+   noise, which is exactly what the first version of this did and why it lost
+   to persistence by half. Which rank is chosen by validation, below, never
+   here. */
+function chatFitAdvance(H, upTo, rank) {
+  const { transpose, matmul, economySVD } = chatDyn;
+  const X = H.map(r => r.slice(0, upTo - 1));
+  const Xp = H.map(r => r.slice(1, upTo));
+  let svd;
+  try { svd = economySVD(X, { rank }); } catch (_) { return null; }
+  const { U, s, V, rank: r } = svd;
+  if (!r) return null;
+  const At = matmul(matmul(transpose(U), Xp), V).map(row => row.map((v, j) => v / s[j]));
+  return (x) => {
+    const z = U[0].map((_, k) => U.reduce((a, row, i) => a + row[k] * x[i], 0));
+    const zn = At.map(row => row.reduce((a, v, j) => a + v * z[j], 0));
+    return U.map(row => row.reduce((a, v, k) => a + v * zn[k], 0));
+  };
+}
+
+/* Predict `horizon` months past column `upTo` of the stacked history. Only the
+   newest block of the advanced state is a prediction of a month; the rest is
+   the memory it carried. */
+function chatPredictDmd(M, upTo, horizon, { delays, rank }) {
+  const areas = M.length;
+  const H = chatStack(M, delays);
+  const stackedUpTo = upTo - delays + 1;
+  if (stackedUpTo < 4) return null;
+  const advance = chatFitAdvance(H, stackedUpTo, rank);
+  if (!advance) return null;
+  let x = H.map(r => r[stackedUpTo - 1]);
+  const out = [];
+  for (let h = 0; h < horizon; h++) {
+    x = advance(x);
+    if (!x.every(Number.isFinite)) return null;
+    // Counts cannot be negative. Clamping is not a correction to the fit — the
+    // error is scored on the clamped number, which is the number that would
+    // actually be shown.
+    out.push(x.slice(0, areas).map(v => Math.max(0, v)));
+  }
+  return out;
+}
+
+/* The shapes of model tried. Declared, small, and searched OUT OF SAMPLE. */
+const CHAT_FCST_GRID = [];
+for (const delays of [1, 3, 6, 12]) for (const rank of [2, 3, 5, 8, 12, 20]) CHAT_FCST_GRID.push({ delays, rank });
+
+const chatMae = (pred, actual) => {
+  let sum = 0, n = 0;
+  for (let i = 0; i < actual.length; i++) {
+    if (!Number.isFinite(pred[i]) || !Number.isFinite(actual[i])) continue;
+    sum += Math.abs(pred[i] - actual[i]); n++;
+  }
+  return n ? sum / n : null;
+};
+
+/* Walk-forward scoring over a given set of cutoffs. Every prediction scored
+   here was made by a fit that saw only months before its own cutoff. */
+function chatScoreOrigins(M, cutoffs, { horizon, season, config }) {
+  const err = Array.from({ length: horizon }, () => ({ dmd: [], persist: [], seasonal: [] }));
+  let scored = 0;
+  for (const upTo of cutoffs) {
+    const pred = config ? chatPredictDmd(M, upTo, horizon, config) : null;
+    if (config && !pred) continue;
+    scored++;
+    for (let h = 0; h < horizon; h++) {
+      const actual = M.map(r => r[upTo + h]);
+      if (pred) { const a = chatMae(pred[h], actual); if (a != null) err[h].dmd.push(a); }
+      const p = chatMae(M.map(r => r[upTo - 1]), actual);
+      const sn = chatMae(M.map(r => r[upTo + h - season]), actual);
+      if (p != null) err[h].persist.push(p);
+      if (sn != null) err[h].seasonal.push(sn);
+    }
+  }
+  const mean = (a) => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
+  return {
+    scored,
+    byHorizon: err.map((e, i) => {
+      const dmd = mean(e.dmd), persist = mean(e.persist), seasonal = mean(e.seasonal);
+      const baseline = Math.min(persist ?? Infinity, seasonal ?? Infinity);
+      const baselineName = persist != null && persist <= (seasonal ?? Infinity) ? 'last month' : 'same month last year';
+      return {
+        h: i + 1, dmd, persist, seasonal, baseline, baselineName,
+        modelWins: dmd != null && Number.isFinite(baseline) && dmd < baseline,
+        skill: dmd != null && Number.isFinite(baseline) && baseline > 0 ? 1 - dmd / baseline : null,
+      };
+    }),
+    overall: mean(err.flatMap(e => e.dmd)),
+  };
+}
+
+/* NESTED VALIDATION. Which shape of model to use is itself a thing fitted to
+   data, so choosing it on the same cutoffs the score is reported from would
+   make the score a description of that choice rather than a test of it — the
+   ordinary way a backtest comes out flattering and a live forecast does not.
+
+   So the cutoffs are split by time. The older half chooses the shape; the
+   newer half scores it, and never influenced it. The baselines are scored on
+   that same newer half, so both sides are answering the same months. */
+function chatBacktest(M, { horizon, origins, season = 12 }) {
+  const T = M[0].length;
+  const all = [];
+  for (let o = origins - 1; o >= 0; o--) {
+    const upTo = T - horizon - o;
+    if (upTo >= season + horizon + 6) all.push(upTo);
+  }
+  if (all.length < 4) return null;
+  const split = Math.max(2, Math.floor(all.length / 2));
+  const selection = all.slice(0, split);
+  const scoring = all.slice(split);
+
+  let chosen = null, chosenErr = Infinity;
+  for (const config of CHAT_FCST_GRID) {
+    const r = chatScoreOrigins(M, selection, { horizon, season, config });
+    if (r.overall != null && r.overall < chosenErr) { chosenErr = r.overall; chosen = config; }
+  }
+  if (!chosen) return null;
+  const held = chatScoreOrigins(M, scoring, { horizon, season, config: chosen });
+  return {
+    ...held,
+    config: chosen,
+    selectionCutoffs: selection.length,
+    scoringCutoffs: scoring.length,
+    triedShapes: CHAT_FCST_GRID.length,
+    selectionErr: chosenErr,
+  };
+}
+
+async function chatForecastArtifact(grain) {
+  await ensureChatDynamics();
+  const { axis, series } = chatAreaSeries(grain);
+  const need = CHAT_HORIZON + CHAT_ORIGINS + 20;
+  const names = [...series.keys()].filter(n => series.get(n).length >= need
+    && series.get(n).filter(v => v > 0).length > 12).sort();
+  if (names.length < 2) return null;
+  const M = chatMatrix(series, names);
+
+  const back = chatBacktest(M, { horizon: CHAT_HORIZON, origins: CHAT_ORIGINS });
+  if (!back) return null;
+  const anyWin = back.byHorizon.some(r => r.modelWins);
+
+  // Forward from the end of the real history, using the shape validation chose.
+  const T = M[0].length;
+  const pred = chatPredictDmd(M, T, CHAT_HORIZON, back.config);
+  const lastMonth = axis[axis.length - 1];
+
+  /* PLAIN ROWS. What these numbers are: the typical gap between the filings
+     predicted for a district in a month and the filings that actually
+     happened. Shown as whole filings with the unit said once in the heading,
+     because "8.3" beside "10.3 (last month)" is three unexplained things in a
+     row — a bare figure, a hidden unit, and the NAME of a guessing method
+     that reads like a date. */
+  const baselineNames = [...new Set(back.byHorizon.map(r => r.baselineName))];
+  const scoreRows = back.byHorizon.map(r => ({
+    label: `${r.h} month${r.h > 1 ? 's' : ''} ahead`,
+    value: r.skill != null ? Math.max(0, r.skill) : 0,
+    cells: [
+      `${r.h} month${r.h > 1 ? 's' : ''} ahead`,
+      r.dmd == null ? '—' : `${Math.round(r.dmd)} filings`,
+      r.baseline == null ? '—' : `${Math.round(r.baseline)} filings`,
+      r.modelWins
+        ? `the forecast, by ${(r.skill * 100).toFixed(0)}%`
+        : `just guessing, by ${(-r.skill * 100).toFixed(0)}%`,
+    ],
+  }));
+
+  return {
+    scoreboard: {
+      kind: 'table',
+      /* Plain words. "Earns its place" and "cutoffs" are both this project's
+         private shorthand; what the row actually says is whether the forecast
+         was closer than guessing, checked on past dates it had not seen. */
+      title: anyWin
+        ? `The forecast is more accurate than guessing — checked against ${back.scored} past dates it had not seen`
+        : `The forecast is no more accurate than guessing, so none is shown`,
+      head: ['Looking ahead', 'Forecast is off by', 'Guessing is off by', 'Which is closer'],
+      note: `Off by = how far a prediction for one district in one month typically lands from what actually happened. The guess being compared against is: ${baselineNames.join(', or ')}.`,
+      rows: scoreRows,
+    },
+    forecast: anyWin && pred ? {
+      kind: 'table',
+      title: `Expected filings after ${lastMonth}`,
+      head: [grain === 'tract' ? 'Census tract' : 'District',
+        ...back.byHorizon.filter(r => r.modelWins).map(r => `+${r.h}mo`)],
+      rows: names.map((n, i) => ({
+        label: n,
+        value: pred[0][i],
+        cells: [grain === 'tract' ? `Tract ${n}` : `District ${n}`,
+          ...back.byHorizon.filter(r => r.modelWins).map(r => Math.round(pred[r.h - 1][i]).toLocaleString())],
+        q: grain === 'tract' ? null : `council district ${n}`,
+      })).sort((a, b) => b.value - a.value),
+    } : null,
+    anyWin,
+    areas: names.length,
+    months: axis.length,
+    lastMonth,
+    method: {
+      op: 'REC',
+      intent: 'forecast',
+      grain,
+      engine: `eoreader7 native/kernel/dmd.js::economySVD + matmul + transpose, commit ${EO7_COMMIT}`,
+      model: `one linear step-ahead operator fitted across all ${names.length} ${grain === 'tract' ? 'tracts' : 'districts'} at once, so a mode shared between areas is available to the fit`,
+      modelShape: `${back.config.delays} month${back.config.delays > 1 ? 's' : ''} of memory in the state, ${back.config.rank} modes kept`,
+      shapeChosenBy: `${back.triedShapes} shapes tried on ${back.selectionCutoffs} earlier cutoffs; the winner was then scored on ${back.scoringCutoffs} LATER cutoffs it had no part in choosing`,
+      validation: `walk-forward, out of sample: ${back.scored} scoring cutoffs, each fitted only on months before the cutoff and scored on the ${CHAT_HORIZON} months after it`,
+      metric: 'mean absolute error, in filings per area per month',
+      baselines: ['persistence — next month equals last month', 'seasonal naive — next month equals the same month one year earlier'],
+      byHorizon: back.byHorizon.map(r => ({ h: r.h, modelMae: r.dmd, baselineMae: r.baseline, baseline: r.baselineName, modelWins: r.modelWins, skill: r.skill })),
+      published: anyWin
+        ? 'projections are shown only for the ranges where the forecast was more accurate than both simple guesses, on dates it had not seen'
+        : 'no projection is shown: the forecast was not more accurate than simply guessing',
+      warning: 'a filing count responds to rent, policy, court capacity and weather, none of which are in this record. Out-of-sample skill on past months is evidence the pattern held, not a guarantee it will.',
+    },
+  };
+}
+
+
+/* ─── Groups that emerge from the data, not from the map ────────────────────
+   A council district is a line somebody drew. Nothing says eviction filings
+   respect it, and the interesting question is whether the docket has its own
+   geography: sets of places that rise and fall TOGETHER, whoever they are
+   administratively adjacent to.
+
+   Those groups are read out of the data's own shared structure. Each area's
+   monthly series is standardised — so a group is places moving alike, never
+   just the places with the most filings — and the whole matrix is decomposed.
+   Each mode is a pattern of movement over time; its loadings say how strongly
+   each area participates in it. Areas that load most on the same mode, with
+   the same sign, are one group.
+
+   HOW MANY GROUPS THERE ARE IS NOT CHOSEN. It is measured. The null shifts
+   each area's series in time by its own random offset — which keeps that
+   area's own trend and season exactly as they were, and destroys only the
+   ALIGNMENT between areas, which is precisely the thing a group claims. A
+   mode is kept only if its strength exceeds every strength the shifted data
+   produced at that position. Whatever number survives is the number of
+   groups; if none survives, the honest answer is that there are none, and
+   this says so rather than partitioning the city anyway.
+
+   Then each surviving group is checked on its own: its members' average
+   agreement with each other has to beat the same shifted null too. A mode can
+   be strong and its top-loading members still be a rag-bag, and that group
+   should not be shown. ──────────────────────────────────────────────────── */
+
+/* Raised from 30 deliberately. Beating all N rotations is a test at roughly
+   1/(N+1), and this drill runs one such test per level plus one per candidate
+   group — on the real docket that was sixteen tests, at which point a 1-in-31
+   test is expected to hand back a false group or two. Sixty draws makes each
+   test tight enough that the whole drill stays honest, and the count of tests
+   run is reported alongside the result rather than left for the reader to
+   work out. */
+const CHAT_HOLON_DRAWS = 60;
+const CHAT_HOLON_SEED = 'eviction-overwatch/holons';
+
+const chatMean = (a) => a.reduce((x, y) => x + y, 0) / (a.length || 1);
+
+function chatZScore(series) {
+  const m = chatMean(series);
+  const sd = Math.sqrt(chatMean(series.map(v => (v - m) ** 2))) || 1;
+  return series.map(v => (v - m) / sd);
+}
+
+function chatCorr(a, b) {
+  const ma = chatMean(a), mb = chatMean(b);
+  let num = 0, da = 0, db = 0;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i] - ma, y = b[i] - mb;
+    num += x * y; da += x * x; db += y * y;
+  }
+  return da && db ? num / Math.sqrt(da * db) : 0;
+}
+
+/* Rotate a series by `by` months. Keeps every value, every gap between
+   consecutive values, the area's own trend shape and its own season — and
+   moves it relative to everybody else, which is the only thing being tested. */
+function chatRotate(series, by) {
+  const n = series.length, k = ((by % n) + n) % n;
+  return series.slice(k).concat(series.slice(0, k));
+}
+
+function chatSpectrum(Z) {
+  try { return chatDyn.economySVD(Z, { rank: Infinity }).s; } catch (_) { return []; }
+}
+
+/* Remove a level's own motion from the data, so the next level can be looked
+   for in what is left. `X - Σ s_k u_k v_kᵀ` over the modes that survived: the
+   shared rhythm is subtracted from every area at once, and each area's
+   remainder is how it departed from that rhythm. Rows are re-standardised
+   afterwards, because what matters at the next level is the SHAPE of the
+   departure, not whether an area is big enough to have a large one. */
+function chatDeflate(Z, U, sv, V, kept) {
+  const R = Z.map((row, i) => row.map((v, j) => {
+    let fit = 0;
+    for (let k = 0; k < kept; k++) fit += sv[k] * U[i][k] * V[j][k];
+    return v - fit;
+  }));
+  return R.map(chatZScore);
+}
+
+/* One level of the drill: how many patterns beat the rotation null in THIS
+   matrix, and which areas group on them. */
+async function chatHolonLevel(Z, names, draws, seedTag, onProgress) {
+  const real = chatSpectrum(Z);
+  const rng = chatDyn.createSeededRng(`${CHAT_HOLON_SEED}/${seedTag}`);
+  const nullMax = new Array(real.length).fill(0);
+  for (let d = 0; d < draws; d++) {
+    const shifted = Z.map(r => chatRotate(r, Math.floor(rng() * r.length)));
+    const sp = chatSpectrum(shifted);
+    for (let k = 0; k < nullMax.length; k++) nullMax[k] = Math.max(nullMax[k], sp[k] ?? 0);
+    if (d % 8 === 7 && onProgress) { onProgress(d + 1, draws); await new Promise(r => setTimeout(r, 0)); }
+  }
+  let kept = 0;
+  while (kept < real.length && real[kept] > nullMax[kept]) kept++;
+  let svd = null;
+  try { svd = chatDyn.economySVD(Z, { rank: Infinity }); } catch (_) {}
+  return { real, nullMax, kept, svd };
+}
+
+function chatGroupsFromLoadings(Z, names, U, kept, draws, seedTag) {
+  const assign = new Map();
+  names.forEach((n, i) => {
+    let bk = 0, bv = -1;
+    for (let k = 0; k < kept; k++) { const v = Math.abs(U[i][k]); if (v > bv) { bv = v; bk = k; } }
+    assign.set(n, { mode: bk, sign: U[i][bk] >= 0 ? 1 : -1, load: bv });
+  });
+  const groups = [];
+  for (let k = 0; k < kept; k++) {
+    for (const sign of [1, -1]) {
+      const members = names.filter(n => assign.get(n).mode === k && assign.get(n).sign === sign);
+      if (members.length < 2) continue;
+      const idx = members.map(n => names.indexOf(n));
+      const coh = chatGroupCoherence(Z, idx);
+      const rng2 = chatDyn.createSeededRng(`${CHAT_HOLON_SEED}/${seedTag}/${k}/${sign}`);
+      let beat = 0;
+      for (let d = 0; d < draws; d++) {
+        const shifted = idx.map(i => chatRotate(Z[i], Math.floor(rng2() * Z[i].length)));
+        if (coh > chatGroupCoherence(shifted, shifted.map((_, i) => i))) beat++;
+      }
+      if (beat < draws) continue;
+      groups.push({ mode: k, sign, members, coherence: coh, beat, draws });
+    }
+  }
+  return groups;
+}
+
+async function chatHolonArtifact(grain) {
+  await ensureChatDynamics();
+  const { axis, series } = chatAreaSeries(grain);
+  const names = [...series.keys()]
+    .filter(n => series.get(n).length >= 24 && series.get(n).filter(v => v > 0).length > 12)
+    .sort();
+  if (names.length < 4) return null;
+
+  /* THE DRILL. Level 1 is the whole city's own rhythm. Its motion is then
+     SUBTRACTED and the same test re-run on what is left, and again, for as
+     long as anything in the remainder still beats the null. Each level is a
+     real question: level 1 asks "does this city move as one", and every level
+     after asks "and once that motion is taken out, does any part of it have a
+     motion of its own". The drill stops when the answer is no, which is a
+     measured stopping point and not a depth chosen here. */
+  let Z = names.map(n => chatZScore(series.get(n)));
+  const levels = [];
+  for (let depth = 1; depth <= 4; depth++) {
+    chatSetStatus(`level ${depth}: testing what moves together…`, 'busy');
+    const lv = await chatHolonLevel(Z, names, CHAT_HOLON_DRAWS, `L${depth}`,
+      (d, n) => chatSetStatus(`level ${depth}: testing which patterns are real — ${d} of ${n}…`, 'busy'));
+    if (!lv.kept || !lv.svd) {
+      levels.push({ depth, kept: 0, groups: [], real: lv.real, nullMax: lv.nullMax });
+      break;
+    }
+    const groups = chatGroupsFromLoadings(Z, names, lv.svd.U, lv.kept, CHAT_HOLON_DRAWS, `L${depth}`)
+      .map(g => ({ ...g, ...chatGroupFacts(g.members, grain, series, axis) }))
+      .sort((x, y) => y.growth - x.growth || y.members.length - x.members.length);
+    levels.push({ depth, kept: lv.kept, groups, real: lv.real, nullMax: lv.nullMax });
+    Z = chatDeflate(Z, lv.svd.U, lv.svd.s, lv.svd.V, lv.kept);
+  }
+
+  return { grain, names, axis, levels, artifact: chatHolonTable(levels, grain, names.length) };
+}
+
+function chatGroupCoherence(Z, idx) {
+  let sum = 0, n = 0;
+  for (let a = 0; a < idx.length; a++) for (let b = a + 1; b < idx.length; b++) {
+    sum += chatCorr(Z[idx[a]], Z[idx[b]]); n++;
+  }
+  return n ? sum / n : 0;
+}
+
+/* What a group IS, in the terms the docket speaks: how many filings, which way
+   it is going, and who is doing the filing across the whole group. */
+function chatGroupFacts(members, grain, series, axis) {
+  const set = new Set(members);
+  const inGroup = grain === 'tract'
+    ? (r) => set.has(String(r.census_tract || '').trim())
+    : (r) => set.has(chatDistrictNum(r.council_district));
+  const landlords = new Map(), attorneys = new Map();
+  let cases = 0, withDef = 0;
+  for (const r of allRows) {
+    if (!inGroup(r)) continue;
+    cases++;
+    if (String(r.Def_Attorney || '').trim()) withDef++;
+    chatBump(landlords, String(r.Plaintiff_1 || '').trim());
+    chatBump(attorneys, String(r.Attorney || '').trim());
+  }
+  const total = members.map(n => series.get(n)).reduce((acc, s) => s.map((v, i) => v + (acc[i] || 0)), []);
+  const growth = chatGrowth(total, CHAT_DELAYS);
+  const yr = CHAT_DELAYS;
+  return {
+    cases, withDef, landlords, attorneys,
+    growth: growth ?? 0,
+    firstYear: total.slice(0, yr).reduce((a, b) => a + b, 0),
+    lastYear: total.slice(-yr).reduce((a, b) => a + b, 0),
+    series: total,
+  };
+}
+
+/* The drill, read top down. Level 1 is the city; each level below it is what
+   was still moving together once the level above had been subtracted. */
+function chatHolonTable(levels, grain, tested) {
+  const unit = grain === 'tract' ? 'tracts' : 'districts';
+  const rows = [];
+  const real = levels.length ? levels[0].real : [];
+
+  for (const lv of levels) {
+    const scale = lv.depth === 1
+      ? `Across all ${tested} ${unit}`
+      : `Level ${lv.depth} — with the level ${lv.depth - 1} motion taken out`;
+
+    if (!lv.kept) {
+      rows.push({ label: `L${lv.depth}`, value: 0, cells: [
+        scale,
+        '—',
+        `nothing further moves together: the strongest remaining pattern measures ${lv.real[0] != null ? lv.real[0].toFixed(1) : '—'} against the ${lv.nullMax[0] != null ? lv.nullMax[0].toFixed(1) : '—'} produced by sliding the same ${unit} to random offsets`,
+        '', '', '',
+      ] });
+      break;
+    }
+
+    const whole = lv.groups.length === 1 && lv.groups[0].members.length > tested / 2;
+    for (const g of lv.groups) {
+      rows.push({
+        label: `L${lv.depth}`,
+        value: g.cases,
+        cells: [
+          scale,
+          whole
+            ? `all ${g.members.length} of them, moving as one`
+            : { links: g.members.slice(0, 8).map(m => ({
+                  label: grain === 'tract' ? `Tract ${m}` : `District ${m}`,
+                  q: grain === 'tract' ? null : `council district ${m}`,
+                })).concat(g.members.length > 8 ? [{ label: `+${g.members.length - 8} more` }] : []) },
+          `${(g.growth * 100).toFixed(1)}%/mo · ${g.firstYear.toLocaleString()} → ${g.lastYear.toLocaleString()}`,
+          g.coherence >= 0.25 ? `${g.coherence.toFixed(2)} — clearly`
+            : g.coherence >= 0.12 ? `${g.coherence.toFixed(2)} — loosely`
+            : `${g.coherence.toFixed(2)} — barely`,
+          g.cases.toLocaleString(),
+          { links: chatTopList(g.attorneys, 2).map(([k, v]) => ({ label: k, q: k, count: v })) },
+        ],
+      });
+    }
+  }
+
+  const deepest = levels.filter(l => l.kept).length;
+  const sub = levels.filter(l => l.kept && l.depth > 1).reduce((a, l) => a + l.groups.length, 0);
+  return {
+    kind: 'table',
+    title: deepest <= 1
+      ? `Filings move as one city — and nothing separate survives underneath it`
+      : `One citywide rhythm, and ${sub} group${sub === 1 ? '' : 's'} of ${unit} that depart from it together`,
+    // Agreement is shown, not buried. A group can pass the test and still have
+    // members who barely resemble each other, and the number that says so
+    // belongs next to the group rather than in a footnote.
+    head: ['Level', `Which ${unit}`, 'Direction', 'How alike', 'Filings', 'Who files'],
+    rows,
+  };
+}
+
+
+/* ─── Measures you can ask for that nobody built in advance ─────────────────
+   The moves above answer the questions this instrument anticipated. A lawyer's
+   real question is often a ratio nobody wrote a button for: filings per
+   thousand residents, filings per rental unit, the share of a district's cases
+   where anyone showed up for the tenant, evictions against renter cost burden.
+
+   So the quantities are named, and an EXPRESSION over those names is
+   evaluated per district by mathjs. The names and their definitions are listed
+   for the reader; the expression is shown with the answer and travels in the
+   export, so what was computed is on the record in the same words it was
+   computed in.
+
+   THE EXPRESSION IS FIREWALLED, and not by trusting mathjs. The parsed tree is
+   walked before anything runs: a name that is not a declared measure is
+   refused by name, a function that is not on the short arithmetic list is
+   refused, and assignment, indexing, property access and function definition
+   are refused outright. A model writing an expression therefore cannot reach
+   anything but these numbers and this arithmetic — and an expression naming a
+   quantity this record does not hold comes back as "there is no such measure",
+   which is the true answer, rather than as a plausible number. ───────────── */
+
+const MATHJS_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.2/math.min.js';
+const CHAT_FN_ALLOWED = new Set(['abs','min','max','sqrt','log','log10','log2','exp','round','floor','ceil','pow','sign','mean','median','sum']);
+let chatMathReady = null;
+
+async function ensureChatMath() {
+  chatMathReady ||= loadScript(MATHJS_CDN).then(() => window.math);
+  return chatMathReady;
+}
+
+/* Every named quantity, with the sentence that defines it. Filing counts come
+   from the live rows; the rest from Metro Social Services' district profile.
+   A district the profile does not cover carries null, and an expression using
+   one of those names simply has no answer for that district — never a zero
+   standing in for a number nobody measured. */
+function chatMeasures() {
+  const f = chatFacts || (chatFacts = buildChatEntityFacts());
+  const demo = agg.districtDemographics || {};
+  const out = new Map();
+  for (const e of f.districts) {
+    const x = demo[e.name] || {};
+    const n = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+    out.set(e.name, {
+      filings: e.cases,
+      pending: e.pending,
+      closed: e.closed,
+      tenant_counsel: e.withTenantCounsel,
+      judgments: e.withJudgment,
+      judgment_total: Math.round(e.judgmentTotal),
+      landlords: e.counterparties.size,
+      attorneys: e.opposing.size,
+      population: n(x.population),
+      median_age: n(x.median_age),
+      housing_units: n(x.housing?.total_housing_units),
+      pct_occupied: n(x.housing?.pct_occupied),
+      median_rent: n(x.housing?.median_monthly_rent),
+      median_home_value: n(x.housing?.median_owner_value),
+      renter_cost_burdened: n(x.housing?.pct_renter_cost_burdened_35plus),
+      owner_cost_burdened: n(x.housing?.pct_owner_cost_burdened_35plus),
+      median_income: n(x.income?.median_household_income),
+      per_capita_income: n(x.income?.per_capita_income),
+      poverty_rate: n(x.poverty?.pct_total_poverty),
+      child_poverty: n(x.poverty?.pct_child_poverty),
+      unemployment: n(x.employment?.unemployment_rate),
+      pct_black: n(x.race_ethnicity?.pct_black),
+      pct_white: n(x.race_ethnicity?.pct_white),
+      pct_hispanic: n(x.race_ethnicity?.pct_hispanic),
+      pct_bachelors: n(x.education?.pct_bachelors),
+      pct_less_than_hs: n(x.education?.pct_less_than_hs),
+    });
+  }
+  return out;
+}
+
+const CHAT_MEASURE_DEFS = {
+  filings: 'eviction filings in this district, all time in the snapshot',
+  pending: 'filings still open', closed: 'filings closed',
+  tenant_counsel: 'filings where an attorney appeared for the tenant',
+  judgments: 'filings with a money judgment amount recorded',
+  judgment_total: 'sum of those judgment amounts, in dollars',
+  landlords: 'distinct landlords who filed here', attorneys: 'distinct plaintiff attorneys who filed here',
+  population: 'residents', median_age: 'median age',
+  housing_units: 'total housing units', pct_occupied: 'percent of units occupied',
+  median_rent: 'median monthly rent, dollars', median_home_value: 'median owner-occupied home value, dollars',
+  renter_cost_burdened: 'percent of renters paying 35%+ of income on housing',
+  owner_cost_burdened: 'percent of owners paying 35%+ of income on housing',
+  median_income: 'median household income, dollars', per_capita_income: 'per capita income, dollars',
+  poverty_rate: 'percent in poverty', child_poverty: 'percent of children in poverty',
+  unemployment: 'unemployment rate, percent',
+  pct_black: 'percent Black', pct_white: 'percent white', pct_hispanic: 'percent Hispanic',
+  pct_bachelors: "percent with a bachelor's degree", pct_less_than_hs: 'percent without a high school diploma',
+};
+
+/* Walk the parsed expression and refuse anything that is not arithmetic over a
+   declared measure. Done on the tree, not on the text, so no amount of
+   quoting or spacing gets past it. */
+function chatVetExpression(math, expr, allowed) {
+  let node;
+  try { node = math.parse(expr); }
+  catch (e) { return { error: `that is not an expression I can read: ${e.message}` }; }
+  const unknown = new Set(), badFn = new Set();
+  let structural = null;
+  node.traverse((n, path, parent) => {
+    const t = n.type;
+    if (t === 'AssignmentNode' || t === 'FunctionAssignmentNode') structural ||= 'an expression cannot assign to anything';
+    else if (t === 'AccessorNode' || t === 'IndexNode' || t === 'ObjectNode') structural ||= 'an expression cannot reach into objects';
+    else if (t === 'FunctionNode') { if (!CHAT_FN_ALLOWED.has(n.fn?.name)) badFn.add(n.fn?.name || '?'); }
+    else if (t === 'SymbolNode') {
+      const isCallee = parent && parent.type === 'FunctionNode' && parent.fn === n;
+      if (!isCallee && !allowed.has(n.name)) unknown.add(n.name);
+    }
+  });
+  if (structural) return { error: structural };
+  if (badFn.size) return { error: `not arithmetic I will run: ${[...badFn].join(', ')}` };
+  if (unknown.size) return { error: `there is no such measure in this record: ${[...unknown].join(', ')}`, unknown: [...unknown] };
+  return { node };
+}
+
+async function chatMeasureArtifact(expr, label) {
+  const math = await ensureChatMath();
+  const rows = chatMeasures();
+  const allowed = new Set(Object.keys(CHAT_MEASURE_DEFS));
+  const vet = chatVetExpression(math, expr, allowed);
+  if (vet.error) return { error: vet.error, expr };
+  const code = vet.node.compile();
+  const out = [];
+  let missing = 0;
+  for (const [name, vars] of rows) {
+    // A district missing any measure the expression names has no answer, and
+    // says so — it is not given a zero.
+    let ok = true;
+    vet.node.traverse(n => { if (n.type === 'SymbolNode' && vars[n.name] === null) ok = false; });
+    if (!ok) { missing++; continue; }
+    let v;
+    try { v = code.evaluate({ ...vars }); } catch (_) { continue; }
+    if (typeof v !== 'number' || !Number.isFinite(v)) continue;
+    out.push({ name, v });
+  }
+  out.sort((a, b) => b.v - a.v);
+  const fmt = (v) => Math.abs(v) >= 1000 ? Math.round(v).toLocaleString()
+    : Math.abs(v) >= 1 ? v.toFixed(1) : v.toFixed(3);
+  return {
+    expr, missing,
+    artifact: {
+      kind: out.length > 24 ? 'table' : 'chart',
+      title: label || expr,
+      head: ['District', expr],
+      rows: out.map(r => ({
+        label: `District ${r.name}`, value: r.v,
+        cells: [`District ${r.name}`, fmt(r.v)],
+        q: `council district ${r.name}`,
+      })),
+    },
+  };
+}
+
+
+/* ─── Before and after, and the void where an answer cannot be ──────────────
+   "Do we suspect MDHA will be more effective at evictions now that they use
+   McCoy?" is three questions wearing one coat, and they have three different
+   fates.
+
+     Did the change happen, and when?   ANSWERABLE, exactly. MDHA's counsel is
+                                        on every one of its filings.
+     Did anything change after it?      ANSWERABLE IN PART, and only for what
+                                        this record measures.
+     Are they winning more?             NOT ANSWERABLE, and no amount of
+                                        arithmetic will make it so. This source
+                                        records PENDING and CLOSED. CLOSED
+                                        covers dismissal, nonsuit, agreed order
+                                        and judgment for possession alike. The
+                                        disposition is simply not here.
+
+   The third one is a VOID, and it is returned as one — named, with the reason,
+   and with what would be needed to fill it. A void is a finding. Answering it
+   with the nearest available number, silently, is how a proxy becomes a claim
+   nobody meant to make.
+
+   There is a second void this move has to watch for, subtler than a missing
+   column: CENSORING. Cases filed after a recent change have not finished yet.
+   Comparing "share closed" before and after a switch that happened four months
+   ago will always show the after period doing worse, because its cases have
+   had less time to close — an artefact of when you looked, not a fact about
+   anybody's lawyering. So the share still pending in each period is measured
+   and reported, and where the after period is largely unresolved the
+   comparison is withheld rather than drawn. ────────────────────────────────*/
+
+function chatCausalAsk(text) {
+  return /\b(now that|since they|after they|once they|effect|effective|effectiveness|impact|improve|better|worse|change[ds]?|suspect|will they|does it help|difference)\b/i.test(String(text));
+}
+
+/* When did B start appearing for A? The first month it happens, plus the share
+   of A's filings it took before and after — so a gradual drift and a clean
+   switch are told apart rather than both called a change. */
+function chatSwitchPoint(rowsOfA, matchesB) {
+  const months = new Map();
+  for (const r of rowsOfA) {
+    const m = caseFileDateToMonth(r.file_date); if (!m) continue;
+    let e = months.get(m); if (!e) months.set(m, e = { n: 0, b: 0 });
+    e.n++; if (matchesB(r)) e.b++;
+  }
+  const keys = sortMonthsAsc([...months.keys()]);
+  const first = keys.find(k => months.get(k).b > 0) || null;
+  if (!first) return null;
+  const at = keys.indexOf(first);
+  const sum = (ks, f) => ks.reduce((a, k) => a + f(months.get(k)), 0);
+  const before = keys.slice(0, at), after = keys.slice(at);
+  return {
+    month: first, months, keys,
+    beforeN: sum(before, e => e.n), beforeB: sum(before, e => e.b),
+    afterN: sum(after, e => e.n), afterB: sum(after, e => e.b),
+    monthsAfter: after.length,
+  };
+}
+
+const chatIsPending = (r) => String(r.status || '').toUpperCase() === 'PENDING';
+
+function chatPeriodStats(rows) {
+  let pending = 0, tenantCounsel = 0, judgments = 0, judgmentTotal = 0;
+  for (const r of rows) {
+    if (chatIsPending(r)) pending++;
+    if (String(r.Def_Attorney || '').trim()) tenantCounsel++;
+    const a = Number(r.judgment_amount);
+    if (Number.isFinite(a) && a > 0) { judgments++; judgmentTotal += a; }
+  }
+  return { n: rows.length, pending, tenantCounsel, judgments, judgmentTotal };
+}
+
+function chatInterventionArtifact(a, b) {
+  const matchesA = (r) => chatEntityMatches(r, a);
+  const matchesB = (r) => chatEntityMatches(r, b);
+  const rowsA = allRows.filter(matchesA);
+  const sw = chatSwitchPoint(rowsA, matchesB);
+  if (!sw) return null;
+
+  const cut = chatMonthIndex(sw.month);
+  const before = rowsA.filter(r => chatMonthIndex(caseFileDateToMonth(r.file_date)) < cut);
+  const after = rowsA.filter(r => chatMonthIndex(caseFileDateToMonth(r.file_date)) >= cut);
+  const B = chatPeriodStats(before), A = chatPeriodStats(after);
+
+  // How much of the after period has not finished. This is the gate on whether
+  // any outcome comparison is honest at all.
+  const censored = A.n ? A.pending / A.n : 1;
+  const beforeCensored = B.n ? B.pending / B.n : 0;
+  const comparable = A.n >= 20 && censored <= 0.5;
+
+  const pct = (x, n) => n ? `${(x / n * 100).toFixed(1)}%` : '—';
+  const rows = [
+    { label: 'when', value: 0, cells: ['When it changed',
+      `${b.name} first appears for ${a.name} in ${sw.month}, and took ${pct(sw.afterB, sw.afterN)} of the filings from then on — ${sw.beforeB} of ${sw.beforeN.toLocaleString()} before it`] },
+    { label: 'vol', value: 0, cells: ['Filings before / since',
+      `${B.n.toLocaleString()} over ${sw.keys.length - sw.monthsAfter} months, then ${A.n.toLocaleString()} over ${sw.monthsAfter}`] },
+    { label: 'open', value: 0, cells: ['Still open',
+      `${pct(B.pending, B.n)} of the earlier filings, ${pct(A.pending, A.n)} of the later ones`] },
+  ];
+
+  if (comparable) {
+    rows.push({ label: 'tc', value: 0, cells: ['Tenant had a lawyer',
+      `${pct(B.tenantCounsel, B.n)} before, ${pct(A.tenantCounsel, A.n)} since`] });
+    rows.push({ label: 'jm', value: 0, cells: ['Money judgment recorded',
+      `${pct(B.judgments, B.n)} before, ${pct(A.judgments, A.n)} since`] });
+  } else {
+    rows.push({ label: 'cens', value: 0, cells: ['Outcomes since the change',
+      `not comparable yet — ${pct(A.pending, A.n)} of the ${A.n.toLocaleString()} filings since ${sw.month} are still open, against ${pct(B.pending, B.n)} of the earlier ones. `
+      + `A case filed ${sw.monthsAfter} month${sw.monthsAfter === 1 ? '' : 's'} ago has had less time to finish than one filed years ago, so any gap here would be a fact about when we looked, not about the lawyering.`] });
+  }
+
+  rows.push({ label: 'void', value: 0, cells: ['Whether they are winning more',
+    `not in this record. It carries PENDING and CLOSED and nothing else: dismissal, nonsuit, agreed order and judgment for possession are all filed under CLOSED. `
+    + `Answering that would need the disposition of each case, which would have to come from the court's own docket entries, not from here.`] });
+
+  return {
+    artifact: {
+      kind: 'table',
+      title: `${a.name} and ${b.name} — what changed, and what cannot be told`,
+      head: ['', ''],
+      rows,
+    },
+    switchMonth: sw.month,
+    dockets: after.map(r => r.docket),
+    comparable, censored, beforeCensored,
+    predicate: {
+      op: 'CON', intent: 'before and after a change of counsel',
+      subject: { name: a.name, kind: a.kind }, change: { name: b.name, kind: b.kind },
+      changepoint: `first month ${b.name} appears on a ${a.name} filing: ${sw.month}`,
+      before: B, after: A,
+      outcomesCompared: comparable,
+      withheld: comparable ? null : `outcome comparison withheld: ${(censored * 100).toFixed(0)}% of the later filings are still open`,
+      voids: [
+        'case disposition — who won — is not recorded in this source at any point',
+        ...(comparable ? [] : ['outcomes of the later period are not yet observable; the cases have not finished']),
+      ],
+    },
+  };
+}
+
+function chatMonthIndex(mk) {
+  const m = String(mk || '').match(/^(\d{2})\/(\d{4})$/);
+  return m ? +m[2] * 12 + +m[1] : -1;
+}
+
+
+/* ─── Rosters: a whole kind of party, ranked, optionally filtered ───────────
+   Two questions both personas ask on their first visit, and neither was
+   answerable until now: "who are the tenant attorneys and how many cases do
+   they carry" and "which landlords file the most against unrepresented
+   tenants". Both name no party — they name a KIND, and ask for its members.
+
+   The filter matters as much as the ranking. A right-to-counsel programme is
+   not looking for the biggest landlords; it is looking for the biggest
+   landlords IN THE CASES WHERE NOBODY SHOWED UP, which is a different list and
+   the one that says where representation is missing. */
+
+const CHAT_KINDS = [
+  { kind: 'defender', words: ['tenant attorney', 'tenant attorneys', 'tenant lawyer', 'tenant lawyers', 'defense attorney', 'defense attorneys', 'defence attorney', 'defender', 'defenders', 'represent tenants', 'representing tenants'], label: "Tenant's attorney", plural: 'tenant attorneys' },
+  { kind: 'landlord', words: ['landlord', 'landlords', 'plaintiff', 'plaintiffs', 'filer', 'filers', 'evictor', 'evictors', 'property owner', 'property owners'], label: 'Landlord', plural: 'landlords' },
+  { kind: 'attorney', words: ['attorney', 'attorneys', 'lawyer', 'lawyers', 'counsel', 'law firm', 'firms'], label: "Plaintiff's attorney", plural: 'plaintiff attorneys' },
+  { kind: 'district', words: ['district', 'districts', 'council district', 'council districts'], label: 'District', plural: 'districts' },
+];
+
+/* Which kind is being asked for. Longest phrase wins, so "tenant attorneys"
+   is read as the tenant side rather than as the word "attorneys". */
+function chatDetectKind(text) {
+  const t = ' ' + String(text).toLowerCase().replace(/[^a-z\s]/g, ' ').replace(/\s+/g, ' ') + ' ';
+  let best = null, bestLen = 0;
+  for (const k of CHAT_KINDS) {
+    for (const w of k.words) {
+      if (t.includes(' ' + w + ' ') && w.length > bestLen) { best = k; bestLen = w.length; }
+    }
+  }
+  return best;
+}
+
+/* Filters this record can actually apply to a roster. Each is a real column,
+   not an inference. */
+const CHAT_ROSTER_FILTERS = [
+  { id: 'unrepresented', words: /\b(unrepresented|no lawyer|without a lawyer|without counsel|no counsel|pro se)\b/i,
+    say: 'where no attorney appeared for the tenant', row: (r) => !String(r.Def_Attorney || '').trim() },
+  { id: 'represented', words: /\b(represented|had a lawyer|with counsel|had counsel)\b/i,
+    say: 'where an attorney appeared for the tenant', row: (r) => !!String(r.Def_Attorney || '').trim() },
+  { id: 'judgment', words: /\b(money judgment|judgment entered|with a judgment|judgments?)\b/i,
+    say: 'with a money judgment amount recorded', row: (r) => { const a = Number(r.judgment_amount); return Number.isFinite(a) && a > 0; } },
+  { id: 'pending', words: /\b(pending|still open|open cases)\b/i,
+    say: 'still open', row: (r) => String(r.status || '').toUpperCase() === 'PENDING' },
+];
+
+function chatRosterArtifact(kindDef, filter, limit = 25) {
+  const field = { attorney: 'Attorney', landlord: 'Plaintiff_1', defender: 'Def_Attorney' }[kindDef.kind];
+  const counts = new Map();
+  const tenantCounsel = new Map();
+  let scanned = 0;
+  for (const r of allRows) {
+    if (filter && !filter.row(r)) continue;
+    scanned++;
+    const key = kindDef.kind === 'district' ? chatDistrictNum(r.council_district) : String(r[field] || '').trim();
+    if (!key) continue;
+    chatBump(counts, key);
+    if (String(r.Def_Attorney || '').trim()) tenantCounsel.set(key, (tenantCounsel.get(key) || 0) + 1);
+  }
+  const ranked = chatTopList(counts, limit);
+  if (!ranked.length) return null;
+  const showRep = kindDef.kind !== 'defender' && !filter;
+  return {
+    artifact: {
+      kind: 'table',
+      title: `${kindDef.plural[0].toUpperCase()}${kindDef.plural.slice(1)} by filings${filter ? `, ${filter.say}` : ''}`,
+      head: [kindDef.label, 'Filings', ...(showRep ? ['Tenant had a lawyer'] : [])],
+      rows: ranked.map(([k, v]) => ({
+        label: k, value: v,
+        cells: [
+          kindDef.kind === 'district' ? `District ${k}` : k,
+          v.toLocaleString(),
+          ...(showRep ? [`${(((tenantCounsel.get(k) || 0) / v) * 100).toFixed(1)}%`] : []),
+        ],
+        q: kindDef.kind === 'district' ? `council district ${k}` : k,
+      })),
+    },
+    total: counts.size, scanned, filter: filter ? filter.id : null,
+    predicate: {
+      op: 'SIG', intent: 'roster', kind: kindDef.kind,
+      field: field || 'council_district',
+      filter: filter ? { id: filter.id, means: filter.say } : null,
+      rowsMatchingFilter: scanned,
+      distinctParties: counts.size,
+      shown: ranked.length,
+      rule: 'counted over every row of the live snapshot, exact match on the field',
     },
   };
 }
@@ -8974,6 +9964,21 @@ const CHAT_MOVES = [
 
 /* Asked in the register the answer comes back in: a plain question, a plain
    sentence back. No braces, no tags, no example of a format to imitate. */
+/* The model's other job: turn a ratio question into an expression over the
+   named measures. It is given the names and nothing else, and whatever it
+   writes is vetted against those names before it runs — so the worst it can
+   do is name a measure that does not exist, which comes back as a refusal
+   naming the measure, not as a number. */
+function chatMeasurePrompt() {
+  return [
+    'You turn a question about eviction court records into one arithmetic expression. You never answer the question yourself.',
+    'Reply with the expression alone, nothing else, using only these names:',
+    ...Object.entries(CHAT_MEASURE_DEFS).map(([k, v]) => `${k} — ${v}`),
+    'Each name is that quantity for one council district. Use only + - * / ( ) and numbers.',
+    'Example: for filings per thousand residents, reply exactly: filings / population * 1000',
+  ].join('\n');
+}
+
 const CHAT_ROUTER_PROMPT = [
   'You turn a question about eviction court records into one short instruction. You never answer the question yourself.',
   'Reply with exactly one short sentence, in plain words, naming two things: which party or district the question is about, and which one of these to do — describe, rank, break down, trend, compare, or weigh.',
@@ -9033,9 +10038,21 @@ async function askChat(q) {
     return;
   }
 
+  /* INTENT BEFORE IDENTITY. A question about where the city is going is not a
+     question about a party, and letting the name index look at it first is how
+     "forecast the next six months by district" came back as a dossier on a
+     landlord called SIX SOUTH — the word "six" is rare enough in this corpus
+     to name somebody, and the name index has no way to know it was a duration.
+     Analytical questions about places are settled here, before any name is
+     resolved, so a stray word inside one cannot be read as a party. */
+  const askedRaw = ' ' + q.toLowerCase() + ' ';
+  const analytic = /\b(forecast|predict|prediction|project|projection|expect|ahead|group|groups|cluster|clusters|together|emergent|emerge|holon|holons|drill|underneath|beneath|per capita|per 1,?000|ratio|normali[sz])\b/.test(askedRaw)
+    || chatDirectionalGrain(q) != null
+    || (!!chatDetectKind(q) && /\b(who|which|what|list|top|most|biggest|largest|rank|all)\b/i.test(q));
+
   /* Resolve the question mechanically first: which party, which move. Most
      questions carry both in their own words and never need the model. */
-  let named = resolveChatEntities(q);
+  let named = analytic ? [] : resolveChatEntities(q);
   let move = detectChatMove(q);
   let routed = null;
 
@@ -9043,7 +10060,7 @@ async function askChat(q) {
      question itself — and only to REPHRASE it, never to answer it. Its
      sentence is then run back through the same two resolvers. Nothing it
      writes is shown. */
-  if (chatEngine && (!named.length || !move)) {
+  if (chatEngine && !analytic && (!named.length || !move)) {
     chatBusy = true;
     document.getElementById('chat-send').disabled = true;
     chatSetStatus('reading the question…', 'busy');
@@ -9062,7 +10079,18 @@ async function askChat(q) {
       // if the name index already knew that party; a move counts only if the
       // words are in the move vocabulary. An invented name resolves to nothing
       // and the turn proceeds exactly as if the model had said nothing.
-      if (!named.length) named = resolveChatEntities(routed);
+      /* The model may REPHRASE the question; it may not add a party to it.
+         Measured live: asked "how often does a tenant have a lawyer?" — a
+         question naming nobody, which the resolver correctly answers with
+         nobody — the model's sentence introduced a landlord called DALE HIRE,
+         and the turn went on to report that one company's representation rate
+         as though it were the city's. So an entity found in the model's words
+         is kept only if the words that found it are words the QUESTION used.
+         The model can help read what was asked; it cannot add to it. */
+      if (!named.length && !analytic) {
+        const askedTokens = new Set(chatTokens(q));
+        named = resolveChatEntities(routed).filter(n => n.on.every(t => askedTokens.has(t)));
+      }
       if (!move) move = detectChatMove(routed);
     } catch (e) {
       console.warn('[eo/chat] routing failed:', e);
@@ -9076,7 +10104,13 @@ async function askChat(q) {
   const best = named.find(n => n.best);
   const entity = best ? best.entity : null;
   const op = (move && move.op) || 'DEF';
-  const how = routed ? ` · read from your question as “${escapeHtmlSafe(routed.replace(/\s+/g, ' ').slice(0, 90))}”` : '';
+  /* The model's own sentence is NOT shown. It is working text — measured live
+     it produced "MDHA, the district manager of the Housing Authority, is not
+     mentioned in this question", which is both wrong and irrelevant, since
+     what actually resolved the party was the name index. Putting it on screen
+     is the pontificating this tab exists to avoid. It still ships in the
+     export, where it is audit material rather than an answer. */
+  const how = '';
 
   /* DEF, and anything with a named party, opens with that party's dossier —
      every figure counted from the live rows. */
@@ -9106,8 +10140,50 @@ async function askChat(q) {
   /* TWO PARTIES NAMED IS A JOIN. Not two entities that merely tie on the same
      word — those are one name worn by different people — but two matched on
      DIFFERENT evidence, which is a question about where their dockets meet. */
-  const partner = named.find(n => !n.best && !n.tied && n.entity !== entity
+  /* WHICH SECOND PARTY, DECIDED BY THE DOCKET RATHER THAN BY THE WORDS.
+
+     Scoring cannot settle this one, and it is worth saying why. "…now that
+     they use mccoy" offers two candidates: MCCOY, JENNIFER JO on the word
+     "mccoy", and GREEN HILLS MIXED USE LLC on the word "use". Rarity picks
+     GREEN HILLS, because "use" sits in three passages of this corpus while
+     "mccoy" sits in fourteen hundred — she appears everywhere precisely
+     BECAUSE she is on a third of the docket, and any rarity measure therefore
+     punishes the most important name in the record for being important.
+     Counting rarity among names instead just swaps which words break it.
+
+     So the words stop being asked. Two parties named in one question are
+     being asked about TOGETHER, and whether they belong together is a fact
+     the rows already hold: MDHA and McCoy share 107 filings, MDHA and GREEN
+     HILLS share none. The pairing that exists is the pairing meant. If no
+     candidate co-occurs at all, the strongest-scoring one is used and the
+     answer says plainly that the two never meet. */
+  const candidates = named.filter(n => !n.best && !n.tied && n.entity !== entity
     && !n.on.every(t => best && best.on.includes(t)));
+  let partner = null;
+  if (entity && candidates.length) {
+    let bestOverlap = -1;
+    for (const c of candidates) {
+      const overlap = allRows.reduce((a, r) =>
+        a + (chatEntityMatches(r, entity) && chatEntityMatches(r, c.entity) ? 1 : 0), 0);
+      if (overlap > bestOverlap || (overlap === bestOverlap && partner && c.score > partner.score)) {
+        bestOverlap = overlap; partner = c;
+      }
+    }
+  }
+  if (entity && partner && chatCausalAsk(q)) {
+    const iv = chatInterventionArtifact(entity, partner.entity)
+      || chatInterventionArtifact(partner.entity, entity);
+    if (iv) {
+      const refs = [entity.ref, partner.entity.ref].filter(Boolean);
+      const d = chatDerive({ question: q, op: 'CON', subject: best, routed, refs,
+        join: iv.predicate, dockets: iv.dockets, artifact: iv.artifact });
+      addChatMessage('assistant', artifactHtml(iv.artifact), chatProvStrip(
+        `counted from ${allRows.length.toLocaleString()} live rows, split at ${iv.switchMonth}`,
+        refs) + chatExportStrip(d));
+      return;
+    }
+  }
+
   if (entity && partner) {
     const j = chatJoinArtifact(entity, partner.entity);
     const refs = [entity.ref, partner.entity.ref].filter(Boolean);
@@ -9121,12 +10197,151 @@ async function askChat(q) {
     return;
   }
 
-  /* A directional question about PLACES runs the dynamics, not a count. */
+  /* Three directional questions about PLACES, each a different act:
+       "which are climbing"   -> the trend table
+       "what will happen"     -> the backtested forecast
+       "what moves together"  -> the drill through emergent groups            */
   const grain = chatDirectionalGrain(q) || (routed ? chatDirectionalGrain(routed) : null);
+  const asks = ' ' + (q + ' ' + (routed || '')).toLowerCase() + ' ';
+  const wantsForecast = /\b(forecast|predict|prediction|will|expect|next month|next year|project|projection|ahead)\b/.test(asks);
+  const wantsGroups = /\b(group|groups|cluster|clusters|together|emergent|emerge|pattern|patterns|holon|holons|drill|underneath|beneath)\b/.test(asks);
+
+  /* A question naming a KIND rather than a party — "who are the tenant
+     attorneys", "which landlords file most against unrepresented tenants" —
+     is a roster, and it is answered before any name is looked for. */
+  const kindDef = chatDetectKind(q);
+  const wantsRoster = !!kindDef && /\b(who|which|what|list|top|most|biggest|largest|rank|all)\b/i.test(q)
+    && !/\bper\b|\bratio\b|\bforecast\b|\bpredict\b/i.test(q);
+  if (wantsRoster) {
+    const filter = CHAT_ROSTER_FILTERS.find(f => f.words.test(q)) || null;
+    const ros = chatRosterArtifact(kindDef, filter);
+    if (ros) {
+      const sp = chatApi.retrieve(chatChunks, kindDef.plural, 1)[0];
+      const refs = sp ? [sp.ref] : [];
+      const d = chatDerive({ question: q, op: 'SIG', subject: null, refs,
+        join: ros.predicate, dockets: null, artifact: ros.artifact });
+      addChatMessage('assistant', artifactHtml(ros.artifact), chatProvStrip(
+        `${ros.total.toLocaleString()} ${kindDef.plural} in the record`
+        + (filter ? `, counted over the ${ros.scanned.toLocaleString()} filings ${filter.say}` : `, counted over all ${allRows.length.toLocaleString()} filings`)
+        + ` — showing the top ${ros.artifact.rows.length}`, refs) + chatExportStrip(d));
+      return;
+    }
+  }
+
+  /* A ratio question — anything asking for one quantity against another —
+     goes to the measure layer, where mathjs computes it per district. */
+  const wantsMeasure = !entity && (/\bper\b|\bratio\b|\bper capita\b|\bnormali[sz]|\brelative to\b|\bcompared to\b|\bagainst\b|\bdivided by\b|\bfor every\b|\bper 1,?000\b/.test(askedRaw)
+    || /[+\-*/]/.test(q) && Object.keys(CHAT_MEASURE_DEFS).some(k => q.includes(k)));
+  if (wantsMeasure) {
+    chatBusy = true;
+    document.getElementById('chat-send').disabled = true;
+    chatSetStatus('working out what to compute…', 'busy');
+    try {
+      // If the question already IS an expression, it is used as written and no
+      // model runs at all.
+      const direct = Object.keys(CHAT_MEASURE_DEFS).some(k => q.includes(k)) && /[+\-*/]/.test(q);
+      let expr = direct ? q.trim() : null;
+      let said = null;
+      if (!expr && chatEngine) {
+        const r = await chatEngine.chat.completions.create({
+          messages: [{ role: 'system', content: chatMeasurePrompt() }, { role: 'user', content: q }],
+          temperature: 0, max_tokens: 40,
+        });
+        if (myTurn !== chatTurn) return;
+        said = (r.choices[0].message.content || '').trim().split('\n')[0].replace(/^[`'"]+|[`'"]+$/g, '');
+        expr = said;
+      }
+      if (!expr) { addChatMessage('assistant', escapeHtmlSafe('Tell me the two quantities to compare, or write it as arithmetic — for example: filings / population * 1000')); return; }
+      const m = await chatMeasureArtifact(expr, null);
+      if (myTurn !== chatTurn) return;
+      if (m.error) {
+        addChatMessage('assistant',
+          `<p>${escapeHtmlSafe(m.error)}.</p><p>What this record can measure per district: `
+          + Object.keys(CHAT_MEASURE_DEFS).map(k => chatLink(k, `${k} / filings`)).join(' ') + `</p>`);
+        return;
+      }
+      const d = chatDerive({ question: q, op: 'EVA', subject: null, routed: said, refs: [],
+        join: { op: 'EVA', intent: 'computed measure', expression: m.expr,
+          engine: 'mathjs 12.4.2, expression vetted on its parsed tree before evaluation',
+          measures: Object.fromEntries(Object.entries(CHAT_MEASURE_DEFS)),
+          perDistrict: true,
+          districtsWithoutTheData: m.missing },
+        dockets: null, artifact: m.artifact });
+      addChatMessage('assistant', artifactHtml(m.artifact), chatProvStrip(
+        `computed as <code>${escapeHtmlSafe(m.expr)}</code> for each district from ${allRows.length.toLocaleString()} live rows`
+        + (m.missing ? ` · ${m.missing} districts left out, the profile has no figure for them` : ''), []) + chatExportStrip(d));
+      return;
+    } catch (e) {
+      console.warn('[eo/chat] measure failed:', e);
+      addChatMessage('error', escapeHtmlSafe(e.message || String(e)));
+      return;
+    } finally {
+      chatBusy = false;
+      document.getElementById('chat-send').disabled = false;
+      chatSetStatus(`ready — ${chatEngineModel || 'mechanical'}`, 'on');
+    }
+  }
+
+  if ((wantsForecast || wantsGroups) && !entity) {
+    const g2 = grain || (/\btracts?\b|\bcensus\b|\bneighbou?rhood/.test(asks) ? 'tract' : 'district');
+    chatBusy = true;
+    document.getElementById('chat-send').disabled = true;
+    try {
+      if (wantsForecast) {
+        chatSetStatus('testing whether a forecast beats simply guessing…', 'busy');
+        const f = await chatForecastArtifact(g2);
+        if (myTurn !== chatTurn) return;
+        if (!f) { addChatMessage('assistant', escapeHtmlSafe('Not enough months of history to test a forecast.')); return; }
+        const d1 = chatDerive({ question: q, op: 'REC', subject: null, routed, refs: [], join: f.method, dockets: null, artifact: f.scoreboard });
+        addChatMessage('assistant', artifactHtml(f.scoreboard)
+          + `<p class="method-note">${escapeHtmlSafe(f.scoreboard.note)}</p>`, chatProvStrip(
+          `${f.areas} ${g2 === 'tract' ? 'tracts' : 'districts'} · ${f.method.shapeChosenBy}`, []) + chatExportStrip(d1));
+        if (f.forecast) {
+          const d2 = chatDerive({ question: q, op: 'REC', subject: null, routed, refs: [], join: f.method, dockets: null, artifact: f.forecast });
+          addChatMessage('assistant', artifactHtml(f.forecast), chatProvStrip(
+            `counted forward from filings through ${f.lastMonth} — shown only for the ranges where the forecast was more accurate than guessing`, []) + chatExportStrip(d2));
+        }
+        addChatMessage('assistant', `<p class="method-note">${f.anyWin
+          ? `A forecast is only worth showing if it beats the guesses anyone can make without one: that next month looks like last month, and that it looks like the same month a year ago. This model was fitted across all ${f.areas} ${g2 === 'tract' ? 'tracts' : 'districts'} at once — so a wave moving through the city is something it can use — then tested on cutoffs it never saw, with the shape of the model chosen on <em>earlier</em> cutoffs so that choice could not flatter the score. Filing counts also respond to rent, policy, court capacity and weather, none of which are in this record.`
+          : `Nothing is projected because nothing earned it: across every range tested, simply assuming next month resembles last month was closer than the model. That is the honest result, and it is more useful than a number that looks confident.`}</p>`);
+        return;
+      }
+      chatSetStatus('looking for groups that move together…', 'busy');
+      const h = await chatHolonArtifact(g2);
+      if (myTurn !== chatTurn) return;
+      if (!h) { addChatMessage('assistant', escapeHtmlSafe('Not enough history to look for groups.')); return; }
+      const tests = h.levels.reduce((a, l) => a + 1 + l.groups.length, 0);
+      const d = chatDerive({ question: q, op: 'SEG', subject: null, routed, refs: [],
+        join: { op: 'SEG', intent: 'emergent grouping', grain: g2,
+          engine: `eoreader7 native/kernel/dmd.js::economySVD + rng.js, commit ${EO7_COMMIT}`,
+          method: 'each area standardised, the matrix decomposed, areas grouped by which shared pattern they load on most',
+          nullModel: `each area's own series slid to a random offset — its trend and season kept, its alignment with other areas destroyed — ${CHAT_HOLON_DRAWS} draws`,
+          kept: 'a pattern counts only if it exceeds every draw at its position; a group counts only if its members agree more than in every draw',
+          drill: 'each level\'s motion is subtracted and the test re-run on the remainder, until nothing survives',
+          testsRun: tests,
+          multiplicity: `${tests} tests at roughly 1-in-${CHAT_HOLON_DRAWS + 1} each; groups whose members barely agree are marked as such and should be read as weak`,
+          levels: h.levels.map(l => ({ depth: l.depth, patternsKept: l.kept, groups: l.groups.length,
+            strongest: l.real[0], nullAtThatPosition: l.nullMax[0] })),
+        }, dockets: null, artifact: h.artifact });
+      addChatMessage('assistant', artifactHtml(h.artifact), chatProvStrip(
+        `${h.names.length} ${g2 === 'tract' ? 'tracts' : 'districts'} over ${h.axis.length} months · ${tests} tests, each against ${CHAT_HOLON_DRAWS} time-shifted comparisons`, []) + chatExportStrip(d));
+      addChatMessage('assistant', `<p class="method-note">Each level asks one question. The first: does the whole city move together? Then that shared movement is <em>subtracted</em>, and the same question is asked of what is left — which is how a group that was hidden underneath the citywide rhythm becomes visible. It stops when nothing in the remainder beats the comparison. The comparison slides each area's own history to a random offset, keeping its trend and its seasons and destroying only its alignment with everyone else, which is exactly what a group claims. ${tests} such tests were run here, so a group marked “barely” alike is one to treat with suspicion.</p>`);
+      return;
+    } catch (e) {
+      console.warn('[eo/chat] dynamics failed:', e);
+      addChatMessage('error', escapeHtmlSafe(e.message || String(e)));
+      return;
+    } finally {
+      chatBusy = false;
+      document.getElementById('chat-send').disabled = false;
+      chatSetStatus(`ready — ${chatEngineModel || 'mechanical'}`, 'on');
+    }
+  }
+
   if (grain && !entity) {
     chatBusy = true;
     document.getElementById('chat-send').disabled = true;
-    chatSetStatus(`fitting dynamics and its null across every ${grain}…`, 'busy');
+    chatSetStatus(`measuring which ${grain === 'tract' ? 'tracts' : 'districts'} are climbing…`, 'busy');
     try {
       const t = await chatTrendArtifact(grain);
       if (myTurn !== chatTurn) return;
@@ -9139,11 +10354,12 @@ async function askChat(q) {
         artifact: t.artifact,
       });
       addChatMessage('assistant', artifactHtml(t.artifact), chatProvStrip(
-        `${t.considered} ${grain === 'tract' ? 'tracts' : 'districts'} fitted over ${t.axis.length} months with eoreader7's DMD, each tested against ${CHAT_DRAWS} shuffles of its own series — `
-        + `${t.found.length} beat every draw${t.tooShort ? `; ${t.tooShort} too short to embed` : ''}`,
+        `${t.considered} ${grain === 'tract' ? 'tracts' : 'districts'} measured across ${t.axis.length} months, each checked against ${CHAT_DRAWS} reshuffles of its own months — `
+        + `${t.found.length} climbed by more than any reshuffle did`
+        + `${t.tooShort ? `; ${t.tooShort} had too few months to measure` : ''}`,
         refs) + chatExportStrip(d));
       addChatMessage('assistant',
-        `<p class="method-note">Trend is log|λ| of the mode that does not oscillate — the seasonal modes are set aside on purpose. It is the direction this area's own past filings are carrying, measured against what the same numbers produce in a shuffled order. It is not a forecast, and nothing outside the filing record is in it.</p>`);
+        `<p class="method-note">How this was worked out: each ${grain === 'tract' ? 'tract' : 'district'}'s monthly filings were measured for steady direction, with the seasonal ups and downs set aside — a busy summer is not a rising trend. Then the same months were shuffled into a random order and measured again, forty times. Anything still looking like a climb in the shuffled version is the arithmetic inventing one, so only ${grain === 'tract' ? 'tracts' : 'districts'} that climbed by more than every shuffle are listed here. This reads the past; it is not a forecast, and nothing outside the filing record is in it. The full method ships with the export.</p>`);
       return;
     } catch (e) {
       console.warn('[eo/chat] dynamics failed:', e);
