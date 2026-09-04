@@ -268,6 +268,41 @@ h1 {
   margin-left: 6px; cursor: pointer; font-weight: bold;
 }
 
+.date-range-filter {
+  display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap;
+}
+.date-range-filter label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim);
+}
+.date-range-filter span { color: var(--dim); }
+.date-range-filter input[type="date"] {
+  padding: 4px 8px; font-size: 11px; font-family: var(--mono); color: var(--text);
+  background: var(--surface); border: 1px solid var(--border); border-radius: 3px;
+  color-scheme: dark;
+}
+.date-range-filter input[type="date"]:focus { border-color: var(--gold-dim); outline: none; }
+#date-range-clear {
+  background: transparent; border: 1px solid var(--border); border-radius: 3px;
+  color: var(--gold); cursor: pointer; font-size: 13px; line-height: 1; padding: 3px 7px;
+}
+#date-range-clear:hover { border-color: var(--gold); }
+.date-range-hist-wrap {
+  position: relative; flex: 1 1 200px; min-width: 140px; height: 22px; padding: 0 6px;
+}
+.date-range-hist {
+  display: flex; align-items: flex-end; gap: 1px; height: 20px; width: 100%;
+}
+.date-range-hist .bar {
+  flex: 1 1 auto; background: var(--gold-dim); min-width: 1px;
+}
+.date-range-hist .bar.in-range { background: var(--gold); }
+.drh-handle {
+  position: absolute; top: -2px; width: 8px; height: 24px; margin-left: -4px;
+  background: var(--gold); border: 1px solid var(--bg); border-radius: 2px;
+  cursor: ew-resize; box-shadow: 0 0 0 1px rgba(0,0,0,0.4);
+}
+.drh-handle:hover, .drh-handle.dragging { background: #fff3d6; }
+
 .table-header {
   display: flex; justify-content: space-between; align-items: center;
   padding: 10px 24px;
@@ -1402,6 +1437,12 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   cursor: pointer; font-variant-numeric: tabular-nums;
 }
 .span-chip:hover { color: var(--gold); border-color: var(--gold-dim); }
+/* Retrieved and offered to the model, but no sentence of the answer measurably
+   came from it. Shown rather than hidden: what was read and not used is part of
+   the record of the turn. */
+.span-chip.unused { opacity: 0.45; border-style: dashed; }
+/* An inline chip sits inside a sentence, so it must not fight the prose. */
+.chat-msg .bubble .span-chip { margin-left: 3px; padding: 1px 4px; }
 .prov-note { font-size: 9px; color: var(--dim); font-style: italic; }
 
 .artifact-title {
@@ -1598,6 +1639,19 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   <div class="toolbar" id="local-toolbar">
     <input id="search" placeholder="Search docket, plaintiff, attorney, address...">
     <div class="filter-row" id="filters"></div>
+    <div id="landlord-filter-chip" style="display:none;margin-top:8px"></div>
+    <div class="date-range-filter" id="date-range-filter">
+      <label>Filed</label>
+      <input type="date" id="date-range-start" title="From (file date)">
+      <span>–</span>
+      <input type="date" id="date-range-end" title="To (file date)">
+      <button type="button" id="date-range-clear" title="Clear date filter" style="display:none">×</button>
+      <div class="date-range-hist-wrap" id="date-range-hist-wrap">
+        <div class="date-range-hist" id="date-range-hist" title="Filings by month, all-time — the highlighted span is the current filter"></div>
+        <div class="drh-handle" id="drh-handle-start" title="Drag to set the start date"></div>
+        <div class="drh-handle" id="drh-handle-end" title="Drag to set the end date"></div>
+      </div>
+    </div>
   </div>
 
   <!-- Universal: visible on every view, right under the (also universal)
@@ -2219,6 +2273,10 @@ let sortCol = "file_date";
 let sortDir = -1;
 let filters = {};
 let activeDropdown = null;
+let globalDateStartTs = null;  // universal date-range filter -- null on either end means unbounded
+let globalDateEndTs = null;
+let landlordFilterKey = null;   // merged-owner filter -- not a plain field match, see setLandlordFilter()
+let landlordFilterLabel = null;
 
 let viewMode = 'cases';       // 'cases' | 'districts' | 'timeline' | 'coverage' | 'map' | 'sources'
 let coverageDir  = 'desc';    // 'desc' = newest on left, 'asc' = oldest on left
@@ -2325,6 +2383,27 @@ function restoreStateFromUrl() {
     document.querySelectorAll('#view-seg button').forEach(b => b.classList.toggle('on', b.dataset.val === view));
   }
 
+  // Universal filter state.
+  for (const [k, v] of params.entries()) {
+    if (k.startsWith('f_')) filters[k.slice(2)] = v;
+  }
+  if (params.has('landlord')) {
+    landlordFilterKey = params.get('landlord');
+    landlordFilterLabel = params.get('landlordLabel') || landlordFilterKey;
+  }
+  if (params.has('dateStart')) globalDateStartTs = fromISODate(params.get('dateStart'));
+  if (params.has('dateEnd')) globalDateEndTs = fromISODate(params.get('dateEnd'));
+  if (params.has('dateStart') || params.has('dateEnd')) {
+    const startEl = document.getElementById('date-range-start');
+    const endEl = document.getElementById('date-range-end');
+    const clearBtn = document.getElementById('date-range-clear');
+    if (startEl && globalDateStartTs != null) startEl.value = toISODate(globalDateStartTs);
+    if (endEl && globalDateEndTs != null) endEl.value = toISODate(globalDateEndTs);
+    if (clearBtn) clearBtn.style.display = '';
+    renderDateRangeHistogram();
+  }
+  if (Object.keys(filters).length || landlordFilterKey) updateFilterBtns();
+
   if (params.has('tracts')) document.getElementById('layer-tracts').checked = params.get('tracts') !== '0';
   if (params.has('evictions')) document.getElementById('layer-evictions').checked = params.get('evictions') !== '0';
 
@@ -2368,6 +2447,15 @@ function restoreStateFromUrl() {
 function syncMapUrl() {
   const params = new URLSearchParams();
   if (viewMode !== 'cases') params.set('view', viewMode);
+  // Universal filter state -- applies regardless of which view is active,
+  // since the filter bar itself is now universal too.
+  Object.entries(filters).forEach(([field, val]) => params.set('f_' + field, val));
+  if (landlordFilterKey) {
+    params.set('landlord', landlordFilterKey);
+    if (landlordFilterLabel) params.set('landlordLabel', landlordFilterLabel);
+  }
+  if (globalDateStartTs != null) params.set('dateStart', toISODate(globalDateStartTs));
+  if (globalDateEndTs != null) params.set('dateEnd', toISODate(globalDateEndTs));
   if (viewMode === 'map') {
     const tractsOn = document.getElementById('layer-tracts').checked;
     const evictionsOn = document.getElementById('layer-evictions').checked;
@@ -2582,11 +2670,11 @@ function buildStats() {
   const topA = Object.entries(attorneys).sort((a, b) => b[1] - a[1]);
 
   document.getElementById("top-districts").innerHTML = topD.map(([d, c]) =>
-    `<div class="stat-item"><span class="stat-link" onclick="showDistrictProfile('${d.replace(/'/g, "\\'")}')">${shorten(d, "Council District ")}</span><span class="stat-count">${c}</span></div>`
+    `<div class="stat-item"><span class="stat-link" onclick="setFilter('council_district','${d.replace(/'/g, "\\'")}')">${shorten(d, "Council District ")}</span><span class="stat-count">${c}</span></div>`
   ).join("");
 
   document.getElementById("top-attorneys").innerHTML = topA.map(([a, c]) =>
-    `<div class="stat-item"><span class="stat-link" onclick="showAttorneyProfile('${a.replace(/'/g, "\\'")}')">${a.split(",")[0]}</span><span class="stat-count">${c}</span></div>`
+    `<div class="stat-item"><span class="stat-link" onclick="setFilter('Attorney','${a.replace(/'/g, "\\'")}')">${a.split(",")[0]}</span><span class="stat-count">${c}</span></div>`
   ).join("");
 
   buildLandlordStat(filteredRows);
@@ -2620,6 +2708,36 @@ function landlordNetworkKey(portfolioUrl) {
   return `${parts[i + 2]}:${parts[i + 3]}`;
 }
 
+// Hand-verified exception, not an algorithm: Landlord Mapper itself holds
+// at least 4 SEPARATE landlord_ct_id:landlord_oid records for what is, in
+// fact, one real owner -- Metro Nashville's own housing authority, filing
+// under slightly different names/entities depending on the property. This
+// is a deliberate, narrow departure from "we don't recompute their
+// matching" (see LM_TAG/renderLandlordMapperCard), made only because it
+// was confirmed by inspection (see the git history for how), not inferred
+// automatically -- new cases like it need the same manual confirmation
+// before being added here, not a general "looks similar" heuristic.
+const MANUAL_LANDLORD_MERGES = {
+  '49:2337': 'mdha',      // METROPOLITAN DEVELOPMENT & HOUSING AGENCY
+  '33:240959': 'mdha',    // MDHA Etc.
+  '33:240282': 'mdha',    // METROPOLITAN DEVELOPMENT LLC Etc.
+  '33:259255': 'mdha',    // MDHA CHEATHAM PROJECT Etc.
+};
+const MANUAL_LANDLORD_LABELS = {
+  mdha: 'Metropolitan Development & Housing Agency (MDHA)',
+};
+
+// Single resolver both buildLandlordAggregation (property-based) and
+// topLandlordsFor (row-based) call, so the manual-merge list only has to
+// be maintained in one place.
+function resolveLandlordNetwork(portfolioUrl, fallbackLabel) {
+  const rawKey = landlordNetworkKey(portfolioUrl);
+  if (!rawKey) return null;
+  const mergedKey = MANUAL_LANDLORD_MERGES[rawKey] || rawKey;
+  const label = MANUAL_LANDLORD_LABELS[mergedKey] || fallbackLabel;
+  return { key: mergedKey, label };
+}
+
 // General-purpose version of the same merge, for any arbitrary set of case
 // rows (an attorney's cases, a district's cases, a holon group's cases) --
 // not just the whole-dataset Top Landlords card. Groups by Landlord Mapper
@@ -2637,8 +2755,9 @@ function topLandlordsFor(rows, n = 8) {
     if (r.address_formatted) {
       const key = normalizeAddressKey(r.address_formatted);
       const assertion = key && lmSnapshotByKey ? lmSnapshotByKey.get(key) : null;
-      if (assertion?.status === 'matched' && assertion.data?.networkName) {
-        label = assertion.data.networkName;
+      if (assertion?.status === 'matched' && assertion.data) {
+        const resolved = resolveLandlordNetwork(assertion.data.portfolioUrl, assertion.data.networkName);
+        if (resolved) label = resolved.label;
       }
     }
     counts.set(label, (counts.get(label) || 0) + 1);
@@ -2655,13 +2774,14 @@ function buildLandlordAggregation(filteredRows) {
     if (!casesInFilter.length) continue;
     const assertion = lmSnapshotByKey ? lmSnapshotByKey.get(p.key) : null;
     const matched = assertion && assertion.status === 'matched' && assertion.data;
-    const groupKey = matched
-      ? 'lm:' + (landlordNetworkKey(assertion.data.portfolioUrl) || assertion.data.networkName)
+    const resolved = matched ? resolveLandlordNetwork(assertion.data.portfolioUrl, assertion.data.networkName) : null;
+    const groupKey = resolved
+      ? 'lm:' + resolved.key
       : 'raw:' + (p.primaryLandlord || '(no plaintiff on file)');
     if (!byGroup.has(groupKey)) {
       byGroup.set(groupKey, {
         key: groupKey,
-        label: matched ? (assertion.data.networkName || p.primaryLandlord || 'Unnamed owner') : (p.primaryLandlord || '(no plaintiff on file)'),
+        label: resolved ? (resolved.label || p.primaryLandlord || 'Unnamed owner') : (p.primaryLandlord || '(no plaintiff on file)'),
         portfolioUrl: matched ? assertion.data.portfolioUrl : null,
         isLmMatched: matched,
         totalCases: 0,
@@ -2681,7 +2801,7 @@ function buildLandlordStat(filteredRows) {
   if (!llPropertyIndex) { el.innerHTML = '<div class="pp-gap-note">Building once the map data is ready (open the Map tab once)…</div>'; return; }
   landlordAgg = buildLandlordAggregation(filteredRows || getFiltered());
   el.innerHTML = landlordAgg.map(g =>
-    `<div class="stat-item"><span class="stat-link" onclick="showLandlordProfile('${escapeAttr(g.key)}')">${escapeHtml(g.label)}${g.isLmMatched ? '' : ' <span class="pp-gap-note" style="display:inline">(unmatched)</span>'}</span><span class="stat-count">${g.totalCases}</span></div>`
+    `<div class="stat-item"><span class="stat-link" onclick="setLandlordFilter('${escapeAttr(g.key)}', '${escapeAttr(g.label).replace(/'/g, "\\'")}')">${escapeHtml(g.label)}${g.isLmMatched ? '' : ' <span class="pp-gap-note" style="display:inline">(unmatched)</span>'}</span><span class="stat-count">${g.totalCases}</span></div>`
   ).join('');
 }
 
@@ -2728,6 +2848,7 @@ function setFilter(field, val) {
   filters[field] = val;
   updateFilterBtns();
   render();
+  syncMapUrl();
 }
 
 function clearFilter(field, e) {
@@ -2735,6 +2856,48 @@ function clearFilter(field, e) {
   delete filters[field];
   updateFilterBtns();
   render();
+  syncMapUrl();
+}
+
+// A merged landlord (LM network, or the hand-merged exceptions) spans
+// several raw Plaintiff_1 strings -- not a single field value setFilter()
+// can match on. Same resolution logic as topLandlordsFor(), just
+// returning the key alone rather than aggregating.
+function landlordKeyForRow(r) {
+  const raw = (r.Plaintiff_1 || '').trim();
+  if (!raw) return null;
+  if (r.address_formatted) {
+    const key = normalizeAddressKey(r.address_formatted);
+    const assertion = key && lmSnapshotByKey ? lmSnapshotByKey.get(key) : null;
+    if (assertion?.status === 'matched' && assertion.data) {
+      const resolved = resolveLandlordNetwork(assertion.data.portfolioUrl, assertion.data.networkName);
+      if (resolved) return 'lm:' + resolved.key;
+    }
+  }
+  return 'raw:' + raw;
+}
+
+// Click-through from any list (Top Landlords, a landlord/district/holon
+// profile's own plaintiff rows) filters the existing Cases table in place
+// -- no modal. Switches to the Cases view so the filtered result is
+// immediately visible, same as setFilter().
+function setLandlordFilter(key, label) {
+  landlordFilterKey = key;
+  landlordFilterLabel = label;
+  viewMode = 'cases';
+  document.querySelectorAll('#view-seg button').forEach(b => b.classList.toggle('on', b.dataset.val === 'cases'));
+  updateFilterBtns();
+  render();
+  syncMapUrl();
+}
+
+function clearLandlordFilter(e) {
+  if (e) e.stopPropagation();
+  landlordFilterKey = null;
+  landlordFilterLabel = null;
+  updateFilterBtns();
+  render();
+  syncMapUrl();
 }
 
 function updateFilterBtns() {
@@ -2753,6 +2916,17 @@ function updateFilterBtns() {
       btn.textContent = f.label;
     }
   });
+  const chip = document.getElementById('landlord-filter-chip');
+  if (chip) {
+    if (landlordFilterKey) {
+      chip.style.display = '';
+      chip.innerHTML = `<span class="filter-btn active">Landlord: ${escapeHtml(landlordFilterLabel || landlordFilterKey)}
+        <span class="clear-x" onclick="clearLandlordFilter(event)">×</span></span>`;
+    } else {
+      chip.style.display = 'none';
+      chip.innerHTML = '';
+    }
+  }
 }
 
 function buildHeader() {
@@ -2777,6 +2951,18 @@ function getFiltered() {
     if (val === "(empty)") rows = rows.filter(r => !r[field]);
     else rows = rows.filter(r => r[field] === val);
   });
+  if (landlordFilterKey) {
+    rows = rows.filter(r => landlordKeyForRow(r) === landlordFilterKey);
+  }
+  if (globalDateStartTs != null || globalDateEndTs != null) {
+    rows = rows.filter(r => {
+      const t = parseUsDate(r.file_date);
+      if (!t) return false; // undated rows drop out of a date-bounded view rather than ambiguously passing
+      if (globalDateStartTs != null && t < globalDateStartTs) return false;
+      if (globalDateEndTs != null && t > globalDateEndTs) return false;
+      return true;
+    });
+  }
   const q = document.getElementById("search").value.toLowerCase();
   if (q) {
     rows = rows.filter(r =>
@@ -2788,6 +2974,56 @@ function getFiltered() {
     );
   }
   return rows;
+}
+
+// Universal date-range filter -- the "timeline scrubber kind" of control,
+// but simpler than the Map's own decay-weighted scrubber (no half-life/
+// playhead, since this just bounds getFiltered(), it doesn't drive a heat
+// render). Two date inputs plus an all-time monthly histogram for visual
+// context on where the current selection sits.
+function renderDateRangeHistogram() {
+  const el = document.getElementById('date-range-hist');
+  if (!el || !allRows.length) return;
+  const counts = {};
+  for (const r of allRows) {
+    const m = caseFileDateToMonth(r.file_date);
+    if (m) counts[m] = (counts[m] || 0) + 1;
+  }
+  const months = sortMonthsAsc(Object.keys(counts));
+  const max = Math.max(1, ...months.map(m => counts[m]));
+  el.innerHTML = months.map(m => {
+    const [mm, yyyy] = m.split('/');
+    const monthStartTs = Date.UTC(+yyyy, +mm - 1, 1);
+    const monthEndTs = Date.UTC(+yyyy, +mm, 0);
+    const inRange = (globalDateStartTs == null || monthEndTs >= globalDateStartTs)
+      && (globalDateEndTs == null || monthStartTs <= globalDateEndTs);
+    const h = Math.max(2, Math.round((counts[m] / max) * 20));
+    return `<div class="bar${inRange ? ' in-range' : ''}" style="height:${h}px" title="${m}: ${counts[m]} filing${counts[m] === 1 ? '' : 's'}"></div>`;
+  }).join('');
+}
+
+function bindDateRangeFilter() {
+  const startEl = document.getElementById('date-range-start');
+  const endEl = document.getElementById('date-range-end');
+  const clearBtn = document.getElementById('date-range-clear');
+  if (!startEl || startEl.dataset.bound) return; // guard against double-binding on re-render
+  startEl.dataset.bound = '1';
+
+  const apply = () => {
+    globalDateStartTs = startEl.value ? fromISODate(startEl.value) : null;
+    globalDateEndTs = endEl.value ? fromISODate(endEl.value) : null;
+    clearBtn.style.display = (globalDateStartTs != null || globalDateEndTs != null) ? '' : 'none';
+    renderDateRangeHistogram();
+    render();
+  };
+  startEl.addEventListener('change', apply);
+  endEl.addEventListener('change', apply);
+  clearBtn.addEventListener('click', () => {
+    startEl.value = '';
+    endEl.value = '';
+    apply();
+  });
+  renderDateRangeHistogram();
 }
 
 function renderLocalTable() {
@@ -7102,22 +7338,41 @@ function render() {
 }
 
 /* ───────────────────────── Chat with Data (β) ─────────────────────────
-   eoreader6.1 (loaded from CDN as ES modules) holds the current snapshot as
-   an addressed corpus: every chunk is a span with {span_id, source_id,
-   byte_start, byte_end}. Tables and charts are computed mechanically from
-   the live rows — never asked of the model. The model only narrates over
-   retrieved spans, and every figure it ships is checked against those bytes.
-   Provenance: each answer carries clickable span chips; clicking shows the
-   exact bytes the answer was grounded in. */
+   eoreader7's reading organs (loaded from CDN as ES modules) hold the current
+   snapshot as an ADDRESSED corpus: `chunkSource` cuts the digest into passages
+   that each carry a real address, `name#start-end`, reading back the exact
+   characters they name. Tables and charts are computed mechanically from the
+   live rows — never asked of the model.
 
-const EO61_CDN = 'https://cdn.jsdelivr.net/gh/clovenbradshaw-ctrl/eoreader6.1@main/packages/host/index.js';
+   What changed from the eoreader6.1 host this used to call (2026-09-04):
+
+   1. THE PROMPT FIREWALL. `buildSourceBlock` ships passage TEXT alone — no
+      address, and no instruction to cite one. The model is never shown this
+      instrument's address syntax, so it can never write a plausible-looking
+      fake one. Correspondence is computed AFTERWARD, mechanically, by
+      `attribute` (cite.js) reading which passage's content the answer's own
+      sentences actually overlap — against a null drawn from the rest of the
+      corpus, so a phrase that appears everywhere earns no chip.
+   2. PER-SENTENCE PROVENANCE, not per-answer. Every sentence is measured on
+      its own; a sentence that summarizes or hedges gets no address, which is
+      the honest answer for it.
+   3. ATOM-LEVEL GROUNDING. `checkGrounding` (grounding.js) checks every
+      number AND every proper name in the answer against the retrieved
+      passages, replacing the old regex that only compared digit strings.
+
+   Pinned to a commit, not a branch: `@main` on a CDN is a moving target that
+   would silently change this page's reading behaviour. */
+
+const EO7_COMMIT = 'c6350e597442656d4f079bc15bfc7cbf0d63e6ba';
+const EO7_ORGANS = `https://cdn.jsdelivr.net/gh/clovenbradshaw-ctrl/eoreader7@${EO7_COMMIT}/native/organs/`;
 const WEBLLM_CDN = 'https://esm.run/@mlc-ai/web-llm';
 
-let chatApi = null;          // eoreader6 host module, once imported
-let chatSession = null;      // eoreader6 session holding the digest corpus
+let chatApi = null;          // eoreader7 reading organs, once imported
+let chatChunks = null;       // addressed passages of the digest
+let chatSources = null;      // { [sourceId]: fullText } — what readRange re-opens
 let chatEngine = null;       // WebLLM engine, once loaded
 let chatEngineModel = null;  // model id chatEngine was built for
-let chatDigestKey = null;    // snapshot key the session was built from
+let chatDigestKey = null;    // snapshot key the corpus was built from
 let chatBooting = false;
 let chatBusy = false;
 let chatTurn = 0;
@@ -7136,8 +7391,26 @@ function chatSnapshotKey() {
 
 async function ensureChatEngine() {
   if (!chatApi) {
-    chatSetStatus('loading eoreader6.1 from CDN…', 'busy');
-    chatApi = await import(EO61_CDN);
+    chatSetStatus('loading eoreader7 reading organs…', 'busy');
+    // Three organs, one import graph: source.js -> measure.js, grounding.js ->
+    // source.js + web.js, cite.js -> source.js + grounding.js. Nothing in that
+    // graph touches Node — unlike the 6.1 host, whose corpus.js opens with
+    // `import fs from "fs"` and therefore could never resolve in a browser.
+    const [source, cite, grounding] = await Promise.all([
+      import(EO7_ORGANS + 'source.js'),
+      import(EO7_ORGANS + 'cite.js'),
+      import(EO7_ORGANS + 'grounding.js'),
+    ]);
+    chatApi = {
+      chunkSource: source.chunkSource,
+      retrieve: source.retrieve,
+      readRange: source.readRange,
+      buildSourceBlock: source.buildSourceBlock,
+      attribute: cite.attribute,
+      attributedRefs: cite.attributedRefs,
+      stripSelfCitations: cite.stripSelfCitations,
+      checkGrounding: grounding.checkGrounding,
+    };
   }
   const modelId = document.getElementById('chat-model-select').value;
   if (chatEngine && chatEngineModel === modelId) return;
@@ -7206,9 +7479,20 @@ function buildChatDigestText() {
   L.push('CASES BY STATUS:');
   for (const [k, v] of Object.entries(s.statusCounts).sort((a, b) => b[1] - a[1])) L.push(`  ${k}: ${v.toLocaleString()}`);
   L.push('');
-  L.push('CASES BY COUNCIL DISTRICT (total / pending / dismissed+nonsuit):');
-  for (const [d, v] of Object.entries(s.districtStats).sort((a, b) => (+a[0] || 99) - (+b[0] || 99))) {
-    L.push(`  District ${d}: ${v.total.toLocaleString()} / ${v.pending.toLocaleString()} / ${v.dismissed.toLocaleString()}`);
+  // Districts arrive as "Council District 31", so both the sort key and the
+  // printed label read the number out. Sorting the raw string put every
+  // district at the same rank (`+"Council District 31"` is NaN) and printing
+  // it gave "District Council District 31".
+  //
+  // The dismissed column is GONE, not fixed: `status` in this source has
+  // exactly two values, PENDING and CLOSED (measured live, 2026-09-04:
+  // 8,484 and 69,612), so the old "dismissed+nonsuit" column was structurally
+  // zero on every row and read as a finding — no district ever dismisses a
+  // case — rather than as an absent field. An absent measure is stated as
+  // absent, in the field-meanings passage, never printed as a zero.
+  L.push('CASES BY COUNCIL DISTRICT (total / pending):');
+  for (const [d, v] of Object.entries(s.districtStats).sort((a, b) => (+chatDistrictNum(a[0]) || 999) - (+chatDistrictNum(b[0]) || 999))) {
+    L.push(`  District ${chatDistrictNum(d) || d}: ${v.total.toLocaleString()} / ${v.pending.toLocaleString()}`);
   }
   L.push('');
   L.push('CASES BY MONTH FILED:');
@@ -7249,21 +7533,327 @@ function buildChatDigestText() {
   return L.join('\n');
 }
 
+
+/* ─── The dossier corpus ───────────────────────────────────────────────────
+   A digest of citywide aggregates cannot answer "what's the deal with McCoy?"
+   — the question a lawyer actually asks. The aggregate holds a top-10 list;
+   everyone else is invisible, and the one entity that matters to the person
+   asking is almost never in the top ten.
+
+   So the corpus is not one summary. It is one PASSAGE PER ENTITY — every
+   plaintiff's attorney, every tenant's attorney, every landlord, every
+   council district — each computed mechanically from the live rows, each
+   cut by `chunkSource` into a passage with its own address. Retrieval then
+   finds the entity the question names, and the model narrates over numbers
+   it never had to produce.
+
+   Everything a passage says is derived here, in JavaScript, from `allRows`.
+   The model's only job is to say it in English. ───────────────────────────*/
+
+function chatDistrictNum(v) {
+  const m = String(v ?? '').match(/(\d+)/);
+  return m ? m[1] : null;
+}
+
+function chatPct(n, d) {
+  return d ? `${(n / d * 100).toFixed(n / d < 0.01 ? 2 : 1)}%` : '0%';
+}
+
+function chatTopList(map, n) {
+  return [...map.entries()].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0]))).slice(0, n);
+}
+
+function chatBump(map, k) { if (k) map.set(k, (map.get(k) || 0) + 1); }
+
+/* One pass over every row, building every entity's facts at once. Rebuilt only
+   when the snapshot key changes, so a re-ask costs nothing. */
+function buildChatEntityFacts() {
+  const mk = (kind, name) => ({
+    kind, name,
+    cases: 0, pending: 0, closed: 0,
+    withTenantCounsel: 0,
+    withJudgment: 0, judgmentTotal: 0, judgmentAmounts: [],
+    buckets: new Map(), districts: new Map(), months: new Map(),
+    counterparties: new Map(),   // attorney -> landlords they file for, landlord -> counsel used
+    opposing: new Map(),         // tenant attorney -> plaintiff's counsel opposed
+    caseTypes: new Map(),
+    first: null, last: null,
+  });
+  const attorneys = new Map(), landlords = new Map(), defenders = new Map(), districts = new Map();
+  const get = (m, kind, name) => { let e = m.get(name); if (!e) m.set(name, e = mk(kind, name)); return e; };
+
+  const note = (e, r, t) => {
+    e.cases++;
+    const st = String(r.status || '').toUpperCase();
+    if (st === 'PENDING') e.pending++; else if (st) e.closed++;
+    if (String(r.Def_Attorney || '').trim()) e.withTenantCounsel++;
+    const amt = Number(r.judgment_amount);
+    if (Number.isFinite(amt) && amt > 0) { e.withJudgment++; e.judgmentTotal += amt; e.judgmentAmounts.push(amt); }
+    chatBump(e.buckets, r.judgment_bucket && r.judgment_bucket !== '(no $)' ? r.judgment_bucket : null);
+    chatBump(e.districts, chatDistrictNum(r.council_district));
+    chatBump(e.months, caseFileDateToMonth(r.file_date));
+    chatBump(e.caseTypes, String(r.case_type || '').trim() || null);
+    if (t) { if (e.first === null || t < e.first) e.first = t; if (e.last === null || t > e.last) e.last = t; }
+  };
+
+  for (const r of allRows) {
+    const t = chatParseDate(r.file_date) || null;
+    const att = String(r.Attorney || '').trim();
+    const lord = String(r.Plaintiff_1 || '').trim();
+    const def = String(r.Def_Attorney || '').trim();
+    const dist = chatDistrictNum(r.council_district);
+    if (att) { const e = get(attorneys, 'attorney', att); note(e, r, t); chatBump(e.counterparties, lord); }
+    if (lord) { const e = get(landlords, 'landlord', lord); note(e, r, t); chatBump(e.counterparties, att); }
+    if (def) { const e = get(defenders, 'defender', def); note(e, r, t); chatBump(e.opposing, att); chatBump(e.counterparties, lord); }
+    if (dist) { const e = get(districts, 'district', dist); note(e, r, t); chatBump(e.counterparties, lord); chatBump(e.opposing, att); }
+  }
+  const ranked = (m) => [...m.values()].sort((a, b) => b.cases - a.cases).map((e, i, all) => (e.rank = i + 1, e.of = all.length, e));
+  return { attorneys: ranked(attorneys), landlords: ranked(landlords), defenders: ranked(defenders), districts: ranked(districts), total: allRows.length };
+}
+
+const chatDate = (t) => t ? new Date(t).toISOString().slice(0, 10) : null;
+
+/* An entity's own paragraph. Detail is PROPORTIONAL, not thresholded: a
+   landlord with one filing gets the lines that one filing supports, and a
+   list is printed only when there is more than one thing in it. Nothing is
+   padded to a fixed shape and nothing is cut at a chosen rank. */
+function chatEntityHeadline(e) {
+  const label = { attorney: "PLAINTIFF'S ATTORNEY", landlord: 'LANDLORD / PLAINTIFF', defender: "TENANT'S ATTORNEY", district: 'COUNCIL DISTRICT' }[e.kind];
+  return `${label} — ${e.name}`;
+}
+
+function chatEntityPassage(e, total, extra) {
+  const L = [];
+  L.push(chatEntityHeadline(e));
+
+  const role = {
+    attorney: `Counsel of record for the landlord on ${e.cases.toLocaleString()} eviction filings`,
+    landlord: `Named as plaintiff on ${e.cases.toLocaleString()} eviction filings`,
+    defender: `Appeared for the tenant on ${e.cases.toLocaleString()} eviction filings`,
+    district: `${e.cases.toLocaleString()} eviction filings`,
+  }[e.kind];
+  L.push(`${role}, ${chatPct(e.cases, total)} of the ${total.toLocaleString()} cases in this snapshot — rank ${e.rank} of ${e.of} by filing count.`);
+
+  const from = chatDate(e.first), to = chatDate(e.last);
+  if (from) L.push(`Filings run ${from} to ${to}. ${e.pending.toLocaleString()} still pending, ${e.closed.toLocaleString()} closed.`);
+
+  if (e.kind !== 'defender') {
+    L.push(e.withTenantCounsel
+      ? `A tenant attorney appeared in ${e.withTenantCounsel.toLocaleString()} of these cases (${chatPct(e.withTenantCounsel, e.cases)}); the tenant was unrepresented on the record in the other ${(e.cases - e.withTenantCounsel).toLocaleString()}.`
+      : `No tenant attorney appears on the record in any of these ${e.cases.toLocaleString()} cases.`);
+  }
+
+  if (e.withJudgment) {
+    const sorted = [...e.judgmentAmounts].sort((a, b) => a - b);
+    const median = sorted[sorted.length >> 1];
+    const money = (n) => '$' + Math.round(n).toLocaleString();
+    L.push(`A money judgment amount is recorded in ${e.withJudgment.toLocaleString()} of these cases (${chatPct(e.withJudgment, e.cases)}), totaling ${money(e.judgmentTotal)}, median ${money(median)}, largest ${money(sorted[sorted.length - 1])}.`);
+    const b = chatTopList(e.buckets, 3);
+    if (b.length > 1) L.push(`Judgment sizes: ${b.map(([k, v]) => `${k} in ${v.toLocaleString()} cases`).join(', ')}.`);
+  } else {
+    L.push(`No money judgment amount is recorded in any of these cases.`);
+  }
+
+  const cpLabel = { attorney: 'Files for these landlords', landlord: 'Uses these attorneys', defender: 'Opposed these landlords', district: 'Most active landlords here' }[e.kind];
+  const cp = chatTopList(e.counterparties, 8);
+  if (cp.length) L.push(`${cpLabel}: ${cp.map(([k, v]) => `${k} (${v.toLocaleString()})`).join(', ')}${e.counterparties.size > cp.length ? `, and ${(e.counterparties.size - cp.length).toLocaleString()} others` : ''}.`);
+
+  if (e.opposing.size) {
+    const op = chatTopList(e.opposing, 6);
+    const opLabel = e.kind === 'defender' ? 'Opposing counsel' : 'Most active plaintiff attorneys here';
+    L.push(`${opLabel}: ${op.map(([k, v]) => `${k} (${v.toLocaleString()})`).join(', ')}.`);
+  }
+
+  if (e.kind !== 'district') {
+    const d = chatTopList(e.districts, 6);
+    if (d.length) L.push(`Council districts: ${d.map(([k, v]) => `district ${k} (${v.toLocaleString()})`).join(', ')}.`);
+  }
+
+  const m = chatTopList(e.months, 1)[0];
+  if (m && e.cases > 1) L.push(`Busiest month ${m[0]} with ${m[1].toLocaleString()} filings.`);
+
+  const ct = chatTopList(e.caseTypes, 2);
+  if (ct.length > 1) L.push(`Case types: ${ct.map(([k, v]) => `${k} (${v.toLocaleString()})`).join(', ')}.`);
+
+  if (extra) L.push(extra);
+  return L.join('\n');
+}
+
+let chatFacts = null;        // the one-pass entity facts, per snapshot
+let chatEntities = [];       // every entity, each with the address of its passage
+let chatNameIdf = null;      // token -> how distinctive that token is in this corpus
+let chatCommonTerms = null;  // tokens that identify nobody, measured
+
+/* The whole corpus: the citywide overview, a note on what the fields mean,
+   then one passage per entity. `chunkSource` splits on blank lines, so each
+   paragraph below becomes one addressable passage. */
+function buildChatCorpusText() {
+  const f = chatFacts;
+  const parts = [buildChatDigestText()];
+
+  parts.push([
+    'HOW TO READ THIS DATA — FIELD MEANINGS AND LIMITS',
+    'Each row is one detainer warrant (eviction case) docket from Davidson County General Sessions.',
+    'Status has only two values in this source: PENDING and CLOSED. CLOSED does NOT say who won — dismissal, nonsuit, agreed order and judgment for possession are all CLOSED here. This source does not record the disposition, so no dismissal rate can be computed from it.',
+    'A recorded money judgment amount is the one outcome signal present: cases with an amount had a money judgment entered.',
+    'Def_Attorney is counsel who appeared for the tenant. It is blank in the great majority of cases, which is the record of an unrepresented tenant, not missing data.',
+    'Defendant (tenant) names are encrypted in this snapshot and cannot be searched or reported. Plaintiff, attorney, docket, district and date are public court record fields.',
+    'Princeton Eviction Lab counts are FILINGS from an independent source and are not the same measure as these cases. Never add the two together.',
+  ].join('\n'));
+
+  const demo = agg.districtDemographics || {};
+  for (const e of f.districts) {
+    const x = demo[e.name];
+    const extra = x ? `Metro Social Services 2026: population ${x.population != null ? x.population.toLocaleString() : 'unknown'}`
+      + `, median household income ${x.income && x.income.median_household_income != null ? '$' + Math.round(x.income.median_household_income).toLocaleString() : 'unknown'}`
+      + `, poverty rate ${x.poverty && x.poverty.pct_total_poverty != null ? x.poverty.pct_total_poverty.toFixed(1) + '%' : 'unknown'}`
+      + `, median monthly rent ${x.housing && x.housing.median_monthly_rent != null ? '$' + Math.round(x.housing.median_monthly_rent).toLocaleString() : 'unknown'}.` : null;
+    parts.push(chatEntityPassage(e, f.total, extra));
+  }
+  for (const e of f.attorneys) parts.push(chatEntityPassage(e, f.total));
+  for (const e of f.defenders) parts.push(chatEntityPassage(e, f.total));
+  for (const e of f.landlords) parts.push(chatEntityPassage(e, f.total));
+  return parts.join('\n\n');
+}
+
+/* Which passage is whose. A passage's first line is its entity's headline, so
+   the mapping is read back off the chunks themselves rather than tracked
+   through the string building — if chunking ever moved a boundary, this
+   notices instead of silently mis-addressing. */
+function indexChatEntities(chunks) {
+  const f = chatFacts;
+  const byHeadline = new Map();
+  for (const group of [f.districts, f.attorneys, f.defenders, f.landlords]) {
+    for (const e of group) byHeadline.set(chatEntityHeadline(e), e);
+  }
+  chatEntities = [];
+  for (const c of chunks) {
+    const e = byHeadline.get(c.text.split('\n')[0]);
+    if (!e) continue;
+    e.ref = c.ref;
+    e.nameTokens = [...new Set(chatTokens(e.name))];
+    chatEntities.push(e);
+  }
+  /* How distinctive each name token is — measured against the WHOLE CORPUS,
+     not against the names.
+
+     Measuring within names alone was wrong, and a live question proved it:
+     "how often does a tenant have a lawyer?" named four landlords, because
+     "TENANT" happens to sit in a handful of corporate names ("WMCI NASHVILLE
+     VIII TENANT, LLC") and is therefore RARE AMONG NAMES — while being one
+     of the most common words in this corpus, which describes tenants on
+     nearly every passage. Rarity among names is not distinctiveness; rarity
+     in the material is. Counted, never a stopword list written here. */
+  const df = new Map();
+  for (const c of chunks) for (const t of c.terms) df.set(t, (df.get(t) || 0) + 1);
+  chatNameIdf = new Map();
+  for (const [t, n] of df) chatNameIdf.set(t, Math.log(chunks.length / n));
+  // cite.js's own rule, reused rather than reinvented: a term present in more
+  // than half the corpus is telling you about the corpus, not about a passage.
+  // That is not a tuned knob — it is what "present more often than absent"
+  // means — and it is the gate on whether a question named anybody at all.
+  chatCommonTerms = new Set();
+  for (const [t, n] of df) if (n > chunks.length / 2) chatCommonTerms.add(t);
+}
+
+function chatTokens(s) {
+  return String(s).toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(t => t.length > 2);
+}
+
+/* Who does this question name? Each entity scores the summed distinctiveness
+   of its own name tokens that the question uses, and a token that identifies
+   nobody is not evidence — so an entity is named only when at least one
+   matched token SURVIVES the corpus-wide common cut. "llc" and "apartments"
+   sit in thousands of passages and name nobody; "mccoy" sits in five.
+
+   Ties are reported, never broken silently. Three different people are called
+   McCoy in this docket — an attorney on 25,000 filings and two individuals
+   with a handful each — and they match a question saying "mccoy" on exactly
+   the same evidence. The caller shows the busiest and says the others exist,
+   rather than picking one behind the reader's back. */
+function resolveChatEntities(q) {
+  if (!chatEntities.length) return [];
+  const asked = new Set(chatTokens(q));
+  const scored = [];
+  for (const e of chatEntities) {
+    let score = 0;
+    const on = [];
+    for (const t of e.nameTokens) {
+      if (!asked.has(t) || chatCommonTerms.has(t)) continue;
+      score += chatNameIdf.get(t) || 0;
+      on.push(t);
+    }
+    if (on.length) scored.push({ entity: e, score, on });
+  }
+  scored.sort((a, b) => b.score - a.score || b.entity.cases - a.entity.cases);
+  const top = scored[0];
+  return scored.slice(0, 5).map(x => ({
+    ...x,
+    best: x === top,
+    tied: !!top && x !== top && x.score === top.score,
+  }));
+}
+
+/* The profile card: every figure computed from the live rows, no model
+   involved — the same standing as the tables and charts this tab already
+   answers with. */
+function entityProfileArtifact(e) {
+  const total = chatFacts.total;
+  const money = (n) => '$' + Math.round(n).toLocaleString();
+  const cells = [];
+  const role = { attorney: "Plaintiff's attorney", landlord: 'Landlord / plaintiff', defender: "Tenant's attorney", district: 'Council district' }[e.kind];
+  cells.push(['Role in these cases', role]);
+  cells.push(['Filings', `${e.cases.toLocaleString()} (${chatPct(e.cases, total)} of ${total.toLocaleString()})`]);
+  cells.push(['Rank by volume', `${e.rank} of ${e.of}`]);
+  if (e.first) cells.push(['Filing dates', `${chatDate(e.first)} → ${chatDate(e.last)}`]);
+  cells.push(['Pending / closed', `${e.pending.toLocaleString()} / ${e.closed.toLocaleString()}`]);
+  if (e.kind !== 'defender') cells.push(['Tenant had counsel', `${e.withTenantCounsel.toLocaleString()} (${chatPct(e.withTenantCounsel, e.cases)})`]);
+  cells.push(['Money judgment recorded', e.withJudgment
+    ? `${e.withJudgment.toLocaleString()} (${chatPct(e.withJudgment, e.cases)}), ${money(e.judgmentTotal)} total`
+    : 'none']);
+  const cpLabel = { attorney: 'Top landlords served', landlord: 'Top counsel used', defender: 'Top landlords opposed', district: 'Top landlords filing' }[e.kind];
+  const cp = chatTopList(e.counterparties, 5);
+  if (cp.length) cells.push([cpLabel, cp.map(([k, v]) => `${k} (${v.toLocaleString()})`).join('; ')]);
+  if (e.opposing.size) cells.push([e.kind === 'defender' ? 'Opposing counsel' : 'Top plaintiff attorneys', chatTopList(e.opposing, 4).map(([k, v]) => `${k} (${v.toLocaleString()})`).join('; ')]);
+  if (e.kind !== 'district') {
+    const d = chatTopList(e.districts, 5);
+    if (d.length) cells.push(['Council districts', d.map(([k, v]) => `${k} (${v.toLocaleString()})`).join('; ')]);
+  }
+  return {
+    kind: 'table',
+    title: e.name,
+    head: ['', ''],
+    rows: cells.map(([k, v]) => ({ label: k, value: 0, cells: [k, v] })),
+    ref: e.ref,
+  };
+}
+
+/* Cut the corpus into addressed passages. `chunkSource` splits prose on blank
+   lines, so each section of the overview AND each entity dossier becomes one
+   passage with its own address. The full text is kept beside the chunks
+   because an address is only worth having if it can be re-opened, and
+   `readRange` reads it back out of the source it names. */
 async function ensureChatSession(force) {
   const key = chatSnapshotKey();
-  if (!force && chatSession && chatDigestKey === key) return;
+  if (!force && chatChunks && chatDigestKey === key) return;
   if (!chatApi) throw new Error('engine not loaded');
-  chatSession = chatApi.createSession({});
-  const text = buildChatDigestText();
-  const sourceId = `eviction-snapshot[${key}]`;
-  const res = chatApi.admitChunked(chatSession, { text, sourceId, language: 'en' });
+  chatSetStatus('indexing every attorney, landlord and district…', 'busy');
+  chatFacts = buildChatEntityFacts();
+  const text = buildChatCorpusText();
+  const sourceId = `eviction-snapshot`;
+  chatSources = { [sourceId]: text };
+  chatChunks = chatApi.chunkSource(sourceId, text);
+  indexChatEntities(chatChunks);
   chatDigestKey = key;
+  const f = chatFacts;
   document.getElementById('chat-spans').textContent =
-    `${res.chunks} spans · ${text.length.toLocaleString()} bytes · ${allRows.length.toLocaleString()} cases indexed`;
+    `${chatChunks.length.toLocaleString()} passages · ${f.attorneys.length} attorneys · `
+    + `${f.defenders.length} tenant attorneys · ${f.landlords.length.toLocaleString()} landlords · `
+    + `${allRows.length.toLocaleString()} cases indexed`;
 }
 
 async function bootChatView() {
-  if (chatBooting || (chatApi && chatSession && chatEngine)) { renderChatSuggestions(); return; }
+  if (chatBooting || (chatApi && chatChunks && chatEngine)) { renderChatSuggestions(); return; }
   if (chatBooting) return;
   chatBooting = true;
   try {
@@ -7293,10 +7883,11 @@ async function rebuildChatDigest() {
 }
 
 const CHAT_SUGGESTIONS = [
+  "What's the deal with McCoy?",
+  'American Homes 4 Rent',
+  'How often does a tenant have a lawyer?',
   'Table: cases by council district',
   'Chart: cases by month filed',
-  'Table: status breakdown',
-  'Chart: top plaintiffs',
   'Which districts have the highest poverty rate?',
 ];
 
@@ -7396,31 +7987,71 @@ function artifactHtml(a) {
   return `<div class="artifact-title">${escapeHtmlSafe(a.title)}</div>${body}`;
 }
 
+/* The model is never told that addresses exist, so it is never asked to write
+   one — `buildSourceBlock` hands it passage text alone. Correspondence is
+   established afterward by measurement, not by trusting a self-report. */
 const CHAT_SYSTEM_PROMPT = [
-  'You answer questions about Nashville eviction case data using ONLY the numbered data excerpts provided in the user message.',
+  'You answer questions about Nashville eviction case data using ONLY the data passages provided in the user message.',
   'Rules:',
-  '- Cite the excerpt you used for every factual claim, in the form [1], [2].',
-  '- Never invent numbers, names, districts, or dates. If the excerpts do not contain the answer, say exactly what is missing.',
+  '- Never invent numbers, names, districts, or dates. If the passages do not contain the answer, say exactly what is missing.',
   '- Do not add scraped+Princeton counts together; they are different measures.',
   '- Keep answers short: 1-3 sentences unless asked to enumerate.',
 ].join('\n');
 
-function linkCitations(html, spans) {
-  return html.replace(/\[(\d)\]/g, (m, d) => {
-    const i = +d - 1;
-    if (!spans[i]) return m;
-    return `<button type="button" class="cite-chip" data-span-id="${escapeHtmlSafe(spans[i].span_id)}">[${d}]</button>`;
-  });
-}
+/* Render the answer once, carrying two mechanically-derived overlays:
 
-function verifyNumbers(text, groundText) {
-  const cites = [];
-  const masked = text.replace(/\[\d+\]/g, m => { cites.push(m); return '\u0000'; });
-  const ground = new Set();
-  for (const m of groundText.matchAll(/\d[\d,]*(?:\.\d+)?%?/g)) ground.add(m[0]);
-  const checked = masked.replace(/\b\d[\d,]*(?:\.\d+)?%?\b/g, m =>
-    ground.has(m) ? m : `<span class="unverified-num" title="this figure was not found in the cited data excerpts">${m}</span>`);
-  return checked.replace(/\u0000/g, () => cites.shift());
+   - per-sentence provenance from `attribute` — a chip is appended to a
+     sentence only when its best-overlapping passage beat a null drawn from
+     the rest of the corpus. A summarizing or hedging sentence gets none,
+     which is the true answer for it.
+   - unsupported atoms from `checkGrounding` — every number and proper name
+     the retrieved passages do not carry, marked in place.
+
+   Both overlays are offset-addressed into the SAME raw answer string, so
+   they are applied in one walk and can never disagree about where they sit. */
+function renderGroundedAnswer(answer, entries, findings) {
+  const marks = [];
+  for (const f of findings) {
+    if (Number.isInteger(f.start) && Number.isInteger(f.end) && f.end > f.start) {
+      marks.push({ at: f.start, to: f.end, title: `not found in the retrieved passages: ${f.absent.join(', ')}` });
+    }
+  }
+  // Where each attributed sentence ends, found by walking forward — cite.js's
+  // splitSentences returns trimmed text without offsets, but it returns the
+  // sentences in order, so a cursor locates each one unambiguously.
+  const chips = [];
+  let cursor = 0;
+  for (const e of entries) {
+    const at = answer.indexOf(e.text, cursor);
+    if (at === -1) continue;
+    cursor = at + e.text.length;
+    if (e.ref) chips.push({ at: cursor, ref: e.ref, score: e.score, floor: e.floor });
+  }
+  const points = new Map();
+  for (const c of chips) points.set(c.at, (points.get(c.at) || []).concat(c));
+
+  let out = '';
+  let i = 0;
+  const emit = (from, to) => {
+    // Chip insertion points inside this stretch are flushed as we pass them.
+    for (let k = from; k <= to; k++) {
+      if (!points.has(k)) continue;
+      out += escapeHtmlSafe(answer.slice(from, k));
+      for (const c of points.get(k)) out += spanChipHtml(c.ref, c);
+      points.delete(k);
+      from = k;
+    }
+    out += escapeHtmlSafe(answer.slice(from, to));
+  };
+  marks.sort((a, b) => a.at - b.at);
+  for (const m of marks) {
+    if (m.at < i) continue;
+    emit(i, m.at);
+    out += `<span class="unverified-num" title="${escapeHtmlSafe(m.title)}">${escapeHtmlSafe(answer.slice(m.at, m.to))}</span>`;
+    i = m.to;
+  }
+  emit(i, answer.length);
+  return `<p>${out.replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>')}</p>`;
 }
 
 function addChatMessage(role, html, provHtml) {
@@ -7447,19 +8078,44 @@ async function askChat(q) {
   addChatMessage('user', escapeHtmlSafe(q));
   const myTurn = ++chatTurn;
 
+  /* A named entity is answered mechanically FIRST — the card's every figure is
+     computed from the live rows, so it is exact whether or not the model then
+     manages a sentence about it. The model still runs afterward, over the
+     entity's own dossier passage, to say what the card cannot: what the
+     numbers mean read together. */
+  const named = (chatApi && chatChunks) ? resolveChatEntities(q) : [];
+  const best = named.find(n => n.best);
+  if (best) {
+    const others = named.filter(n => !n.best);
+    const ties = others.filter(n => n.tied);
+    const card = entityProfileArtifact(best.entity);
+    const note = ties.length
+      ? `${ties.length + 1} entities match “${escapeHtmlSafe(best.on.join(' '))}” on identical name evidence — this is the one on the most filings`
+      : `every figure computed mechanically from ${allRows.length.toLocaleString()} live rows — no model involved`;
+    const prov = `<div class="prov-strip"><span class="prov-label">provenance</span>`
+      + `<span class="prov-note">${note}</span>`
+      + (best.entity.ref ? spanChipHtml(best.entity.ref) : '')
+      + `</div>`;
+    addChatMessage('assistant', artifactHtml(card), prov);
+    if (others.length) {
+      addChatMessage('assistant', `${ties.length ? 'Same name, different party' : 'Also matched'}: `
+        + others.map(n => `<button type="button" class="suggest-chip" onclick="askChat(this.dataset.q)" data-q="${escapeHtmlSafe(n.entity.name)}">`
+            + `${escapeHtmlSafe(n.entity.name)} · ${n.entity.cases.toLocaleString()}</button>`).join(' '));
+    }
+  }
+
   const artifact = detectChatArtifact(q);
-  if (artifact && chatApi && chatSession) {
-    const hits = chatApi.searchSpans(chatSession, { query: artifact.provQuery, limit: 1 }).spans;
-    const sp = hits[0];
+  if (artifact && chatApi && chatChunks) {
+    const sp = chatApi.retrieve(chatChunks, artifact.provQuery, 1)[0];
     const prov = `<div class="prov-strip"><span class="prov-label">provenance</span>`
       + `<span class="prov-note">computed mechanically from ${allRows.length.toLocaleString()} live rows — no model involved</span>`
-      + (sp ? spanChipHtml(sp) : '')
+      + (sp ? spanChipHtml(sp.ref) : '')
       + `</div>`;
     addChatMessage('assistant', artifactHtml(artifact), prov);
     return;
   }
 
-  if (!chatEngine || !chatSession) {
+  if (!chatEngine || !chatChunks) {
     addChatMessage('error', escapeHtmlSafe('Not ready yet — ' + document.getElementById('chat-status').textContent));
     return;
   }
@@ -7469,32 +8125,52 @@ async function askChat(q) {
   chatSetStatus('thinking…', 'busy');
   try {
     await ensureChatSession(false);
-    const { spans } = chatApi.searchSpans(chatSession, { query: q, limit: 6 });
-    if (!spans.length) {
+    // Retrieval is mechanical: a passage either shares a term with the question
+    // or it does not. There is no relevance floor to pick, and nothing is
+    // invented to fill a gap.
+    // Retrieval is seeded with the passages of whatever entities the question
+    // named. Term overlap alone would not reliably surface them: a question's
+    // ordinary words ("what", "the", "with") sit in every passage of a 10,000-
+    // passage corpus and can outscore the one word that identifies anybody.
+    const seeded = named.map(n => chatChunks.find(c => c.ref === n.entity.ref)).filter(Boolean);
+    const byRef = new Map(seeded.map(c => [c.ref, c]));
+    for (const c of chatApi.retrieve(chatChunks, q, 6)) if (!byRef.has(c.ref)) byRef.set(c.ref, c);
+    const passages = [...byRef.values()].slice(0, 6);
+    if (!passages.length) {
       addChatMessage('assistant', escapeHtmlSafe('No part of the indexed snapshot matches that question. Try asking about districts, statuses, months, plaintiffs, attorneys, or demographics.'));
       return;
     }
-    const units = chatApi.spanUnits(chatSession, spans);
-    const folded = chatApi.foldSpans(chatSession, { units, query: q, tokenBudget: 2200, maxUnits: 6 });
-    const context = folded.selected.map((u, i) => `[${i + 1}] ${u.text}`).join('\n\n');
+    const block = chatApi.buildSourceBlock(passages);
     const response = await chatEngine.chat.completions.create({
       messages: [
         { role: 'system', content: CHAT_SYSTEM_PROMPT },
-        { role: 'user', content: `Question: ${q}\n\nDATA EXCERPTS:\n${context}` },
+        { role: 'user', content: `Question: ${q}\n\n${block}` },
       ],
       temperature: 0.2,
       max_tokens: 600,
     });
     if (myTurn !== chatTurn) return;
     let answer = (response.choices[0].message.content || '').trim();
-    answer = escapeHtmlSafe(answer);
-    answer = verifyNumbers(answer, context);
-    answer = linkCitations(answer, folded.selected);
-    answer = `<p>${answer.replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>')}</p>`;
+    // A bracket surviving into the output is not a reference to defer to — the
+    // model was never shown one — so it is removed rather than resolved.
+    // (`stripSelfCitations` returns `{ text, removed }`, not a string.)
+    const selfCited = chatApi.stripSelfCitations(answer);
+    answer = selfCited.text;
+    // The whole corpus is the null pool: a phrase that appears in every
+    // section cannot say which section an answer came from.
+    const entries = chatApi.attribute(answer, passages, chatChunks);
+    const ground = chatApi.checkGrounding(answer, passages, { question: q });
+    const attributed = chatApi.attributedRefs(entries);
+    const html = renderGroundedAnswer(answer, entries, ground.findings);
+    const note = ground.examined
+      ? (ground.clean
+          ? `${ground.atomsChecked} figures and names checked against these passages — all found`
+          : `${ground.findings.length} of ${ground.atomsChecked} figures/names underlined — not found in these passages`)
+      : 'no passages to check against';
     const prov = `<div class="prov-strip"><span class="prov-label">provenance</span>${
-      folded.selected.map(u => spanChipHtml(u.meta)).join('')
-    }<span class="prov-note">figures underlined ⚠ were not found in these excerpts</span></div>`;
-    addChatMessage('assistant', answer, prov);
+      passages.map(c => spanChipHtml(c.ref, { used: attributed.includes(c.ref) })).join('')
+    }<span class="prov-note">${escapeHtmlSafe(note)}</span></div>`;
+    addChatMessage('assistant', html, prov);
     chatSetStatus(`ready — ${chatEngineModel}`, 'on');
   } catch (e) {
     console.warn('[eo/chat] turn failed:', e);
@@ -7506,10 +8182,17 @@ async function askChat(q) {
   }
 }
 
-function spanChipHtml(meta) {
-  const id = meta.span_id || meta.spanId;
-  const short = id.startsWith('span:') ? id.slice(5, 13) : id.slice(0, 8);
-  return `<button type="button" class="span-chip" data-span-id="${escapeHtmlSafe(id)}" title="${escapeHtmlSafe(id)}">§${escapeHtmlSafe(short)}</button>`;
+/* A chip names a real address — `source#start-end` — and clicking it re-opens
+   exactly those characters. The range IS the label: it is what the chip
+   claims, so showing anything shorter would be showing something else. */
+function spanChipHtml(ref, opts) {
+  const m = String(ref).match(/#(\d+)-(\d+)$/);
+  const short = m ? `${m[1]}–${m[2]}` : String(ref).slice(0, 12);
+  const title = opts && opts.used === false
+    ? `${ref} — retrieved, but no sentence of the answer measurably came from it`
+    : String(ref);
+  const cls = opts && opts.used === false ? 'span-chip unused' : 'span-chip';
+  return `<button type="button" class="${cls}" data-span-id="${escapeHtmlSafe(ref)}" title="${escapeHtmlSafe(title)}">§${escapeHtmlSafe(short)}</button>`;
 }
 
 document.addEventListener('click', e => {
@@ -7519,11 +8202,21 @@ document.addEventListener('click', e => {
 
 function openSpanModal(spanId) {
   closeSpanModal();
+  // The re-opening: read the characters the address names, straight out of the
+  // digest text the chunks were cut from. If this ever disagreed with what the
+  // answer was grounded in, the address would be a decoration rather than a
+  // reference — which is the whole reason it is read back rather than cached.
   let out;
-  if (chatSession) {
-    out = chatApi.readSpan(chatSession, { spanId, maxBytes: 4000 });
+  const m = String(spanId).match(/^(.*)#(\d+)-(\d+)$/);
+  if (!chatApi || !chatSources) {
+    out = { error: 'corpus not loaded' };
+  } else if (!m) {
+    out = { error: `not an address: ${spanId}` };
   } else {
-    out = { error: 'session not loaded' };
+    const text = chatApi.readRange(chatSources, spanId);
+    out = text == null
+      ? { error: `address does not resolve: ${spanId}` }
+      : { source_id: m[1], byte_start: +m[2], byte_end: +m[3], text: text.slice(0, 4000), truncated: text.length > 4000 };
   }
   const overlay = document.createElement('div');
   overlay.className = 'span-modal-overlay';
@@ -7558,6 +8251,7 @@ function bindRowClicks() {
 }
 
 function bindViewControls() {
+  bindDateRangeFilter();
   document.querySelectorAll('#view-seg button').forEach(b => {
     b.addEventListener('click', () => {
       viewMode = b.dataset.val;
