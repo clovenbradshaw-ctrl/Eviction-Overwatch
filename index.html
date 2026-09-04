@@ -192,32 +192,32 @@ h1 {
   border-radius: 4px; border: 1px solid var(--border);
 }
 
-/* The label is the collapse control -- a real <button> so it is keyboard
-   reachable and announces its own expanded state, rather than a div with a
-   click handler bolted on. */
 .stat-label {
   font-size: 10px; text-transform: uppercase;
   letter-spacing: 0.1em; color: var(--dim); margin-bottom: 8px;
-  display: flex; align-items: center; gap: 6px; width: 100%;
-  background: transparent; border: none; padding: 0;
-  font-family: inherit; text-align: left; cursor: pointer;
 }
-.stat-label:hover { color: var(--gold); }
-.stat-caret { display: inline-block; transition: transform 0.12s ease; font-size: 9px; }
-.stat-card.collapsed .stat-caret { transform: rotate(-90deg); }
-.stat-card.collapsed .stat-label { margin-bottom: 0; }
-.stat-card.collapsed > div { display: none; }
 
-.stat-item {
-  display: flex; justify-content: space-between; padding: 3px 0;
+/* Name / count / share-of-total -- a fixed template (not `auto` columns)
+   so the header and every data row line up, since each .stat-item is its
+   own independent grid box rather than a shared row of one grid. */
+.stat-item, .stat-list-header {
+  display: grid; grid-template-columns: 1fr 52px 56px; gap: 10px;
+  align-items: baseline;
 }
+.stat-item { padding: 3px 0; }
+.stat-list-header {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--dim); opacity: 0.7; padding-bottom: 4px;
+  border-bottom: 1px solid var(--border); margin-bottom: 2px;
+}
+.stat-list-header span:not(:first-child) { text-align: right; }
 
 .stat-link {
   cursor: pointer; color: var(--gold); text-decoration: none;
 }
 .stat-link:hover { text-decoration: underline; }
 
-.stat-count { color: var(--dim); font-variant-numeric: tabular-nums; }
+.stat-count, .stat-pct { color: var(--dim); font-variant-numeric: tabular-nums; text-align: right; }
 
 .view-bar {
   display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
@@ -1705,21 +1705,18 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   </div>
   <div class="stats-row" id="stats-row">
     <div class="stat-card">
-      <button type="button" class="stat-label" id="toggle-districts" aria-expanded="true" aria-controls="top-districts">
-        <span class="stat-caret">▾</span> Top Districts
-      </button>
+      <div class="stat-label">Top Districts</div>
+      <div class="stat-list-header"><span>District</span><span>Filings</span><span>% of total</span></div>
       <div id="top-districts" class="stat-list"></div>
     </div>
     <div class="stat-card">
-      <button type="button" class="stat-label" id="toggle-attorneys" aria-expanded="true" aria-controls="top-attorneys">
-        <span class="stat-caret">▾</span> Top Attorneys
-      </button>
+      <div class="stat-label">Top Attorneys</div>
+      <div class="stat-list-header"><span>Attorney</span><span>Filings</span><span>% of total</span></div>
       <div id="top-attorneys" class="stat-list"></div>
     </div>
     <div class="stat-card">
-      <button type="button" class="stat-label" id="toggle-landlords" aria-expanded="true" aria-controls="top-landlords">
-        <span class="stat-caret">▾</span> Top Landlords
-      </button>
+      <div class="stat-label">Top Landlords</div>
+      <div class="stat-list-header"><span>Landlord</span><span>Filings</span><span>% of total</span></div>
       <div id="top-landlords" class="stat-list"></div>
     </div>
   </div>
@@ -2697,6 +2694,10 @@ function updateSubtitle() {
 
 /* ───────────────────────── Existing per-case stats / filters / table ───────────────────────── */
 
+function statPct(count, total) {
+  return total ? ((100 * count) / total).toFixed(1) + '%' : '—';
+}
+
 function buildStats() {
   // getFiltered(), not allRows — these are a summary of what's currently
   // shown (filters + search applied), not a fixed all-time ranking. Cheap
@@ -2713,13 +2714,21 @@ function buildStats() {
   // whole ranking is reachable, not just a token slice of it.
   const topD = Object.entries(districts).sort((a, b) => b[1] - a[1]);
   const topA = Object.entries(attorneys).sort((a, b) => b[1] - a[1]);
+  // % is share of this card's OWN total (the sum of its own rows), not of
+  // every filtered case -- a filing with no district/attorney on file
+  // still counts toward the filtered total but has nowhere to rank, so
+  // dividing by the filtered count would make every card's percentages
+  // top out under 100%. Dividing by the card's own sum keeps "what does
+  // this number mean" answerable from the card alone.
+  const dTotal = topD.reduce((s, [, c]) => s + c, 0);
+  const aTotal = topA.reduce((s, [, c]) => s + c, 0);
 
   document.getElementById("top-districts").innerHTML = topD.map(([d, c]) =>
-    `<div class="stat-item"><span class="stat-link" onclick="setFilter('council_district','${d.replace(/'/g, "\\'")}')">${shorten(d, "Council District ")}</span><span class="stat-count">${c}</span></div>`
+    `<div class="stat-item"><span class="stat-link" onclick="setFilter('council_district','${d.replace(/'/g, "\\'")}')">${shorten(d, "Council District ")}</span><span class="stat-count">${c}</span><span class="stat-pct">${statPct(c, dTotal)}</span></div>`
   ).join("");
 
   document.getElementById("top-attorneys").innerHTML = topA.map(([a, c]) =>
-    `<div class="stat-item"><span class="stat-link" onclick="setFilter('Attorney','${a.replace(/'/g, "\\'")}')">${a.split(",")[0]}</span><span class="stat-count">${c}</span></div>`
+    `<div class="stat-item"><span class="stat-link" onclick="setFilter('Attorney','${a.replace(/'/g, "\\'")}')">${a.split(",")[0]}</span><span class="stat-count">${c}</span><span class="stat-pct">${statPct(c, aTotal)}</span></div>`
   ).join("");
 
   buildLandlordStat(filteredRows);
@@ -2845,8 +2854,9 @@ function buildLandlordStat(filteredRows) {
   if (!el) return;
   if (!llPropertyIndex) { el.innerHTML = '<div class="pp-gap-note">Building once the map data is ready (open the Map tab once)…</div>'; return; }
   landlordAgg = buildLandlordAggregation(filteredRows || getFiltered());
+  const total = landlordAgg.reduce((s, g) => s + g.totalCases, 0);
   el.innerHTML = landlordAgg.map(g =>
-    `<div class="stat-item"><span class="stat-link" onclick="setLandlordFilter('${escapeAttr(g.key)}', '${escapeAttr(g.label).replace(/'/g, "\\'")}')">${escapeHtml(g.label)}${g.isLmMatched ? '' : ' <span class="pp-gap-note" style="display:inline">(unmatched)</span>'}</span><span class="stat-count">${g.totalCases}</span></div>`
+    `<div class="stat-item"><span class="stat-link" onclick="setLandlordFilter('${escapeAttr(g.key)}', '${escapeAttr(g.label).replace(/'/g, "\\'")}')">${escapeHtml(g.label)}${g.isLmMatched ? '' : ' <span class="pp-gap-note" style="display:inline">(unmatched)</span>'}</span><span class="stat-count">${g.totalCases}</span><span class="stat-pct">${statPct(g.totalCases, total)}</span></div>`
   ).join('');
 }
 
@@ -8246,9 +8256,19 @@ function chatAreaSeries(grain) {
     s.set(m, (s.get(m) || 0) + 1);
   }
   const axis = sortMonthsAsc([...months]);
+  /* THE SNAPSHOT'S OWN MONTH IS DROPPED. The feed was fetched partway through
+     it, so its count is a partial observation of a month that has not
+     finished — measured live on 2026-09-04, district 19's last window read 35
+     against a running level near 85, and every series in the city carried the
+     same artificial collapse into its final step. A truncated observation is
+     not a low month, and letting one into a dynamical fit puts a downturn in
+     every area at once. */
+  const cut = casesUpdatedAt ? caseFileDateToMonth(
+    `${new Date(casesUpdatedAt).getMonth() + 1}/1/${new Date(casesUpdatedAt).getFullYear()}`) : null;
+  const full = cut && axis[axis.length - 1] === cut ? axis.slice(0, -1) : axis;
   const out = new Map();
-  for (const [k, s] of per) out.set(k, axis.map(m => s.get(m) || 0));
-  return { axis, series: out };
+  for (const [k, s] of per) out.set(k, full.map(m => s.get(m) || 0));
+  return { axis: full, series: out, droppedPartial: full.length !== axis.length ? axis[axis.length - 1] : null };
 }
 
 /* Delay embedding: the two windows DMD needs, one step apart. */
@@ -8263,14 +8283,32 @@ function chatHankel(series, delays) {
   return { X, Xp };
 }
 
+/* THE TREND MODE IS THE ONE THAT DOES NOT OSCILLATE.
+
+   `dmd` returns eigenvalues sorted by magnitude, and taking the first was
+   wrong: on a series with a season in it the largest mode is the season, an
+   oscillation whose |λ| sits near one, and its `growth` is a property of the
+   cycle rather than of the direction. Measured live on the real docket, that
+   read council district 19 as expanding while its filings had gone 1,003 →
+   919 over the same two years — a true number about the wrong mode.
+
+   A trend is by definition the component that does not come back around, so
+   the mode to read is the one whose frequency is closest to zero. That is
+   what the word means, not a rank chosen here; `dmd` already returns each
+   eigenvalue's own frequency, so the selection is read off the spectrum. */
 function chatGrowth(series, delays) {
   const h = chatHankel(series, delays);
   if (!h) return null;
   let out;
   try { out = chatDyn.dmd(h.X, h.Xp, { rank: 'numerical' }); }
   catch (_) { return null; }
-  const lead = out.eigenvalues[0];
-  return lead && Number.isFinite(lead.growth) ? lead.growth : null;
+  let best = null;
+  for (const v of out.eigenvalues) {
+    if (!Number.isFinite(v.growth)) continue;
+    if (!best || Math.abs(v.frequency) < Math.abs(best.frequency)
+      || (Math.abs(v.frequency) === Math.abs(best.frequency) && v.magnitude > best.magnitude)) best = v;
+  }
+  return best ? best.growth : null;
 }
 
 /* The measured direction of one area, and how much of it survived its own
@@ -8293,18 +8331,34 @@ function chatTrend(name, series, { delays, draws, seed }) {
     total: series.reduce((a, b) => a + b, 0),
     recent: series.slice(-delays).reduce((a, b) => a + b, 0),
     prior: series.slice(-2 * delays, -delays).reduce((a, b) => a + b, 0),
+    // The window the TREND is actually fitted over, so the column beside it
+    // is the same claim rather than a different, shorter one.
+    firstYear: series.slice(0, delays).reduce((a, b) => a + b, 0),
+    lastYear: series.slice(-delays).reduce((a, b) => a + b, 0),
   };
 }
 
 async function chatTrendArtifact(grain) {
   await ensureChatDynamics();
-  const { axis, series } = chatAreaSeries(grain);
+  const { axis, series, droppedPartial } = chatAreaSeries(grain);
   const need = CHAT_DELAYS + 3;   // structural: the embedding needs this many
   const found = [];
   let considered = 0, tooShort = 0;
-  for (const [name, s] of series) {
-    if (s.length < need) { tooShort++; continue; }
+  // Sparse areas are excluded on a STRUCTURAL ground, not a chosen floor: the
+  // embedding needs more distinct filing months than it has delays, and an
+  // area that never filed in most months cannot supply them.
+  const eligible = [...series.entries()].filter(([, s]) => s.length >= need && s.filter(v => v > 0).length > CHAT_DELAYS);
+  tooShort = series.size - eligible.length;
+  let done = 0;
+  for (const [name, s] of eligible) {
     considered++;
+    // Yield to the paint loop so a long run reports progress instead of
+    // freezing the tab — 300 tracts is a real wait and a silent one reads
+    // as a hang.
+    if (++done % 12 === 0) {
+      chatSetStatus(`fitting dynamics and its null — ${done} of ${eligible.length} ${grain === 'tract' ? 'tracts' : 'districts'}…`, 'busy');
+      await new Promise(r => setTimeout(r, 0));
+    }
     const t = chatTrend(name, s, { delays: CHAT_DELAYS, draws: CHAT_DRAWS, seed: CHAT_SEED });
     // Beat every draw, or it is not reported. Not a chosen bar — it is what
     // "this is not what the method does to noise" means at this many draws.
@@ -8317,7 +8371,8 @@ async function chatTrendArtifact(grain) {
     value: t.growth,
     cells: [
       grain === 'tract' ? `Tract ${t.name}` : `District ${t.name}`,
-      t.growth.toFixed(3),
+      `${(t.growth * 100).toFixed(1)}%/mo`,
+      `${t.firstYear.toLocaleString()} → ${t.lastYear.toLocaleString()}`,
       `${t.prior.toLocaleString()} → ${t.recent.toLocaleString()}`,
       t.total.toLocaleString(),
     ],
@@ -8329,11 +8384,15 @@ async function chatTrendArtifact(grain) {
       title: found.length
         ? `Where filings are headed — ${found.length} of ${considered} ${grain === 'tract' ? 'tracts' : 'districts'} with expanding dynamics that beat their own null`
         : `No ${grain === 'tract' ? 'tract' : 'district'} shows expansion that survives its own null`,
-      head: [label, 'Growth (log |λ|)', 'Prior yr → last yr', 'All filings'],
+      // Two different spans, labelled as two different spans. The trend is
+      // fitted over the WHOLE window; the last-two-years column is a separate
+      // fact and is allowed to disagree with it, which on a district that rose
+      // for four years and then plateaued it will.
+      head: [label, 'Trend', 'First yr → last yr', 'Prior yr → last yr', 'All filings'],
       rows: rows.length ? rows : [{
         label: 'none', value: 0,
         cells: [`${considered} ${grain === 'tract' ? 'tracts' : 'districts'} tested`,
-          '—',
+          '—', '—',
           'every expanding fit was matched by the same series shuffled',
           '—'],
       }],
@@ -8346,12 +8405,15 @@ async function chatTrendArtifact(grain) {
       commit: EO7_COMMIT,
       embedding: `Hankel delay embedding, ${CHAT_DELAYS} delays (one year), one month per step`,
       modelOrder: 'numerical — derived from the spectrum, never a chosen rank',
-      statistic: 'growth = log|λ| of the leading DMD eigenvalue',
+      statistic: 'growth = log|λ| of the eigenvalue whose frequency is nearest zero — the non-oscillating mode',
       nullModel: `the same series shuffled ${CHAT_DRAWS} times with a seeded Fisher-Yates, destroying time order and preserving every count`,
       seed: CHAT_SEED,
       reported: 'only areas whose real growth exceeded every shuffled draw',
-      excluded: `${tooShort} areas carried fewer than ${need} months and cannot support the embedding at all`,
+      excluded: `${tooShort} areas either carried fewer than ${need} months or filed in too few of them to fill ${CHAT_DELAYS} delays, and cannot support the embedding at all`,
+      modeSelection: 'the eigenvalue whose frequency is closest to zero — the component that does not oscillate, which is what a trend is',
       months: axis.length,
+      window: axis.length ? `${axis[0]} to ${axis[axis.length - 1]}` : null,
+      droppedPartialMonth: droppedPartial,
       warning: 'growth is the direction this area\'s own past dynamics are carrying, measured against a null. It is not a forecast, and it does not account for anything outside the filing record.',
     },
   };
@@ -8927,7 +8989,7 @@ async function askChat(q) {
         + `${t.found.length} beat every draw${t.tooShort ? `; ${t.tooShort} too short to embed` : ''}`,
         refs) + chatExportStrip(d));
       addChatMessage('assistant',
-        `<p class="method-note">Growth is log|λ| of the leading mode: it is the direction this area's own past filings are carrying, measured against what the same numbers produce in a shuffled order. It is not a forecast, and nothing outside the filing record is in it.</p>`);
+        `<p class="method-note">Trend is log|λ| of the mode that does not oscillate — the seasonal modes are set aside on purpose. It is the direction this area's own past filings are carrying, measured against what the same numbers produce in a shuffled order. It is not a forecast, and nothing outside the filing record is in it.</p>`);
       return;
     } catch (e) {
       console.warn('[eo/chat] dynamics failed:', e);
@@ -9151,27 +9213,9 @@ function bindViewControls() {
     if (hzc) hzc.textContent = '+';
   }
 
-  // The summary cards collapse and stay collapsed. They are context, not
-  // the point of the page, and above a map they cost the one thing the map
-  // needs most: vertical room.
-  for (const [btnId, key] of [['toggle-districts', 'districts'], ['toggle-attorneys', 'attorneys'], ['toggle-landlords', 'landlords']]) {
-    const btn = document.getElementById(btnId);
-    if (!btn) continue;
-    const card = btn.closest('.stat-card');
-    const apply = (collapsed) => {
-      card.classList.toggle('collapsed', collapsed);
-      btn.setAttribute('aria-expanded', String(!collapsed));
-    };
-    apply(localStorage.getItem('eo-collapse-' + key) === '1');
-    btn.addEventListener('click', () => {
-      const next = !card.classList.contains('collapsed');
-      apply(next);
-      try { localStorage.setItem('eo-collapse-' + key, next ? '1' : '0'); } catch {}
-    });
-  }
-
-  // One more toggle above those three: collapse the whole overview row at
-  // once, not just one card at a time.
+  // The whole overview row collapses as a unit -- individual cards don't
+  // each get their own collapse control, since a card half-collapsed and
+  // two expanded is a worse read than either all-shown or all-hidden.
   const rowBtn = document.getElementById('stats-row-collapse');
   const row = document.getElementById('stats-row');
   if (rowBtn && row) {
