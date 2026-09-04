@@ -1547,18 +1547,11 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
       <label>District</label>
       <select id="timeline-district-select"></select>
     </div>
-    <div class="group" id="coverage-mode-group" style="display:none">
-      <label>By</label>
-      <div class="seg" id="coverage-mode-seg">
-        <button data-val="district" class="on">District</button>
-        <button data-val="tract">Tract</button>
-      </div>
-    </div>
     <div class="group" id="coverage-dir-group" style="display:none">
       <label>Order</label>
       <div class="seg" id="coverage-dir-seg">
-        <button data-val="desc" class="on">Newest left</button>
-        <button data-val="asc">Oldest left</button>
+        <button data-val="desc" class="on">Newest first</button>
+        <button data-val="asc">Oldest first</button>
       </div>
     </div>
     <div class="group" id="map-mode-group" style="display:none">
@@ -2223,7 +2216,6 @@ let filters = {};
 let activeDropdown = null;
 
 let viewMode = 'cases';       // 'cases' | 'districts' | 'timeline' | 'coverage' | 'map' | 'sources'
-let coverageMode = 'district';// 'district' | 'tract'
 let coverageDir  = 'desc';    // 'desc' = newest on left, 'asc' = oldest on left
 // The map draws OUR OWN scrape only. Princeton's Eviction Lab counts remain
 // available where they are a fair comparison (the tract detail panel shows
@@ -3064,22 +3056,16 @@ function updateCoverageHeadline() {
     el.innerHTML = '<span style="color:var(--dim)">Fetching Princeton CSV…</span>';
     return;
   }
-  // Pick the most recent month with overlap (Princeton > 0 for at least one
-  // district/tract). Both series now run to the present, so under normal
-  // conditions this resolves on the first or second month tried.
+  // Pick the most recent month with overlap (Princeton > 0 citywide).
+  // Both series now run to the present, so under normal conditions this
+  // resolves on the first or second month tried.
   const months = recentMonthsUnion(24).slice().reverse(); // newest first
-  const p = coverageMode === 'tract' ? agg.princetonTract : agg.princetonDistrict;
-  const l = coverageMode === 'tract' ? agg.localTract     : agg.localDistrict;
   for (const m of months) {
-    const ratios = [];
-    for (const k in p) {
-      const pv = p[k][m] || 0;
-      const lv = (l[k] && l[k][m]) || 0;
-      if (pv > 0) ratios.push(lv / pv);
-    }
-    const med = median(ratios);
-    if (med != null) {
-      el.innerHTML = `Coverage for <strong>${m}</strong>: <strong>${(med * 100).toFixed(0)}%</strong> of Princeton (median across ${ratios.length} ${coverageMode}s)`;
+    let pv = 0, lv = 0;
+    for (const k in agg.princetonDistrict) pv += (agg.princetonDistrict[k][m] || 0);
+    for (const k in agg.localDistrict) lv += (agg.localDistrict[k] && agg.localDistrict[k][m]) || 0;
+    if (pv > 0) {
+      el.innerHTML = `Coverage for <strong>${m}</strong>: <strong>${((lv / pv) * 100).toFixed(0)}%</strong> of Princeton (citywide)`;
       return;
     }
   }
@@ -3087,6 +3073,24 @@ function updateCoverageHeadline() {
 }
 
 /* ───────────────────────── Coverage view (District or Tract) ───────────────────────── */
+
+// One citywide total per source per month — sum across every district
+// rather than a district-by-district (or tract-by-tract) breakdown. The
+// breakdown answered "which districts are under-covered"; this answers
+// the simpler question the view exists for first: overall, is the scrape
+// keeping up with Princeton, month by month.
+function coverageMonthlyTotals() {
+  const totalFor = (bySource, m) => {
+    let t = 0;
+    for (const k in bySource) t += (bySource[k][m] || 0);
+    return t;
+  };
+  return allMonthsUnion().map(m => ({
+    month: m,
+    princeton: totalFor(agg.princetonDistrict, m),
+    scraped: totalFor(agg.localDistrict, m),
+  }));
+}
 
 function renderCoverageGrid() {
   const root = document.getElementById('grid-view');
@@ -3096,64 +3100,25 @@ function renderCoverageGrid() {
     return;
   }
 
-  let months = allMonthsUnion();
-  if (!months.length) {
+  let rows = coverageMonthlyTotals();
+  if (!rows.length) {
     root.innerHTML = `<div class="notice">No monthly data on either side yet.</div>`;
     return;
   }
-  if (coverageDir === 'desc') months = months.slice().reverse();
+  if (coverageDir === 'desc') rows = rows.slice().reverse();
 
-  const isTract = coverageMode === 'tract';
-  const princeton = isTract ? agg.princetonTract    : agg.princetonDistrict;
-  const local     = isTract ? agg.localTract        : agg.localDistrict;
+  let html = `<div class="coverage-tbl-wrap"><table class="coverage-tbl"><thead><tr>
+    <th>Month</th><th class="num">Princeton</th><th class="num">Scraped</th><th class="num">Coverage</th>
+  </tr></thead><tbody>`;
 
-  /* Row keys = union of both sides, so a tract or district that appears on only
-     one side still gets a row rather than disappearing. But rows Princeton has
-     no data for can't show a ratio, and in tract mode there are a lot of them —
-     the scrape picks up out-of-county tracts (a Rutherford or Sumner address in
-     a Nashville court record) that Eviction Lab never covers, and by raw GEOID
-     order those sort ahead of Davidson County. Leading with a screenful of
-     dashes buries the comparison the view exists to show, so comparable rows
-     come first and one-sided rows follow. */
-  const allKeys = [...new Set([...Object.keys(princeton), ...Object.keys(local)])];
-  const comparable = k => (princeton[k] ? 0 : 1);
-  const keys = allKeys.sort((a, b) => {
-    const c = comparable(a) - comparable(b);
-    if (c) return c;
-    const an = parseInt(a, 10), bn = parseInt(b, 10);
-    if (!isNaN(an) && !isNaN(bn)) return an - bn;
-    return a.localeCompare(b);
-  });
-  const oneSided = allKeys.filter(k => comparable(k)).length;
-
-  const labelFor = isTract
-    ? (k => { const info = agg.tractInfo[k]; return info && info.name ? info.name : `Tract ${k}`; })
-    : (k => `D${k}`);
-
-  let html = `<div class="coverage-tbl-wrap"><table class="coverage-tbl"><thead><tr><th>${isTract ? 'Tract' : 'District'}</th><th>Source</th>`;
-  for (const m of months) html += `<th class="num">${m}</th>`;
-  html += `</tr></thead><tbody>`;
-
-  for (const k of keys) {
-    html += `<tr class="dist-princeton"><td class="row-label" rowspan="2">${labelFor(k)}</td><td class="src-label src-princeton">Princeton</td>`;
-    for (const m of months) {
-      const v = princeton[k] && princeton[k][m];
-      html += `<td class="num">${v != null ? v : '—'}</td>`;
+  for (const { month, princeton, scraped } of rows) {
+    if (princeton === 0) {
+      html += `<tr><td class="row-label">${month}</td><td class="num">—</td><td class="num">${scraped || '—'}</td><td class="num cell-na">—</td></tr>`;
+    } else {
+      const ratio = scraped / princeton;
+      html += `<tr><td class="row-label">${month}</td><td class="num">${princeton}</td><td class="num">${scraped}</td>
+        <td class="num ${ratioClass(ratio)}">${(ratio * 100).toFixed(0)}%</td></tr>`;
     }
-    html += `</tr>`;
-
-    html += `<tr class="dist-scraped"><td class="src-label src-scraped">Scraped</td>`;
-    for (const m of months) {
-      const p = princeton[k] && princeton[k][m];
-      const lv = (local[k] && local[k][m]) || 0;
-      if (p == null || p === 0) {
-        html += `<td class="num cell-na">${lv || '—'}</td>`;
-      } else {
-        const ratio = lv / p;
-        html += `<td class="num ${ratioClass(ratio)}"><div class="cell-stack"><span>${lv}</span><span class="ratio">${(ratio*100).toFixed(0)}%</span></div></td>`;
-      }
-    }
-    html += `</tr>`;
   }
   html += `</tbody></table></div>`;
 
@@ -3161,10 +3126,8 @@ function renderCoverageGrid() {
     <span><span class="sw green"></span> Scraped ≥85% of Princeton</span>
     <span><span class="sw amber"></span> 50–85%</span>
     <span><span class="sw red"></span> &lt;50%</span>
-    <span style="color:var(--dim)">Princeton CSV is live from evictionlab.org · only months where Princeton > 0 get a ratio · showing ${months.length} months</span>
-    <span style="color:var(--dim)">Scraped tracts come from the geocoded GEOID where present, otherwise the court record's tract code within Davidson County.</span>
-    ${princetonSealedTotal() ? `<span style="color:var(--dim)">${princetonSealedTotal().toLocaleString()} Princeton filings carry no tract (sealed addresses) and appear in no row above.</span>` : ''}
-    ${oneSided ? `<span style="color:var(--dim)">Last ${oneSided.toLocaleString()} ${isTract ? 'tracts' : 'districts'}: scraped cases with no Princeton counterpart (mostly addresses outside Davidson County) — nothing to compare, so no ratio.</span>` : ''}
+    <span style="color:var(--dim)">Princeton CSV is live from evictionlab.org · citywide total, every district summed · showing ${rows.length} months</span>
+    ${princetonSealedTotal() ? `<span style="color:var(--dim)">${princetonSealedTotal().toLocaleString()} Princeton filings carry no tract (sealed addresses) and aren't in either total.</span>` : ''}
   </div>`;
 
   root.innerHTML = html;
@@ -7007,7 +6970,6 @@ function setVisibility() {
   document.getElementById('live-view').style.display          = isLive      ? '' : 'none';
   document.getElementById('chat-view').style.display          = isChat      ? '' : 'none';
   document.getElementById('timeline-district-group').style.display = isTimeline ? '' : 'none';
-  document.getElementById('coverage-mode-group').style.display = isCoverage ? '' : 'none';
   document.getElementById('coverage-dir-group').style.display  = isCoverage ? '' : 'none';
   document.getElementById('map-mode-group').style.display      = isMap      ? '' : 'none';
   document.getElementById('map-layers-group').style.display    = isMap      ? '' : 'none';
@@ -7511,13 +7473,6 @@ function bindViewControls() {
       document.querySelectorAll('#view-seg button').forEach(x => x.classList.toggle('on', x === b));
       render();
       syncMapUrl();
-    });
-  });
-  document.querySelectorAll('#coverage-mode-seg button').forEach(b => {
-    b.addEventListener('click', () => {
-      coverageMode = b.dataset.val;
-      document.querySelectorAll('#coverage-mode-seg button').forEach(x => x.classList.toggle('on', x === b));
-      if (viewMode === 'coverage') render();
     });
   });
   document.querySelectorAll('#coverage-dir-seg button').forEach(b => {
