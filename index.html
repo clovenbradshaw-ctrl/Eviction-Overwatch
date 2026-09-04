@@ -1587,12 +1587,42 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
         <button data-val="unusual" title="Is this building's recent rate unusual for ITSELF, against reshuffles of its own history?">Unusual for itself</button>
       </div>
     </div>
+    <div class="group" id="map-search-group" style="display:none">
+      <label>Find</label>
+      <input id="map-search" type="text" placeholder="Landlord, address, attorney, plaintiff, docket…" style="width:220px">
+      <span id="map-search-status" class="pp-gap-note" style="margin-left:6px"></span>
+    </div>
     <div class="coverage" id="coverage-headline"></div>
   </div>
 
   <div class="toolbar" id="local-toolbar">
     <input id="search" placeholder="Search docket, plaintiff, attorney, address...">
     <div class="filter-row" id="filters"></div>
+  </div>
+
+  <!-- Universal: visible on every view, right under the (also universal)
+       search/filter bar, not just on Cases -- a summary of whatever's
+       currently filtered, wherever you're looking at it from.
+       filter-aware: buildStats() reads getFiltered(), not allRows. -->
+  <div class="stats-row" id="stats-row">
+    <div class="stat-card">
+      <button type="button" class="stat-label" id="toggle-districts" aria-expanded="true" aria-controls="top-districts">
+        <span class="stat-caret">▾</span> Top Districts
+      </button>
+      <div id="top-districts" class="stat-list"></div>
+    </div>
+    <div class="stat-card">
+      <button type="button" class="stat-label" id="toggle-attorneys" aria-expanded="true" aria-controls="top-attorneys">
+        <span class="stat-caret">▾</span> Top Attorneys
+      </button>
+      <div id="top-attorneys" class="stat-list"></div>
+    </div>
+    <div class="stat-card">
+      <button type="button" class="stat-label" id="toggle-landlords" aria-expanded="true" aria-controls="top-landlords">
+        <span class="stat-caret">▾</span> Top Landlords
+      </button>
+      <div id="top-landlords" class="stat-list"></div>
+    </div>
   </div>
 
   <div class="table-header" id="table-header">
@@ -1719,32 +1749,6 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
       <input id="chat-input" placeholder="Ask about the case data — tables and charts are computed live from the snapshot…" autocomplete="off">
       <button type="submit" id="chat-send">Send</button>
     </form>
-  </div>
-
-  <!-- Below every view's own controls on purpose (search/filters on Cases,
-       the timeline scrubber + layer toggles on Map, etc.) -- these are a
-       summary of what's currently shown there, not a fixed all-time
-       ranking sitting above the controls that produce the view. Also
-       filter-aware: buildStats() reads getFiltered(), not allRows. -->
-  <div class="stats-row" id="stats-row">
-    <div class="stat-card">
-      <button type="button" class="stat-label" id="toggle-districts" aria-expanded="true" aria-controls="top-districts">
-        <span class="stat-caret">▾</span> Top Districts
-      </button>
-      <div id="top-districts" class="stat-list"></div>
-    </div>
-    <div class="stat-card">
-      <button type="button" class="stat-label" id="toggle-attorneys" aria-expanded="true" aria-controls="top-attorneys">
-        <span class="stat-caret">▾</span> Top Attorneys
-      </button>
-      <div id="top-attorneys" class="stat-list"></div>
-    </div>
-    <div class="stat-card">
-      <button type="button" class="stat-label" id="toggle-landlords" aria-expanded="true" aria-controls="top-landlords">
-        <span class="stat-caret">▾</span> Top Landlords
-      </button>
-      <div id="top-landlords" class="stat-list"></div>
-    </div>
   </div>
 </div>
 
@@ -2433,6 +2437,10 @@ function applyInitialCases(data) {
   allRows = Object.entries(cases).map(([docket, c]) => ({ docket, ...c }));
   enrichCaseRows(allRows);
   rebuildLocalAggregates();
+  // Eager, not lazy-on-Map-tab-visit: buildPropertyIndex() is pure data
+  // (groups allRows by geocoded address, no Leaflet/DOM involved), so
+  // Top Landlords doesn't need to wait for anyone to open the Map view.
+  llPropertyIndex = buildPropertyIndex();
 
   document.getElementById("loading").style.display = "none";
   document.getElementById("app").style.display = "block";
@@ -2513,6 +2521,7 @@ async function refetchSnapshot() {
   allRows = Object.entries(cases).map(([docket, c]) => ({ docket, ...c }));
   enrichCaseRows(allRows);
   rebuildLocalAggregates();
+  llPropertyIndex = buildPropertyIndex(); // keep Top Landlords current on background refresh too
   if (princetonRows) rebuildPrincetonAggregates();
 
   document.getElementById('updated').textContent = 'Updated ' + (casesUpdatedAt || '—').split('T')[0];
@@ -2609,6 +2618,32 @@ function landlordNetworkKey(portfolioUrl) {
   const i = parts.indexOf('search');
   if (i === -1 || parts.length < i + 4) return portfolioUrl; // shouldn't happen; fall back rather than crash
   return `${parts[i + 2]}:${parts[i + 3]}`;
+}
+
+// General-purpose version of the same merge, for any arbitrary set of case
+// rows (an attorney's cases, a district's cases, a holon group's cases) --
+// not just the whole-dataset Top Landlords card. Groups by Landlord Mapper
+// network (via the row's own property key) when a confident match exists,
+// falling back to the raw Plaintiff_1 string otherwise, so "GEP XI COLLINS
+// CREEK, LLC DBA AVANA COLLINS CREEK" and "GEP X BELL ROAD, LLC DBA AVANA
+// OVERLOOK" merge into their real shared owner instead of listing as two
+// unrelated LLCs just because that's how each filing happened to be styled.
+function topLandlordsFor(rows, n = 8) {
+  const counts = new Map(); // label -> count
+  for (const r of rows) {
+    const raw = (r.Plaintiff_1 || '').trim();
+    if (!raw) continue;
+    let label = raw;
+    if (r.address_formatted) {
+      const key = normalizeAddressKey(r.address_formatted);
+      const assertion = key && lmSnapshotByKey ? lmSnapshotByKey.get(key) : null;
+      if (assertion?.status === 'matched' && assertion.data?.networkName) {
+        label = assertion.data.networkName;
+      }
+    }
+    counts.set(label, (counts.get(label) || 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, n);
 }
 
 function buildLandlordAggregation(filteredRows) {
@@ -3900,6 +3935,7 @@ function updateMapLayerVisibility() {
   }
   document.getElementById('ll-mode-group').style.display        = evictionsOn    ? '' : 'none';
   document.getElementById('ll-signal-group').style.display      = evictionsOn    ? '' : 'none';
+  document.getElementById('map-search-group').style.display     = evictionsReady ? '' : 'none';
   document.getElementById('hotzones').style.display             = evictionsReady ? '' : 'none';
   document.getElementById('clip-bar').style.display             = evictionsReady ? '' : 'none';
   document.getElementById('ll-highlight-banner').style.display  = (evictionsOn && llHighlightKeys) ? '' : 'none';
@@ -4599,16 +4635,15 @@ function showHolonProfile(i) {
   const rowFilter = holonMemberRowFilter(grain, g.members);
   const rows = allRows.filter(rowFilter);
 
-  const months = {}, landlords = {}, districts = {};
+  const months = {}, districts = {};
   for (const r of rows) {
     const m = caseFileDateToMonth(r.file_date);
     if (m) months[m] = (months[m] || 0) + 1;
-    if (r.Plaintiff_1) landlords[r.Plaintiff_1] = (landlords[r.Plaintiff_1] || 0) + 1;
     if (r.council_district) districts[r.council_district] = (districts[r.council_district] || 0) + 1;
   }
   const monthKeys = sortMonthsAsc(Object.keys(months));
   const maxMonth = Math.max(1, ...monthKeys.map(m => months[m]));
-  const topLandlords = Object.entries(landlords).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const topLandlords = topLandlordsFor(rows, 8);
   const topDistricts = Object.entries(districts).sort((a, b) => b[1] - a[1]).slice(0, 6);
   const recentCases = [...rows].sort((x, y) => (parseUsDate(y.file_date) || 0) - (parseUsDate(x.file_date) || 0)).slice(0, 10);
 
@@ -5147,6 +5182,56 @@ function clearLandlordHighlight() {
   llHighlightLayer = null;
   const banner = document.getElementById('ll-highlight-banner');
   if (banner) banner.style.display = 'none';
+  const searchInput = document.getElementById('map-search');
+  const searchStatus = document.getElementById('map-search-status');
+  if (searchInput) searchInput.value = '';
+  if (searchStatus) searchStatus.textContent = '';
+}
+
+// Free-text search across every geocoded property — landlord (raw
+// plaintiff name AND, when matched, the Landlord Mapper network name),
+// address, attorney, or docket. Reuses the same highlight-ring layer as
+// "show this group/portfolio on the map" (applyLandlordHighlight), but
+// with its own banner text since a match here isn't necessarily a
+// Landlord Mapper claim at all — could just be an attorney or docket hit.
+function searchMapProperties(query) {
+  const status = document.getElementById('map-search-status');
+  const q = query.trim().toLowerCase();
+  if (!q) { clearLandlordHighlight(); return; }
+  if (!llPropertyIndex) { if (status) status.textContent = 'map data not ready yet'; return; }
+
+  const matches = llPropertyIndex.properties.filter(p => {
+    if (p.addressDisplay.toLowerCase().includes(q)) return true;
+    if (p.primaryLandlord && p.primaryLandlord.toLowerCase().includes(q)) return true;
+    const assertion = lmSnapshotByKey && lmSnapshotByKey.get(p.key);
+    if (assertion?.data?.networkName?.toLowerCase().includes(q)) return true;
+    return p.cases.some(c =>
+      (c.Attorney || '').toLowerCase().includes(q) ||
+      (c.Plaintiff_1 || '').toLowerCase().includes(q) ||
+      (c.docket || '').toLowerCase().includes(q)
+    );
+  });
+
+  llHighlightKeys = new Set(matches.map(p => p.key));
+  llHighlightLabel = query;
+  rebuildLandlordHighlightLayer();
+
+  const banner = document.getElementById('ll-highlight-banner');
+  const text = document.getElementById('ll-highlight-text');
+  if (banner && text) {
+    if (matches.length) {
+      text.innerHTML = `Showing ${matches.length} propert${matches.length === 1 ? 'y' : 'ies'} matching "${escapeHtml(query)}"`;
+      banner.style.display = '';
+    } else {
+      banner.style.display = 'none';
+    }
+  }
+  if (status) status.textContent = matches.length ? `${matches.length} match${matches.length === 1 ? '' : 'es'}` : 'no matches';
+
+  if (llHighlightLayer && matches.length) {
+    const bounds = llHighlightLayer.getBounds();
+    if (bounds.isValid()) leafletMap.fitBounds(bounds, { padding: [40, 40] });
+  }
 }
 
 function rebuildLandlordHighlightLayer() {
@@ -6478,7 +6563,7 @@ function showDistrictProfile(district) {
   if (!a) return;
 
   const topList = (obj, n) => Object.entries(obj).sort((x, y) => y[1] - x[1]).slice(0, n);
-  const topPlaintiffs = topList(a.plaintiffs, 5);
+  const topPlaintiffs = topLandlordsFor(a.rows, 5);
   const topAttorneys  = topList(a.attorneys, 5);
 
   const tractCounts = {};
@@ -6781,15 +6866,14 @@ function showAttorneyProfile(attorney) {
   if (!rows.length) return;
 
   const topList = (obj, n) => Object.entries(obj).sort((x, y) => y[1] - x[1]).slice(0, n);
-  const districts = {}, plaintiffs = {}, months = {};
+  const districts = {}, months = {};
   for (const r of rows) {
     if (r.council_district) districts[r.council_district] = (districts[r.council_district] || 0) + 1;
-    if (r.Plaintiff_1) plaintiffs[r.Plaintiff_1] = (plaintiffs[r.Plaintiff_1] || 0) + 1;
     const m = caseFileDateToMonth(r.file_date);
     if (m) months[m] = (months[m] || 0) + 1;
   }
   const topDistricts = topList(districts, 8);
-  const topPlaintiffs = topList(plaintiffs, 8);
+  const topPlaintiffs = topLandlordsFor(rows, 8);
   const monthKeys = sortMonthsAsc(Object.keys(months));
   const maxMonth = Math.max(1, ...monthKeys.map(m => months[m]));
 
@@ -6965,7 +7049,7 @@ function setVisibility() {
   const isSources   = viewMode === 'sources';
   const isLive      = viewMode === 'live';
   const isChat      = viewMode === 'chat';
-  document.getElementById('local-toolbar').style.display      = isCases     ? '' : 'none';
+  document.getElementById('local-toolbar').style.display      = '';  // universal — search/filters apply on every view, not just Cases
   document.getElementById('table-header').style.display       = isCases     ? '' : 'none';
   document.getElementById('local-table-wrap').style.display   = isCases     ? '' : 'none';
   document.getElementById('districts-view').style.display     = isDistricts ? '' : 'none';
@@ -6986,6 +7070,7 @@ function setVisibility() {
     document.getElementById('map-year-group').style.display = 'none';
     document.getElementById('ll-mode-group').style.display  = 'none';
     document.getElementById('ll-signal-group').style.display = 'none';
+    document.getElementById('map-search-group').style.display = 'none';
   }
 }
 
@@ -7538,6 +7623,14 @@ function bindViewControls() {
     if (viewMode === 'map') renderMapView();
   });
   document.getElementById('ll-highlight-clear').addEventListener('click', () => clearLandlordHighlight());
+  (function () {
+    let t = null;
+    document.getElementById('map-search').addEventListener('input', (e) => {
+      clearTimeout(t);
+      const val = e.target.value;
+      t = setTimeout(() => searchMapProperties(val), 200);
+    });
+  })();
   document.querySelectorAll('#hz-seg button').forEach(b => {
     b.addEventListener('click', () => {
       hzView = b.dataset.val;
