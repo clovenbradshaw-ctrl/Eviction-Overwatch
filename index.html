@@ -1091,6 +1091,196 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 @keyframes live-blink { 50% { opacity: 0; } }
 .live-empty { color: #1f5c1f; font-style: italic; padding: 10px 12px; }
 
+/* ── TN detainer summons auto-fill ───────────────────────────────────────
+   Rendered on white paper on purpose: this is a court form, and a blank on
+   a dark UI panel reads as styling while a blank on a form reads as missing
+   information -- which is the whole point of showing it. */
+.tnf-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.78);
+  z-index: 2500; display: flex; flex-direction: column;
+  align-items: center; overflow: auto; padding: 18px 12px 40px;
+}
+.tnf-bar {
+  position: sticky; top: 0; z-index: 3;
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  width: 100%; max-width: 1120px; margin-bottom: 12px;
+  padding: 10px 12px; border-radius: 5px;
+  background: var(--surface); border: 1px solid var(--border);
+}
+.tnf-bar .tnf-doc { font-family: var(--mono); font-size: 12px; color: var(--gold); }
+.tnf-bar .tnf-cov { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.tnf-bar .tnf-cov b { color: var(--text); font-variant-numeric: tabular-nums; }
+.tnf-bar .sp { margin-left: auto; }
+.tnf-bar button {
+  font-family: var(--mono); font-size: 11px; cursor: pointer;
+  color: var(--muted); background: transparent;
+  border: 1px solid var(--border); border-radius: 3px; padding: 5px 10px;
+}
+.tnf-bar button:hover { color: var(--gold); border-color: var(--gold-dim); }
+
+.tnf-paper {
+  position: relative; width: 100%; max-width: 1120px;
+  background: #fff; color: #111; padding: 26px 30px 34px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.55);
+  font-family: "Times New Roman", Times, serif; font-size: 12.5px; line-height: 1.55;
+}
+.tnf-demo {
+  background: #ffe9a8; border: 1.5px solid #8a6d1f; color: #4a3a0c;
+  font-family: var(--mono); font-size: 11px; font-weight: 700;
+  letter-spacing: .04em; text-align: center; text-transform: uppercase;
+  padding: 7px 10px; margin-bottom: 16px;
+}
+/* Diagonal watermark. pointer-events:none so text stays selectable under it. */
+.tnf-wm {
+  position: absolute; inset: 0; overflow: hidden;
+  pointer-events: none; z-index: 2;
+}
+.tnf-wm span {
+  position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%) rotate(-32deg);
+  font-family: var(--mono); font-weight: 700;
+  font-size: clamp(30px, 7vw, 78px); letter-spacing: .10em;
+  color: rgba(190, 30, 30, 0.13); white-space: nowrap; text-align: center;
+  line-height: 1.35;
+}
+.tnf-sheet { position: relative; z-index: 1; }
+
+.tnf-cols { display: flex; gap: 22px; align-items: flex-start; }
+.tnf-col-l { flex: 1 1 62%; min-width: 0; }
+.tnf-col-r { flex: 1 1 38%; min-width: 0; border-left: 1.5px solid #111; padding-left: 14px; }
+@media (max-width: 820px) {
+  .tnf-cols { flex-direction: column; }
+  .tnf-col-r { border-left: 0; border-top: 1.5px solid #111; padding-left: 0; padding-top: 12px; }
+}
+.tnf-blk { border: 1.5px solid #111; padding: 8px 10px; margin-bottom: 12px; }
+.tnf-blk > .tnf-blk-name {
+  font-family: var(--mono); font-size: 9px; font-weight: 700;
+  letter-spacing: .16em; text-transform: uppercase;
+  border-bottom: 1px solid #111; padding-bottom: 4px; margin-bottom: 8px;
+}
+.tnf-f { margin: 0 0 7px; }
+.tnf-f .k {
+  display: block; font-family: var(--mono); font-size: 8.5px;
+  letter-spacing: .10em; text-transform: uppercase; color: #555;
+}
+.tnf-f .v {
+  display: block; min-height: 17px; border-bottom: 1px solid #111;
+  padding: 1px 2px 1px; word-break: break-word;
+}
+/* Filled from this case's own record. */
+.tnf-f .v.has { color: #0d2f6b; font-weight: 600; }
+/* Known from the dataset's scope (every case is Davidson County), not from
+   the record itself -- worth distinguishing so the coverage count stays honest. */
+.tnf-f .v.ctx { color: #4a4a4a; font-style: italic; }
+/* Not published by Davidson County at all. */
+.tnf-f .v.gap {
+  background: repeating-linear-gradient(135deg,
+    rgba(200,32,32,0.16) 0 5px, rgba(200,32,32,0.05) 5px 10px);
+  border-bottom: 2px solid #c02020;
+}
+.tnf-f.wide { grid-column: 1 / -1; }
+.tnf-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+.tnf-body { margin-bottom: 10px; }
+.tnf-check { font-family: var(--mono); font-size: 11px; color: #333; }
+.tnf-note {
+  margin-top: 14px; padding: 9px 11px; background: #f4f1e8;
+  border-left: 3px solid #8a6d1f; font-size: 11.5px; line-height: 1.6; color: #3a3a3a;
+}
+.tnf-note b { color: #111; }
+.tnf-legend {
+  display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px;
+  font-family: var(--mono); font-size: 9.5px; color: #555;
+}
+.tnf-legend i { font-style: normal; padding: 0 5px; }
+.tnf-legend .s-has { color: #0d2f6b; font-weight: 700; }
+.tnf-legend .s-ctx { color: #4a4a4a; font-style: italic; }
+.tnf-legend .s-gap {
+  background: repeating-linear-gradient(135deg,
+    rgba(200,32,32,0.16) 0 5px, rgba(200,32,32,0.05) 5px 10px);
+  border-bottom: 2px solid #c02020;
+}
+.tnf-legend .s-der { color: #7a4a00; font-weight: 700; }
+
+/* ── faithful replica of the printed form ───────────────────────────────
+   The original is justified serif prose with the blanks sitting inline in
+   the sentences, not a list of labelled fields. Reproducing that matters
+   here: a blank in a sentence reads as a question the county never answers,
+   where the same blank in a form-builder grid reads as UI. */
+.tnf-repl { font-size: 12.2px; line-height: 1.62; text-align: justify; }
+.tnf-repl .hdr {
+  font-weight: 700; font-size: 12.5px; text-align: left;
+  margin-bottom: 10px; letter-spacing: .01em;
+}
+/* Inline fill-in. Empty ones keep their rule so the line still reads. */
+.tnf-ib {
+  display: inline-block; border-bottom: 1px solid #111;
+  min-width: 2.2em; padding: 0 3px; margin: 0 1px;
+  line-height: 1.25; vertical-align: baseline; text-align: left;
+}
+.tnf-ib.has { color: #0d2f6b; font-weight: 700; }
+.tnf-ib.ctx { color: #444; font-style: italic; }
+.tnf-ib.gap {
+  background: repeating-linear-gradient(135deg,
+    rgba(200,32,32,0.16) 0 5px, rgba(200,32,32,0.05) 5px 10px);
+  border-bottom: 2px solid #c02020;
+  min-height: 1.15em;
+}
+.tnf-ib.der { color: #7a4a00; font-weight: 700; border-bottom-style: dashed; }
+.tnf-cb { font-family: "DejaVu Sans", Arial, sans-serif; font-size: 11px; }
+
+/* Boxes with a rotated spine label, as on the paper form. */
+.tnf-box { display: flex; border: 1.6px solid #111; margin: 12px 0; }
+.tnf-spine {
+  flex: 0 0 26px; border-right: 1.6px solid #111;
+  display: flex; align-items: center; justify-content: center;
+}
+.tnf-spine span {
+  writing-mode: vertical-rl; transform: rotate(180deg);
+  font-weight: 700; font-size: 8.5px; letter-spacing: .13em;
+  text-transform: uppercase; white-space: nowrap;
+}
+.tnf-boxbody { flex: 1 1 auto; min-width: 0; padding: 8px 10px; }
+
+/* Right-hand caption column: a rule with its label italic underneath. */
+.tnf-cap { margin-bottom: 9px; }
+.tnf-cap .rule {
+  border-bottom: 1px solid #111; min-height: 16px; padding: 0 2px;
+  text-align: left; word-break: break-word;
+}
+.tnf-cap .rule.has { color: #0d2f6b; font-weight: 700; }
+.tnf-cap .rule.gap {
+  background: repeating-linear-gradient(135deg,
+    rgba(200,32,32,0.16) 0 5px, rgba(200,32,32,0.05) 5px 10px);
+  border-bottom: 2px solid #c02020;
+  min-height: 20px;
+}
+.tnf-cap .rule.der { color: #7a4a00; font-weight: 700; border-bottom-style: dashed; }
+/* Blank signature/order rules are just as absent as the inline blanks. */
+.tnf-rule {
+  background: repeating-linear-gradient(135deg,
+    rgba(200,32,32,0.16) 0 5px, rgba(200,32,32,0.05) 5px 10px);
+  border-bottom: 2px solid #c02020;
+}
+.tnf-cap .cn { display: block; text-align: right; font-size: 9.5px; font-style: italic; color: #333; }
+.tnf-vs { text-align: center; font-style: italic; margin: 4px 0 8px; }
+.tnf-clerkhdr {
+  text-align: center; font-weight: 700; font-size: 11px;
+  border-top: 1.6px solid #111; padding-top: 6px; margin-top: 10px; line-height: 1.4;
+}
+.tnf-sig { font-size: 9.5px; font-style: italic; color: #333; }
+.tnf-rule { border-bottom: 1px solid #111; min-height: 15px; margin-top: 10px; }
+.tnf-page2 { margin-top: 22px; border-top: 3px double #111; padding-top: 18px; }
+.tnf-defnotice { font-size: 11.5px; line-height: 1.55; text-align: justify; }
+.tnf-defnotice h4 { font-weight: 700; font-size: 12.5px; margin-bottom: 7px; }
+.tnf-legal { margin-top: 14px; font-size: 10px; color: #333; }
+.tnf-legal i { float: right; font-style: italic; }
+@media print {
+  .tnf-overlay { position: static; background: #fff; padding: 0; overflow: visible; }
+  .tnf-bar { display: none !important; }
+  .tnf-paper { box-shadow: none; max-width: none; }
+  body > *:not(.tnf-overlay) { display: none !important; }
+}
+
 /* One column per live worker. A single worker fills the width and looks
    exactly like the old single-screen view; more workers split it. */
 .live-cols { display: flex; gap: 10px; padding: 0 10px 10px; align-items: stretch; }
@@ -3034,6 +3224,10 @@ function syncMapUrl() {
       if (llHalfLifeMonths !== 3) params.set('halflife', String(llHalfLifeMonths));
     }
   }
+  // syncMapUrl rebuilds the query string from scratch, so anything it does
+  // not know about would be dropped. The open form is addressable and must
+  // survive a filter change underneath it.
+  if (typeof tnfOpenDocket !== 'undefined' && tnfOpenDocket) params.set('form', tnfOpenDocket);
   const qs = params.toString();
   history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
 }
@@ -3104,6 +3298,9 @@ function applyInitialCases(data) {
   restoreStateFromUrl();
   renderProvenance();
   render();
+  // Needs allRows populated, so it runs after render() rather than inside
+  // restoreStateFromUrl(). A ?form= link opens straight onto the summons.
+  tnfRestoreFromUrl();
 }
 
 async function loadData() {
@@ -7094,6 +7291,7 @@ function renderRecordPanel(docket) {
       <button type="button" onclick="copyRecord('${safeDocket}', this)" title="Copy as text">Copy</button>
       <button type="button" onclick="exportRecord('${safeDocket}', this)" title="Download as CSV">Export CSV</button>
       <button type="button" onclick="printRecord('${safeDocket}', this)" title="Open print view">Print</button>
+      <button type="button" onclick="openTnForm('${safeDocket}', this)" title="Auto-fill the statewide TN detainer summons from this record — the blanks show what Davidson County does not publish">TN Form</button>
     </div>
     <div class="rp-fields">${rowHtml}</div>
     <div class="rp-section" id="rp-cv-section">
@@ -7195,6 +7393,432 @@ async function resolveRecordFields(docket) {
     fields.push([k, String(v)]);
   }
   return { record: r, fields, unlocked };
+}
+
+/* ───────────────── TN detainer summons — auto-fill demo ─────────────────
+   Renders the statewide Tennessee detainer summons (TCA §29-18-112, rev.
+   8/10) for one case, filled from whatever Davidson County actually
+   publishes and left blank everywhere it doesn't.
+
+   The blanks are the finding. Davidson County does not use this form and
+   does not publish most of what it asks for, so the honest output is a
+   mostly-empty court document -- which says more about the record than any
+   coverage table does. Every field is therefore declared here, present or
+   not, and counted.
+
+   Three states per field:
+     rec  filled from THIS case's record
+     ctx  known from the dataset's scope (every case is Davidson County
+          General Sessions) rather than from the record -- counted separately
+          so the coverage number stays honest
+     gap  Davidson County publishes nothing for it
+*/
+
+function tnfVal(v) {
+  if (v == null) return '';
+  const t = String(v).trim();
+  return t && t !== '—' ? t : '';
+}
+
+// Build the whole form as declared sections. `g` is the resolved field map
+// (decrypted where the viewer is unlocked, blank otherwise).
+function buildTnForm(r, g, unlocked) {
+  const V = k => tnfVal(g[k]);
+  const addrLine = [V('Address_1'), V('Address_2')].filter(Boolean).join(' ');
+  const fullAddr = tnfVal(g['address_formatted'])
+    || [addrLine, V('city_state_zip')].filter(Boolean).join(', ');
+  const defName = V('defendant_name') || V('Defendant_1');
+  const defCell = defName
+    ? { v: defName, s: 'rec' }
+    : (isEncrypted(r.defendant_name) || isEncrypted(r.Defendant_1))
+      ? { v: unlocked ? '' : 'sealed — sign in to view', s: 'gap' }
+      : { v: '', s: 'gap' };
+
+  const judgAmt = r.judgment_amount != null ? formatMoney(r.judgment_amount) : '';
+
+  const F = (k, v, s) => ({ k, v: v || '', s: v ? (s || 'rec') : 'gap' });
+
+  return [
+    { name: 'Detainer Summons', side: 'l', fields: [
+      F('State of Tennessee, County of', 'Davidson', 'ctx'),
+      F('General Sessions Court of ___ County', 'Davidson', 'ctx'),
+      F('Defendant(s) to appear on (date)', ''),
+      F('To be held in (court room)', ''),
+      F('Court address', ''),
+      F('Claim is for', ''),               // ☐ rent ☐ damages ☐ attorney fees
+      F('Property wrongfully possessed, described as', fullAddr),
+      F('Initial possession based on', ''), // ☐ written ☐ oral lease
+      F('or otherwise', ''),
+      F('Right to possession terminated because of', ''),
+      F('Notice to vacate given', ''),      // ☐ written ☐ oral
+      F('Notice date', ''),
+      F('Rent payments of $', ''),
+      F('Due on the ___ day of each', ''),
+      F('Rent owing through', ''),
+      F('Amount unpaid $', ''),
+      F('Security/damage deposit held $', ''),
+      F('Issued (date)', V('file_date')),
+      F('Clerk / Deputy Clerk', ''),
+    ]},
+    { name: 'Caption', side: 'r', fields: [
+      F('Case No.', V('docket')),
+      F('Plaintiff', V('Plaintiff_1')),
+      F('Plaintiff address', ''),
+      F('Plaintiff phone', ''),
+      { k: 'Defendant', v: defCell.v, s: defCell.s },
+      F('Defendant address', fullAddr),
+      F('Defendant (2)', ''),
+      F('Defendant (2) address', ''),
+    ]},
+    { name: 'Clerk', side: 'r', fields: [
+      F('Court', V('office') ? V('office') + ' (General Sessions)' : '', 'rec'),
+      F('Clerk', ''),
+      F('By (Deputy Clerk)', ''),
+      F('Issued', V('file_date')),
+      F('Set for (date / time)', ''),
+      F('Reset for', ''),
+    ]},
+    { name: 'Service', side: 'r', fields: [
+      F('Served upon', ''),
+      F('Except', ''),
+      F('Date served', ''),
+      F('Sheriff / Constable (process server)', ''),
+      F('Agency address', ''),
+      F('Attorney for Plaintiff', V('Attorney')),
+      F('Attorney for Plaintiff — telephone', ''),
+      F('Attorney for Defendant', V('Def_Attorney')),
+      F('Attorney for Defendant — telephone', ''),
+    ]},
+    { name: 'Judgment', side: 'l', fields: [
+      F('Judgment for Plaintiff against', ''),
+      { k: 'In the amount of $', v: judgAmt, s: judgAmt ? 'der' : 'gap' },
+      F('Judgment based on', ''),           // ☐ default ☐ agreement ☐ trial
+      F('Case dismissed — costs to Plaintiff', ''),
+      F('Failure to prosecute / non-suit, requested by', ''),
+      F('Finding for Defendant after trial', ''),
+      F('Date', ''),
+      F('Judge', ''),
+    ]},
+    { name: 'Bond', side: 'l', fields: [
+      F('Principal', ''), F('Surety', ''), F('Date', ''),
+    ]},
+    { name: 'Order', side: 'l', fields: [
+      F('Order of the court', ''), F('Dated', ''), F('Judge', ''),
+    ]},
+    { name: 'Affidavit (non-military service)', side: 'l', fields: [
+      F('Defendant is / is not in military service', ''),
+      F('Attorney for Plaintiff or Plaintiff', ''),
+      F('Notary Public', ''),
+      F('Commission expires', ''),
+    ]},
+  ];
+}
+
+// A faithful replica of the printed summons: the same prose, the same
+// checkboxes, the same spine-labelled boxes, with our values dropped into the
+// same blanks the clerk would write on.
+function tnfSheet(r, g, unlocked) {
+  const V = k => tnfVal(g[k]);
+  const ib = (v, w, kind) => {
+    const cls = v ? (kind === 'ctx' ? 'ctx' : kind === 'der' ? 'der' : 'has') : 'gap';
+    const style = v ? '' : ` style="min-width:${w || 6}em"`;
+    return `<span class="tnf-ib ${cls}"${style}>${escapeHtml(v || '')}</span>`;
+  };
+  const cap = (v, label) => `<div class="tnf-cap">
+      <div class="rule ${v ? 'has' : 'gap'}">${escapeHtml(v || '')}</div>
+      <span class="cn">${escapeHtml(label)}</span>
+    </div>`;
+  const CB = '<span class="tnf-cb">❑</span>';
+
+  const addrLine = [V('Address_1'), V('Address_2')].filter(Boolean).join(' ');
+  const fullAddr = V('address_formatted')
+    || [addrLine, V('city_state_zip')].filter(Boolean).join(', ');
+  const defName = V('defendant_name') || V('Defendant_1');
+  // The array called `judgments` is really the docket event log: party_name
+  // holds a filing CODE ("DW", "SH", "ADW") and judgment_type holds the event
+  // description. There is no judgment party and no judgment date in it, so
+  // those blanks stay blank rather than being filled with a code that would
+  // read as the name of the person a judgment ran against.
+  //
+  // judgment_amount is a dollar figure parsed out of that free text. It is
+  // real money on the docket but it is not a published "amount of judgment"
+  // field -- it is marked derived, and counted apart from the record fields.
+  const judgParty = '';
+  const judgDate  = '';
+  const judgAmt   = r.judgment_amount != null ? formatMoney(r.judgment_amount) : '';
+
+  const left = `
+    <div class="tnf-box">
+      <div class="tnf-spine"><span>Detainer Summons</span></div>
+      <div class="tnf-boxbody">
+        <p>To Any Lawful Officer To Execute and Return: Summon each Defendant to appear
+        before the Judge of the General Sessions Court of ${ib('Davidson', 8, 'ctx')}
+        County, on ${ib('', 10)}, 20${ib('', 2)}.</p>
+        <p>To be held in ${ib('', 16)} (Court Room) ${ib('', 14)} (Address)</p>
+        <p>to answer the claim by Plaintiff(s) for a money judgment for ${CB} rent, ${CB} damages,
+        ${CB} attorney fees, and court costs and for possession of property Plaintiff claims that
+        Defendant(s) wrongfully possesses in this county having a street address, or otherwise
+        described as: ${ib(fullAddr, 20)}</p>
+        <p>Defendant's initial possession was based on a ${CB} written ${CB} oral lease
+        or ${ib('', 14)} and the right to possession has now terminated because of
+        non-payment of rent or ${ib('', 12)}.</p>
+        <p>${CB} Written ${CB} Oral notice to vacate was given to Defendant(s) on or about
+        ${ib('', 10)}, 20${ib('', 2)}. Rent payments of $${ib('', 6)} are due on the
+        ${ib('', 3)} day of each ${ib('', 8)}, and the amount of rent owing through
+        ${ib('', 8)} and unpaid is $${ib('', 7)}. Plaintiff holds $${ib('', 7)} paid as a
+        damage/security deposit. Plaintiff asks for possession of the property, all unpaid rent
+        owed as of the court date, restitution for damages to the property, attorney fees (if
+        provided for in the contract), and all court costs and litigation taxes.</p>
+        <p style="margin-top:8px">Issued ${ib(V('file_date'), 10)} &nbsp; ${ib('', 16)}</p>
+        <div style="text-align:right"><span class="tnf-sig">Clerk/Deputy Clerk</span></div>
+      </div>
+    </div>
+
+    <div class="tnf-box">
+      <div class="tnf-spine"><span>Judgment</span></div>
+      <div class="tnf-boxbody">
+        <p>${CB} Judgment is granted to Plaintiff(s) against Defendant(s) ${ib(judgParty, 16)}
+        in the amount of $${ib(judgAmt, 8, 'der')} and all costs and taxes, and for possession of the
+        described property for which a writ of possession shall be issued on Plaintiff's request.
+        This judgment is based on:</p>
+        <p style="text-align:center">${CB} Default of Defendant(s) &nbsp;&nbsp; ${CB} Agreement of Parties
+        &nbsp;&nbsp; ${CB} Trial in Court</p>
+        <p>${CB} Case is dismissed and all costs and taxes are to be paid by Plaintiff, for which
+        execution may issue. Dismissal is based on:</p>
+        <p style="padding-left:14px">${CB} Failure to prosecute the suit by Plaintiff(s)
+        &nbsp;&nbsp; ${CB} Non-suit by Plaintiff, requested by: ${ib('', 10)}</p>
+        <p style="padding-left:14px">${CB} Finding in favor of Defendant(s) after trial</p>
+      </div>
+    </div>
+    <p>Date: ${ib(judgDate, 12)} &nbsp;&nbsp;&nbsp;&nbsp; Judge: ${ib('', 16)}</p>`;
+
+  const right = `
+    <p style="margin-bottom:10px">Case No. ${ib(V('docket'), 12)}</p>
+    ${cap(V('Plaintiff_1'), 'Plaintiff')}
+    ${cap('', 'Address')}
+    ${cap('', 'Phone')}
+    <div class="tnf-vs">vs.</div>
+    ${cap(defName || (unlocked ? '' : 'sealed — sign in to view'), 'Defendant')}
+    ${cap(fullAddr, 'Address')}
+    ${cap('', 'Defendant')}
+    ${cap('', 'Address')}
+    <div class="tnf-clerkhdr">DETAINER SUMMONS<br>Court of General Sessions<br>
+      <span style="font-style:italic;font-weight:400">(preprinted name)</span>, Clerk</div>
+    <p style="margin-top:8px">By ${ib('', 12)}, Deputy Clerk</p>
+    <p>Issued ${ib(V('file_date'), 10)}, 20${ib('', 2)}.</p>
+    <p>Set for ${ib('', 12)} at ${ib('', 4)}.</p>
+    <p>Reset for ${ib('', 14)}</p>
+    <div class="tnf-box">
+      <div class="tnf-spine"><span>Service</span></div>
+      <div class="tnf-boxbody">
+        <p>Served Upon &nbsp;${CB} All Named Defendants</p>
+        <p style="padding-left:56px">${CB} All Defendants</p>
+        <p>Except: ${ib('', 12)}</p>
+        <div class="tnf-rule"></div>
+        <p>Served ${ib('', 10)}, 20${ib('', 2)}.</p>
+        <div class="tnf-rule"></div>
+        <div class="tnf-sig">Sheriff/Constable (Process Server)</div>
+        <div class="tnf-rule"></div>
+        <div class="tnf-sig">Signature</div>
+        <div class="tnf-rule"></div>
+        <div class="tnf-sig">Agency Address</div>
+      </div>
+    </div>
+    ${cap(V('Attorney'), 'Attorney for Plaintiff')}
+    <p>Telephone ${ib('', 12)}</p>
+    ${cap(V('Def_Attorney'), 'Attorney for Defendant')}
+    <p>Telephone ${ib('', 12)}</p>`;
+
+  const page2 = `
+    <div class="tnf-page2 tnf-cols">
+      <div class="tnf-col-l">
+        <div class="tnf-box">
+          <div class="tnf-spine"><span>Bond</span></div>
+          <div class="tnf-boxbody">
+            <p>We, ${ib('', 16)}, Principal, and ${ib('', 14)}, Surety, do hereby bind ourselves,
+            our heirs and assigns to said Defendant(s), to pay all costs and damages which shall
+            accrue to said Defendant(s), for the wrongful prosecution of this suite.</p>
+            <p style="margin-top:10px">Date: ${ib('', 14)}</p>
+            <div style="display:flex;gap:18px;margin-top:14px">
+              <div style="flex:1"><div class="tnf-rule"></div><div class="tnf-sig">Principal</div></div>
+              <div style="flex:1"><div class="tnf-rule"></div><div class="tnf-sig">Surety</div></div>
+            </div>
+          </div>
+        </div>
+        <div class="tnf-box">
+          <div class="tnf-spine"><span>Order</span></div>
+          <div class="tnf-boxbody">
+            ${'<div class="tnf-rule"></div>'.repeat(7)}
+          </div>
+        </div>
+        <p>This the ${ib('', 4)} day of ${ib('', 10)}, 20${ib('', 2)}.</p>
+        <div style="margin:16px 0 0 auto;width:70%"><div class="tnf-rule"></div>
+          <div class="tnf-sig" style="text-align:center">Judge</div></div>
+        <div class="tnf-box">
+          <div class="tnf-spine"><span>Affidavit</span></div>
+          <div class="tnf-boxbody">
+            <p>To the best of my information and belief, after investigation of Defendant's
+            employment, I hereby make affidavit that the Defendant is/is not a member of a
+            military service.</p>
+            <div style="margin-top:18px"><div class="tnf-rule"></div>
+              <div class="tnf-sig">Attorney for Plaintiff or Plaintiff</div></div>
+            <div style="margin-top:14px"><div class="tnf-rule"></div>
+              <div class="tnf-sig">Notary Public</div></div>
+            <p style="margin-top:6px">My Commission Exp. ${ib('', 12)}</p>
+          </div>
+        </div>
+      </div>
+      <div class="tnf-col-r tnf-defnotice">
+        <h4>TO THE DEFENDANT(S):</h4>
+        <p>Failure to appear and answer this summons may result in judgment by default being
+        rendered against you for the relief requested. Tennessee law provides a ten thousand
+        dollar ($10,000) personal property exemption as well as a homestead exemption from
+        execution or seizure to satisfy a judgment. The amount of the homestead exemption
+        depends upon your age and the other factors which are listed in TCA § 26-2-301. If a
+        judgment should be entered against you in this action and you wish to claim property as
+        exempt, you must file a written list, under oath, of the items you wish to claim as
+        exempt with the clerk of the court. The list may be filed at any time and may be changed
+        by you thereafter as necessary; however, unless it is filed before the judgment becomes
+        final, it will not be effective as to any execution or garnishment issued prior to the
+        filing of the list. Certain items are automatically exempt by law and do not need to be
+        listed; these items include items of necessary wearing apparel (clothing) for yourself
+        and your family and trunks and other receptacles necessary to contain such apparel,
+        family portraits, the family Bible, and school books. Should any of these items be seized
+        you would have the right to recover them. If you do not understand your exemption right
+        or how to execute it, you may wish to seek the counsel of a lawyer.</p>
+        <div class="tnf-legal">Legal Authority: TCA §29-18-112 <i>Rev. 8/10</i></div>
+      </div>
+    </div>`;
+
+  return `
+    <div class="tnf-repl">
+      <div class="hdr">STATE OF TENNESSEE, COUNTY OF ${ib('Davidson', 14, 'ctx')}</div>
+      <div class="tnf-cols">
+        <div class="tnf-col-l">${left}</div>
+        <div class="tnf-col-r">${right}</div>
+      </div>
+      ${page2}
+    </div>`;
+}
+
+function tnfFieldHtml(f) {
+  const cls = f.s === 'rec' ? 'has' : f.s === 'ctx' ? 'ctx' : 'gap';
+  return `<div class="tnf-f">
+    <span class="k">${escapeHtml(f.k)}</span>
+    <span class="v ${cls}">${escapeHtml(f.v || '')}</span>
+  </div>`;
+}
+
+function tnfBlockHtml(b) {
+  return `<div class="tnf-blk">
+    <div class="tnf-blk-name">${escapeHtml(b.name)}</div>
+    <div class="tnf-grid">${b.fields.map(tnfFieldHtml).join('')}</div>
+  </div>`;
+}
+
+let tnfOpenDocket = null;
+
+async function openTnForm(docket, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const resolved = await resolveRecordFields(docket);
+    if (!resolved) return;
+    const r = resolved.record;
+    const g = Object.fromEntries(resolved.fields);
+    const blocks = buildTnForm(r, g, resolved.unlocked);
+
+    const all = blocks.flatMap(b => b.fields);
+    const nRec = all.filter(f => f.s === 'rec').length;
+    const nCtx = all.filter(f => f.s === 'ctx').length;
+    const nTot = all.length;
+    const pct = Math.round((nRec / nTot) * 100);
+
+    document.getElementById('tnf-overlay')?.remove();
+    const el = document.createElement('div');
+    el.className = 'tnf-overlay';
+    el.id = 'tnf-overlay';
+    el.setAttribute('role', 'dialog');
+    el.setAttribute('aria-modal', 'true');
+    el.innerHTML = `
+      <div class="tnf-bar">
+        <span class="tnf-doc">${escapeHtml(r.docket)}</span>
+        <span class="tnf-cov"><b>${nRec}</b> of <b>${nTot}</b> fields (${pct}%) come from the public record${nCtx ? ` · ${nCtx} known from county scope` : ''} · <b>${nTot - nRec - nCtx}</b> blank</span>
+        <span class="sp"></span>
+        <button type="button" onclick="copyTnFormLink(this)" title="Copy a link that opens this form">Copy link</button>
+        <button type="button" onclick="window.print()" title="Print this form">Print</button>
+        <button type="button" onclick="closeTnForm()" title="Close">Close</button>
+      </div>
+      <div class="tnf-paper">
+        <div class="tnf-wm" aria-hidden="true"><span>DEMO<br>NOT AN OFFICIAL FORM</span></div>
+        <div class="tnf-sheet">
+          <div class="tnf-demo">DEMO: Unofficial Standard TN Form Auto Fill, Nashville Does Not Currently Use This</div>
+          ${tnfSheet(r, g, resolved.unlocked)}
+          <div class="tnf-legend">
+            <span><i class="s-has">value</i> from this case's record</span>
+            <span><i class="s-ctx">value</i> known from county scope, not the record</span>
+            <span><i class="s-gap">&nbsp;&nbsp;&nbsp;&nbsp;</i> not published by Davidson County</span>
+          </div>
+          <div class="tnf-note">
+            This is the statewide Tennessee detainer summons (TCA §29-18-112, rev. 8/10),
+            auto-filled from Davidson County's published docket. <b>Davidson County does not
+            use this form</b>, and publishes ${nRec} of its ${nTot} fields — so the blanks above
+            are not missing data entry, they are information the public record never contains.
+            Notably, the disposition boxes stay empty for every case: the county's status field
+            holds only PENDING or CLOSED and records no outcome, so a dismissal, a non-suit and
+            a default judgment are indistinguishable in the data.
+            ${resolved.unlocked ? '' : '<br><br>Defendant name is sealed because no login is active.'}
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(el);
+    el.addEventListener('click', (e) => { if (e.target === el) closeTnForm(); });
+    tnfOpenDocket = r.docket;
+    tnfSyncUrl();
+    document.addEventListener('keydown', tnfEsc);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function tnfEsc(e) { if (e.key === 'Escape') closeTnForm(); }
+
+function closeTnForm() {
+  document.getElementById('tnf-overlay')?.remove();
+  document.removeEventListener('keydown', tnfEsc);
+  tnfOpenDocket = null;
+  tnfSyncUrl();
+}
+
+// The form is addressable: ?form=<docket> opens it directly on load, so a
+// filled summons can be sent to someone as a plain link.
+function tnfSyncUrl() {
+  const params = new URLSearchParams(location.search);
+  if (tnfOpenDocket) params.set('form', tnfOpenDocket);
+  else params.delete('form');
+  const qs = params.toString();
+  history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
+}
+
+async function copyTnFormLink(btn) {
+  const params = new URLSearchParams(location.search);
+  if (tnfOpenDocket) params.set('form', tnfOpenDocket);
+  const url = location.origin + location.pathname + '?' + params.toString();
+  try {
+    await navigator.clipboard.writeText(url);
+    flashButton(btn, 'Link copied');
+  } catch {
+    // Clipboard is blocked in some embedded contexts -- show it so it can
+    // still be copied by hand rather than failing silently.
+    window.prompt('Copy this link:', url);
+  }
+}
+
+// Called once the case rows are loaded, since the form needs the record.
+function tnfRestoreFromUrl() {
+  const docket = new URLSearchParams(location.search).get('form');
+  if (!docket) return;
+  if (!allRows.some(x => x.docket === docket)) return;
+  openTnForm(docket);
 }
 
 function flashButton(btn, label, cls='copied', ms=1200) {
