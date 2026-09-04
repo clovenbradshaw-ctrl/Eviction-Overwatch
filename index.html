@@ -861,31 +861,46 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 
 /* Building/landlord detail panel — same right-edge treatment as the case
    record panel, since this is conceptually the same kind of drill-down. */
-#property-panel {
+#property-panel, #cluster-panel {
   position: fixed; top: 0; right: 0; bottom: 0;
   width: 420px; max-width: 95vw;
   background: var(--bg); border-left: 1px solid var(--border);
   z-index: 1000; overflow-y: auto;
   display: none;
 }
-#property-panel.open { display: block; }
-#property-panel .tp-head {
+#property-panel.open, #cluster-panel.open { display: block; }
+#property-panel .tp-head, #cluster-panel .tp-head {
   position: sticky; top: 0; z-index: 2;
   display: flex; justify-content: space-between; align-items: flex-start;
   gap: 12px; padding: 14px 16px 10px;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
 }
-#property-panel .tp-title { font-family: var(--serif); font-size: 15px; color: #f5f0e0; line-height: 1.35; }
-#property-panel .tp-geoid { font-size: 10px; color: var(--dim); margin-top: 3px; letter-spacing: 0.04em; }
-#property-panel .tp-close {
+#property-panel .tp-title, #cluster-panel .tp-title { font-family: var(--serif); font-size: 15px; color: #f5f0e0; line-height: 1.35; }
+#property-panel .tp-geoid, #cluster-panel .tp-geoid { font-size: 10px; color: var(--dim); margin-top: 3px; letter-spacing: 0.04em; }
+#property-panel .tp-close, #cluster-panel .tp-close {
   background: transparent; border: none; color: var(--dim);
   font-family: var(--mono); font-size: 16px; line-height: 1;
   width: 22px; height: 22px; padding: 0; flex-shrink: 0;
   display: inline-flex; align-items: center; justify-content: center;
   border-radius: 3px; cursor: pointer;
 }
-#property-panel .tp-close:hover { color: var(--gold); background: rgba(196,164,74,0.10); }
+#property-panel .tp-close:hover, #cluster-panel .tp-close:hover { color: var(--gold); background: rgba(196,164,74,0.10); }
+#cluster-panel .cp-table-wrap { overflow-x: auto; }
+#cluster-panel .cp-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+#cluster-panel .cp-table th {
+  position: sticky; top: 0; text-align: left; font-weight: normal;
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--dim); padding: 6px 10px; background: var(--surface);
+  border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+#cluster-panel .cp-table td {
+  padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,0.04);
+  white-space: nowrap; color: var(--text);
+}
+#cluster-panel .cp-table tr { cursor: pointer; }
+#cluster-panel .cp-table tr:hover td { background: rgba(196,164,74,0.06); }
+#cluster-panel .cp-table td.src { color: var(--gold); }
 #property-panel .pp-section { padding: 12px 16px; border-bottom: 1px solid var(--border); }
 #property-panel .pp-section-label {
   font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em;
@@ -2231,6 +2246,7 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
       </aside>
       <aside id="tract-panel" aria-hidden="true"></aside>
       <aside id="property-panel" aria-hidden="true"></aside>
+      <aside id="cluster-panel" aria-hidden="true"></aside>
     </div>
     <div class="map-status" id="map-status">Loading map…</div>
   </div>
@@ -6241,6 +6257,14 @@ function buildLandlordsLayers(properties, maxHeat, ctx = {}) {
       });
     },
   });
+  // Clicking a cluster still zooms in (the library's own default) -- this
+  // additionally opens a table of every case across every building folded
+  // into that cluster, so the records are available immediately rather
+  // than only after zooming all the way down to individual buildings.
+  llClusterGroup.on('clusterclick', (e) => {
+    const props = e.layer.getAllChildMarkers().map(m => m.llProperty).filter(Boolean);
+    openClusterPanel(props);
+  });
 
   for (const p of properties) {
     const marker = L.circleMarker([p.lat, p.lng], {
@@ -6255,6 +6279,7 @@ function buildLandlordsLayers(properties, maxHeat, ctx = {}) {
       { sticky: true }
     );
     marker.on('click', () => openPropertyPanel(p.key));
+    marker.llProperty = p; // read back by openClusterPanel() when several of these are clicked as one cluster
     llClusterGroup.addLayer(marker);
   }
 
@@ -6393,6 +6418,55 @@ function rebuildLandlordHighlightLayer() {
   if (document.getElementById('layer-evictions').checked) group.addTo(leafletMap);
 }
 
+/* ── Cluster panel: every case folded into one map cluster, as a table ── */
+
+function closeClusterPanel() {
+  const panel = document.getElementById('cluster-panel');
+  if (panel) { panel.classList.remove('open'); panel.setAttribute('aria-hidden', 'true'); }
+}
+
+const CLUSTER_PANEL_ROW_CAP = 500;
+
+function openClusterPanel(properties) {
+  closeTractPanel();
+  closePropertyPanel();
+  const panel = document.getElementById('cluster-panel');
+  if (!panel || !properties.length) return;
+
+  const rows = [];
+  for (const p of properties) {
+    for (const c of p.cases) rows.push({ ...c, addressDisplay: p.addressDisplay });
+  }
+  rows.sort((a, b) => (parseUsDate(b.file_date) || 0) - (parseUsDate(a.file_date) || 0));
+  const shown = rows.slice(0, CLUSTER_PANEL_ROW_CAP);
+
+  const bodyHtml = shown.map(r => `
+    <tr onclick="closeClusterPanel(); openRecordPanel('${escapeAttr(r.docket)}')" title="Open full case record">
+      <td class="src">${escapeHtml(r.docket)}</td>
+      <td>${escapeHtml(r.file_date || '—')}</td>
+      <td>${escapeHtml(r.status || '—')}</td>
+      <td>${escapeHtml(r.Plaintiff_1 || '—')}</td>
+      <td>${escapeHtml(r.addressDisplay || '—')}</td>
+    </tr>`).join('');
+
+  panel.innerHTML = `
+    <div class="tp-head">
+      <div>
+        <div class="tp-title">${properties.length} building${properties.length === 1 ? '' : 's'} in this cluster</div>
+        <div class="tp-geoid">${rows.length} filing${rows.length === 1 ? '' : 's'}${rows.length > shown.length ? ` — showing the ${shown.length} most recent` : ''}</div>
+      </div>
+      <button class="tp-close" onclick="closeClusterPanel()" title="Close">×</button>
+    </div>
+    <div class="cp-table-wrap">
+      <table class="cp-table">
+        <thead><tr><th>Docket</th><th>Filed</th><th>Status</th><th>Plaintiff</th><th>Address</th></tr></thead>
+        <tbody>${bodyHtml}</tbody>
+      </table>
+    </div>`;
+  panel.classList.add('open');
+  panel.setAttribute('aria-hidden', 'false');
+}
+
 /* ── Property detail panel: filings + the Landlord Mapper citation ── */
 
 function closePropertyPanel() {
@@ -6404,6 +6478,7 @@ function closePropertyPanel() {
 
 function openPropertyPanel(key) {
   closeTractPanel(); // the two right-edge panels never show at once
+  closeClusterPanel();
   const p = llPropertyIndex.properties.find(x => x.key === key);
   const panel = document.getElementById('property-panel');
   if (!p) {
@@ -6798,6 +6873,7 @@ function formatCodeViolations(list) {
 
 function openTractPanel(geoid) {
   closePropertyPanel(); // the two right-edge panels never show at once
+  closeClusterPanel();
   selectedTract = geoid;
   // Visually distinguish the selected tract on the map.
   if (tractLayer) {
@@ -12772,7 +12848,12 @@ function bindViewControls() {
       rowBtn.textContent = collapsed ? '+' : '–';
       rowBtn.setAttribute('aria-expanded', String(!collapsed));
     };
-    applyRow(localStorage.getItem('eo-stats-row-collapsed') === '1');
+    // On a phone the overview row fills the entire first screen, pushing the
+    // table the page exists for below the fold. Default it closed on narrow
+    // viewports; an explicit choice, once made, still wins at any width.
+    const storedRow = localStorage.getItem('eo-stats-row-collapsed');
+    const narrowViewport = window.matchMedia('(max-width: 760px)').matches;
+    applyRow(storedRow === null ? narrowViewport : storedRow === '1');
     rowBtn.addEventListener('click', () => {
       const next = !row.classList.contains('collapsed');
       applyRow(next);
