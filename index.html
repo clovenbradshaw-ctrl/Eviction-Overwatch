@@ -1810,6 +1810,37 @@ const LEAFLET_HEAT_JS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet.heat
 const LANDLORDMAPPER_API = 'https://api.landlordmapper.org/nsh';
 const LANDLORDMAPPER_SITE = 'https://landlordmapper.org/en/nsh';
 
+// Pre-computed Landlord Mapper snapshot — a batch sweep (scripts/export-
+// landlord-mapper-properties.mjs) run outside the browser against every
+// geocoded property, gzipped so it's cheap to ship in the repo. Read at
+// startup and consulted first so most buildings resolve instantly with no
+// live API round-trip; anything not in it (new addresses since the sweep,
+// or the handful that didn't match) still falls through to the live lookup
+// below. Every entry is still the same third-party inference, carrying its
+// own `caveat`/`asOf` — a snapshot doesn't make it any more a fact, just
+// faster to show, so the card cites when it was captured.
+const LM_SNAPSHOT_URL = 'data/landlord-mapper-snapshot.json.gz';
+let lmSnapshotByKey = null;     // property key -> landlordMapperAssertion, or null until loaded
+let lmSnapshotExportedAt = null;
+
+async function loadLandlordMapperSnapshot() {
+  try {
+    const r = await fetch(LM_SNAPSHOT_URL);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const ds = new DecompressionStream('gzip');
+    const text = await new Response(r.body.pipeThrough(ds)).text();
+    const parsed = JSON.parse(text);
+    const byKey = new Map();
+    for (const p of parsed.properties || []) byKey.set(p.key, p.landlordMapperAssertion);
+    lmSnapshotByKey = byKey;
+    lmSnapshotExportedAt = parsed.exportedAt || null;
+    console.log(`[lm-snapshot] loaded ${byKey.size} properties, captured ${lmSnapshotExportedAt}`);
+  } catch (e) {
+    console.warn('[lm-snapshot] failed to load, falling back to live-only lookups:', e.message);
+    lmSnapshotByKey = new Map();
+  }
+}
+
 function whenIdle(fn, timeout = 1500) {
   if (typeof requestIdleCallback === 'function') {
     return requestIdleCallback(fn, { timeout });
@@ -4030,10 +4061,14 @@ function renderLandlordMapperCard(result, property) {
           </div>` : ''}
       </div>`
     : '';
+  const snapshotNote = result.fromSnapshot
+    ? `<div class="pp-gap-note" style="margin-top:6px">From a batch snapshot captured ${escapeHtml((result.snapshotAsOf || lmSnapshotExportedAt || '').slice(0, 10))} — same third-party inference as a live lookup, just pre-fetched for speed. Ownership can change; re-check landlordmapper.org directly for the current state.</div>`
+    : '';
   el.innerHTML = `
     <div class="pp-lm-label">${escapeHtml(result.matchedOn)}</div>
     <a href="${escapeAttr(result.buildingUrl)}" target="_blank" rel="noopener">View this building on Landlord Mapper →</a> ${LM_TAG}<br>
     <a href="${escapeAttr(result.portfolioUrl)}" target="_blank" rel="noopener">View full ownership portfolio →</a> ${LM_TAG}
+    ${snapshotNote}
     <div class="pp-lm-meta">
       ${result.networkName ? escapeHtml(result.networkName) + '<br>' : ''}
       ${Number.isFinite(result.bldgCount) ? `${result.bldgCount.toLocaleString()} building${result.bldgCount === 1 ? '' : 's'}, ${result.unitCount?.toLocaleString() ?? '?'} unit${result.unitCount === 1 ? '' : 's'} in this owner's portfolio ${LM_TAG}` : ''}
@@ -4053,6 +4088,31 @@ function renderLandlordMapperCard(result, property) {
 async function lookupLandlordMapper(property) {
   const cacheKey = property.key;
   if (_lmLookupCache.has(cacheKey)) return _lmLookupCache.get(cacheKey);
+
+  // Snapshot first — instant, no network round-trip — for the large
+  // majority of properties the batch sweep already resolved. Only a
+  // 'matched' snapshot entry short-circuits the live call; no_match/
+  // lookup_failed/absent (a property new since the sweep) all fall
+  // through to the live lookup below, same as before this existed.
+  const snap = lmSnapshotByKey && lmSnapshotByKey.get(cacheKey);
+  if (snap && snap.status === 'matched' && snap.data) {
+    const d = snap.data;
+    const result = {
+      matchedOn: snap.matchedOn === 'address'
+        ? 'Matched by building address' : 'Matched by plaintiff name (address search found nothing)',
+      buildingUrl: d.buildingUrl,
+      portfolioUrl: d.portfolioUrl,
+      networkName: d.networkName,
+      bldgCount: d.bldgCount,
+      unitCount: d.unitCount,
+      otherProperties: (d.otherPropertiesSample || []).map(addr => ({ short_address: addr })),
+      otherPropertiesMore: Math.max(0, (d.otherPropertiesCount || 0) - (d.otherPropertiesSample || []).length),
+      fromSnapshot: true,
+      snapshotAsOf: snap.asOf,
+    };
+    _lmLookupCache.set(cacheKey, result);
+    return result;
+  }
 
   const result = await (async () => {
     try {
@@ -6489,6 +6549,7 @@ document.addEventListener("keydown", e => {
   });
 })();
 loadData();
+loadLandlordMapperSnapshot();  // independent of case data; races the main load, doesn't block it
 </script>
 </body>
 </html>
