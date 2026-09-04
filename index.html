@@ -1418,6 +1418,11 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   padding: 1px 5px; border-radius: 2px;
   white-space: nowrap; margin-left: auto;
 }
+.cv-badge {
+  display: inline-block; margin-left: 8px; font-size: 10px; letter-spacing: 0.04em;
+  color: #e8a735; border: 1px solid #e8a735; background: rgba(232,167,53,0.1);
+  padding: 1px 6px; border-radius: 3px; white-space: nowrap; cursor: default;
+}
 
 /* Sources view — every external source disclosed */
 #sources-view {
@@ -6914,10 +6919,15 @@ function renderRecordPanel(docket) {
   }).join('');
 
   const safeDocket = escapeAttr(r.docket);
+  const cv = violationsForRow(r);
+  const cvBadge = cv.length
+    ? `<span class="cv-badge" onclick="document.getElementById('rp-cv-section')?.scrollIntoView({behavior:'smooth',block:'start'})"
+        title="Metro Codes property-standards requests on file for this address">⚠ ${cv.length} code violation${cv.length === 1 ? '' : 's'}</span>`
+    : '';
   panel.innerHTML = `
     <div class="tp-head">
       <div>
-        <div class="tp-title">${escapeHtml(r.docket)}</div>
+        <div class="tp-title">${escapeHtml(r.docket)}${cvBadge}</div>
         <div class="tp-geoid">${escapeHtml(r.status || '—')} · filed ${escapeHtml(r.file_date || '—')}</div>
       </div>
       <button class="tp-close" onclick="closeRecordPanel()" title="Close">×</button>
@@ -6928,9 +6938,9 @@ function renderRecordPanel(docket) {
       <button type="button" onclick="printRecord('${safeDocket}', this)" title="Open print view">Print</button>
     </div>
     <div class="rp-fields">${rowHtml}</div>
-    <div class="rp-section">
+    <div class="rp-section" id="rp-cv-section">
       <span class="lbl">code violations</span>
-      ${formatCodeViolations(violationsForRow(r))}
+      ${formatCodeViolations(cv)}
     </div>`;
   panel.classList.add('open');
   panel.setAttribute('aria-hidden', 'false');
