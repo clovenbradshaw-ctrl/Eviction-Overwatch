@@ -2788,6 +2788,19 @@ const MANUAL_LANDLORD_MERGES = {
 };
 const MANUAL_LANDLORD_LABELS = {
   mdha: 'Metropolitan Development & Housing Agency (MDHA)',
+  // Not a merge -- Landlord Mapper already tracks this as one coherent
+  // network (key 49:2291), no fragmentation to resolve. This is a
+  // cosmetic name fix: LM's own networkName field truncates it to
+  // "FREEMAN WEB". Full name and provenance, confirmed 2026-09-04 via
+  // public reporting: Bill (William) Freeman co-founded Freeman Webb
+  // Company in 1979 with Jimmy Webb -- a multifamily real estate
+  // investment/management firm, 18,000+ rental units across five states,
+  // 9,000+ of them in the Nashville area. Bill stepped down as CEO before
+  // his Nov. 2024 death; his son Bob Freeman -- also a sitting TN state
+  // representative -- is the company's current president, so eviction
+  // filings in this record (which runs through 2026) reflect his tenure,
+  // not his father's (Nashville Scene/Post, Tennessee Lookout).
+  '49:2291': 'Freeman Webb Company',
 };
 
 // Single resolver both buildLandlordAggregation (property-based) and
