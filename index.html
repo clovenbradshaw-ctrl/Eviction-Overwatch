@@ -629,6 +629,19 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 #map-view { padding: 0; }
 #map { width: 100%; height: 65vh; background: #1a1814; }
 
+/* Split screen: the cluster table sits beside the map instead of covering
+   it, wide enough for both to actually be usable at once. Mobile keeps the
+   table as the original full-screen overlay drawer -- there's no width to
+   split there. */
+@media (min-width: 761px) {
+  .map-wrap.split { display: flex; align-items: stretch; }
+  .map-wrap.split #map { flex: 1 1 auto; width: auto; }
+  .map-wrap.split #cluster-panel {
+    position: static; flex: 0 0 420px; width: 420px; height: 65vh;
+    max-width: none; box-shadow: none; z-index: auto;
+  }
+}
+
 
 
 .scale-legend {
@@ -6423,6 +6436,12 @@ function rebuildLandlordHighlightLayer() {
 function closeClusterPanel() {
   const panel = document.getElementById('cluster-panel');
   if (panel) { panel.classList.remove('open'); panel.setAttribute('aria-hidden', 'true'); }
+  document.getElementById('map-wrap')?.classList.remove('split');
+  // The map's own container just changed width back -- Leaflet caches its
+  // size and won't notice on its own, so tiles stay misaligned/blank at
+  // the edges until something (a drag, a zoom) forces a recheck. Ask it
+  // directly instead of waiting for that.
+  if (leafletMap) requestAnimationFrame(() => leafletMap.invalidateSize());
 }
 
 const CLUSTER_PANEL_ROW_CAP = 500;
@@ -6465,6 +6484,8 @@ function openClusterPanel(properties) {
     </div>`;
   panel.classList.add('open');
   panel.setAttribute('aria-hidden', 'false');
+  document.getElementById('map-wrap')?.classList.add('split');
+  if (leafletMap) requestAnimationFrame(() => leafletMap.invalidateSize());
 }
 
 /* ── Property detail panel: filings + the Landlord Mapper citation ── */
