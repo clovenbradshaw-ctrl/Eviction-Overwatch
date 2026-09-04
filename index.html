@@ -18,9 +18,7 @@
 <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:wght@400;600&display=swap"></noscript>
 <script type="importmap">
 {
-  "imports": {
-    "fs": "data:text/javascript;base64,ZXhwb3J0IGRlZmF1bHQgbmV3IFByb3h5KHt9LCB7IGdldChfLCBrKSB7IHRocm93IG5ldyBFcnJvcigiZnMuIiArIFN0cmluZyhrKSArICIgaXMgTm9kZS1vbmx5OyB1bmF2YWlsYWJsZSBpbiB0aGUgYnJvd3NlciIpOyB9IH0pOw=="
-  }
+  "imports": {}
 }
 </script>
 <style>
@@ -165,11 +163,24 @@ h1 {
 .btn-primary:hover { background: #d4b25a; }
 .btn-primary[disabled] { opacity: 0.5; cursor: wait; }
 
+.stats-row-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 24px 0;
+}
+.stats-row-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--dim);
+}
+#stats-row-collapse {
+  background: transparent; border: 1px solid var(--border); border-radius: 3px;
+  color: var(--gold); cursor: pointer; font-size: 12px; line-height: 1; padding: 2px 8px;
+}
+#stats-row-collapse:hover { border-color: var(--gold); }
 .stats-row {
   display: grid; grid-template-columns: 1fr 1fr 1fr;
   gap: 16px; padding: 16px 24px;
   border-bottom: 1px solid var(--border);
 }
+.stats-row.collapsed { display: none; }
 
 /* Full ranked lists (not just a top-5) need a cap so a 200-entry landlord
    list doesn't push the map/table out of the viewport — scroll inside the
@@ -1445,6 +1456,36 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 .chat-msg .bubble .span-chip { margin-left: 3px; padding: 1px 4px; }
 .prov-note { font-size: 9px; color: var(--dim); font-style: italic; }
 
+/* Returned data you can press. Sized to sit inside a table cell without
+   turning the card into a wall of buttons. */
+.data-chip {
+  font: inherit; font-size: 11px; text-align: left;
+  padding: 2px 6px; margin: 1px 2px 1px 0;
+  color: var(--fg, #e8e2d0); background: rgba(196,164,74,0.06);
+  border: 1px solid var(--border); border-radius: 3px; cursor: pointer;
+}
+.data-chip:hover { border-color: var(--gold-dim); background: rgba(196,164,74,0.16); }
+.data-chip-n {
+  margin-left: 5px; font-family: var(--mono); font-size: 9px; color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+.export-strip {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--surface);
+}
+.export-btn {
+  font-family: var(--mono); font-size: 9px; padding: 2px 7px;
+  color: var(--muted); background: transparent;
+  border: 1px solid var(--border); border-radius: 3px; cursor: pointer;
+}
+.export-btn:hover { color: var(--gold); border-color: var(--gold-dim); }
+.method-note { font-size: 11px; color: var(--dim); font-style: italic; margin: 0; }
+.bar-link { cursor: pointer; text-decoration: underline; text-decoration-style: dotted; }
+.bar-link:hover { fill: var(--gold); }
+
+/* A fact card's label column carries whole phrases, not headings — let them
+   wrap rather than truncating the thing being measured. */
+.chat-msg .bubble td.row-label { white-space: normal; word-break: break-word; }
 .artifact-title {
   font-family: var(--serif); font-size: 14px; color: #f5f0e0;
   margin-bottom: 8px;
@@ -1658,6 +1699,10 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
        search/filter bar, not just on Cases -- a summary of whatever's
        currently filtered, wherever you're looking at it from.
        filter-aware: buildStats() reads getFiltered(), not allRows. -->
+  <div class="stats-row-header">
+    <span class="stats-row-label">Overview</span>
+    <button type="button" id="stats-row-collapse" title="Collapse the whole overview row" aria-expanded="true" aria-controls="stats-row">–</button>
+  </div>
   <div class="stats-row" id="stats-row">
     <div class="stat-card">
       <button type="button" class="stat-label" id="toggle-districts" aria-expanded="true" aria-controls="top-districts">
@@ -2273,8 +2318,13 @@ let sortCol = "file_date";
 let sortDir = -1;
 let filters = {};
 let activeDropdown = null;
-let globalDateStartTs = null;  // universal date-range filter -- null on either end means unbounded
+// Universal date-range filter. Always bounded to a concrete span (defaults
+// to the full extent of the data, never left null/blank) -- a filter that
+// can silently mean "everything" is a view from nowhere; this one always
+// shows the real span it's applying, even when that span is "all of it".
+let globalDateStartTs = null;
 let globalDateEndTs = null;
+let _drhMonths = [];  // cached month buckets for the histogram + drag-handle math
 let landlordFilterKey = null;   // merged-owner filter -- not a plain field match, see setLandlordFilter()
 let landlordFilterLabel = null;
 
@@ -2394,13 +2444,8 @@ function restoreStateFromUrl() {
   if (params.has('dateStart')) globalDateStartTs = fromISODate(params.get('dateStart'));
   if (params.has('dateEnd')) globalDateEndTs = fromISODate(params.get('dateEnd'));
   if (params.has('dateStart') || params.has('dateEnd')) {
-    const startEl = document.getElementById('date-range-start');
-    const endEl = document.getElementById('date-range-end');
-    const clearBtn = document.getElementById('date-range-clear');
-    if (startEl && globalDateStartTs != null) startEl.value = toISODate(globalDateStartTs);
-    if (endEl && globalDateEndTs != null) endEl.value = toISODate(globalDateEndTs);
-    if (clearBtn) clearBtn.style.display = '';
-    renderDateRangeHistogram();
+    syncDateRangeInputs();
+    renderDateRangeHistogram(); // also repositions the drag handles and the clear/reset button
   }
   if (Object.keys(filters).length || landlordFilterKey) updateFilterBtns();
 
@@ -2979,50 +3024,163 @@ function getFiltered() {
 // Universal date-range filter -- the "timeline scrubber kind" of control,
 // but simpler than the Map's own decay-weighted scrubber (no half-life/
 // playhead, since this just bounds getFiltered(), it doesn't drive a heat
-// render). Two date inputs plus an all-time monthly histogram for visual
-// context on where the current selection sits.
-function renderDateRangeHistogram() {
-  const el = document.getElementById('date-range-hist');
-  if (!el || !allRows.length) return;
+// render). Two date inputs plus a draggable all-time monthly histogram.
+// Month-grained everywhere (bucket boundaries, drag snapping) because the
+// histogram itself is month-grained -- a handle that could land mid-bar
+// would be more "precise" than the display it's sitting on.
+function computeDrhMonths() {
   const counts = {};
   for (const r of allRows) {
     const m = caseFileDateToMonth(r.file_date);
     if (m) counts[m] = (counts[m] || 0) + 1;
   }
-  const months = sortMonthsAsc(Object.keys(counts));
-  const max = Math.max(1, ...months.map(m => counts[m]));
-  el.innerHTML = months.map(m => {
+  return sortMonthsAsc(Object.keys(counts)).map(m => {
     const [mm, yyyy] = m.split('/');
-    const monthStartTs = Date.UTC(+yyyy, +mm - 1, 1);
-    const monthEndTs = Date.UTC(+yyyy, +mm, 0);
-    const inRange = (globalDateStartTs == null || monthEndTs >= globalDateStartTs)
-      && (globalDateEndTs == null || monthStartTs <= globalDateEndTs);
-    const h = Math.max(2, Math.round((counts[m] / max) * 20));
-    return `<div class="bar${inRange ? ' in-range' : ''}" style="height:${h}px" title="${m}: ${counts[m]} filing${counts[m] === 1 ? '' : 's'}"></div>`;
+    return {
+      key: m,
+      count: counts[m],
+      startTs: Date.UTC(+yyyy, +mm - 1, 1),
+      endTs: Date.UTC(+yyyy, +mm, 0, 23, 59, 59, 999),
+    };
+  });
+}
+
+function isDrhNarrowed() {
+  if (!_drhMonths.length) return false;
+  return globalDateStartTs > _drhMonths[0].startTs || globalDateEndTs < _drhMonths[_drhMonths.length - 1].endTs;
+}
+
+function positionDrhHandles() {
+  const startHandle = document.getElementById('drh-handle-start');
+  const endHandle = document.getElementById('drh-handle-end');
+  const n = _drhMonths.length;
+  if (!startHandle || !endHandle || !n) return;
+  const idxOf = (ts, fallback) => {
+    if (ts == null) return fallback;
+    const idx = _drhMonths.findIndex(m => ts <= m.endTs);
+    return idx === -1 ? n - 1 : idx;
+  };
+  const startIdx = idxOf(globalDateStartTs, 0);
+  const endIdx = idxOf(globalDateEndTs, n - 1);
+  startHandle.style.left = (startIdx / n * 100) + '%';
+  endHandle.style.left = ((endIdx + 1) / n * 100) + '%';
+}
+
+function renderDateRangeHistogram() {
+  const el = document.getElementById('date-range-hist');
+  if (!el || !allRows.length) return;
+  _drhMonths = computeDrhMonths();
+  const max = Math.max(1, ...(_drhMonths.map(m => m.count)));
+  el.innerHTML = _drhMonths.map(m => {
+    const inRange = (globalDateStartTs == null || m.endTs >= globalDateStartTs)
+      && (globalDateEndTs == null || m.startTs <= globalDateEndTs);
+    const h = Math.max(2, Math.round((m.count / max) * 20));
+    return `<div class="bar${inRange ? ' in-range' : ''}" style="height:${h}px" title="${m.key}: ${m.count} filing${m.count === 1 ? '' : 's'}"></div>`;
   }).join('');
+  positionDrhHandles();
+  const clearBtn = document.getElementById('date-range-clear');
+  if (clearBtn) clearBtn.style.display = isDrhNarrowed() ? '' : 'none';
+}
+
+// Pushes the current globalDateStartTs/EndTs into the two <input type=date>
+// elements. Always a concrete value on both sides -- see the "no view from
+// nowhere" comment on the globals above.
+function syncDateRangeInputs() {
+  const startEl = document.getElementById('date-range-start');
+  const endEl = document.getElementById('date-range-end');
+  if (startEl && globalDateStartTs != null) startEl.value = toISODate(globalDateStartTs);
+  if (endEl && globalDateEndTs != null) endEl.value = toISODate(globalDateEndTs);
 }
 
 function bindDateRangeFilter() {
   const startEl = document.getElementById('date-range-start');
   const endEl = document.getElementById('date-range-end');
   const clearBtn = document.getElementById('date-range-clear');
+  const wrap = document.getElementById('date-range-hist-wrap');
+  const startHandle = document.getElementById('drh-handle-start');
+  const endHandle = document.getElementById('drh-handle-end');
   if (!startEl || startEl.dataset.bound) return; // guard against double-binding on re-render
   startEl.dataset.bound = '1';
 
+  // Default to the full extent of the data rather than leaving both ends
+  // null -- restoreStateFromUrl() (called right after this) overwrites it
+  // if the URL names a narrower span.
+  if (globalDateStartTs == null && globalDateEndTs == null && allRows.length) {
+    const months = computeDrhMonths();
+    if (months.length) {
+      globalDateStartTs = months[0].startTs;
+      globalDateEndTs = months[months.length - 1].endTs;
+    }
+  }
+  syncDateRangeInputs();
+
   const apply = () => {
-    globalDateStartTs = startEl.value ? fromISODate(startEl.value) : null;
-    globalDateEndTs = endEl.value ? fromISODate(endEl.value) : null;
-    clearBtn.style.display = (globalDateStartTs != null || globalDateEndTs != null) ? '' : 'none';
+    const months = _drhMonths.length ? _drhMonths : computeDrhMonths();
+    const fullStart = months.length ? months[0].startTs : null;
+    const fullEnd = months.length ? months[months.length - 1].endTs : null;
+    globalDateStartTs = startEl.value ? fromISODate(startEl.value) : fullStart;
+    globalDateEndTs = endEl.value ? fromISODate(endEl.value) : fullEnd;
+    if (globalDateStartTs != null && globalDateEndTs != null && globalDateStartTs > globalDateEndTs) {
+      [globalDateStartTs, globalDateEndTs] = [globalDateEndTs, globalDateStartTs];
+    }
+    syncDateRangeInputs();
     renderDateRangeHistogram();
     render();
+    syncMapUrl();
   };
   startEl.addEventListener('change', apply);
   endEl.addEventListener('change', apply);
   clearBtn.addEventListener('click', () => {
+    if (!_drhMonths.length) return;
+    // Blank the inputs first -- apply() falls back to the full range
+    // whenever an input is empty, so this is what actually makes the
+    // reset stick instead of apply() re-reading the still-narrow values.
     startEl.value = '';
     endEl.value = '';
     apply();
   });
+
+  // Drag the histogram's own start/end handles -- month-snapped, live
+  // preview during the drag (handle position, highlighted bars, date
+  // inputs), full table re-render + URL sync only on release.
+  let drag = null;
+  const monthIdxAt = (clientX) => {
+    const r = wrap.getBoundingClientRect();
+    const frac = Math.min(1, Math.max(0, (clientX - r.left) / Math.max(1, r.width)));
+    return Math.min(_drhMonths.length - 1, Math.floor(frac * _drhMonths.length));
+  };
+  const onDown = (which, e) => {
+    e.preventDefault();
+    if (!_drhMonths.length) return;
+    drag = which;
+    (which === 'start' ? startHandle : endHandle).classList.add('dragging');
+    (which === 'start' ? startHandle : endHandle).setPointerCapture?.(e.pointerId);
+  };
+  const onMove = (e) => {
+    if (!drag || !_drhMonths.length) return;
+    const idx = monthIdxAt(e.clientX);
+    const m = _drhMonths[idx];
+    if (drag === 'start') {
+      globalDateStartTs = Math.min(m.startTs, globalDateEndTs ?? m.startTs);
+    } else {
+      globalDateEndTs = Math.max(m.endTs, globalDateStartTs ?? m.endTs);
+    }
+    syncDateRangeInputs();
+    renderDateRangeHistogram();
+  };
+  const onUp = () => {
+    if (!drag) return;
+    startHandle.classList.remove('dragging');
+    endHandle.classList.remove('dragging');
+    drag = null;
+    render();
+    syncMapUrl();
+  };
+  startHandle.addEventListener('pointerdown', (e) => onDown('start', e));
+  endHandle.addEventListener('pointerdown', (e) => onDown('end', e));
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+
   renderDateRangeHistogram();
 }
 
@@ -7338,27 +7496,22 @@ function render() {
 }
 
 /* ───────────────────────── Chat with Data (β) ─────────────────────────
-   eoreader7's reading organs (loaded from CDN as ES modules) hold the current
-   snapshot as an ADDRESSED corpus: `chunkSource` cuts the digest into passages
-   that each carry a real address, `name#start-end`, reading back the exact
-   characters they name. Tables and charts are computed mechanically from the
-   live rows — never asked of the model.
+   Everything shown here is counted in JavaScript from the live rows. The model
+   reads the question and nothing else — it never writes an answer, a figure,
+   or a sentence that reaches the screen. See CHAT_MOVES, below, for why.
 
-   What changed from the eoreader6.1 host this used to call (2026-09-04):
+   eoreader7's `source.js` (loaded from CDN as an ES module) holds the snapshot
+   as an ADDRESSED corpus. `chunkSource` cuts it into passages that each carry
+   a real address, `name#start-end`; `retrieve` ranks them by term overlap with
+   no relevance floor to pick; `tokenize` supplies the word boundaries and
+   stopwords that both retrieval and the name index are measured in; and
+   `readRange` reads an address back out of the source, which is what makes
+   every provenance chip on this page a reference rather than a decoration.
 
-   1. THE PROMPT FIREWALL. `buildSourceBlock` ships passage TEXT alone — no
-      address, and no instruction to cite one. The model is never shown this
-      instrument's address syntax, so it can never write a plausible-looking
-      fake one. Correspondence is computed AFTERWARD, mechanically, by
-      `attribute` (cite.js) reading which passage's content the answer's own
-      sentences actually overlap — against a null drawn from the rest of the
-      corpus, so a phrase that appears everywhere earns no chip.
-   2. PER-SENTENCE PROVENANCE, not per-answer. Every sentence is measured on
-      its own; a sentence that summarizes or hedges gets no address, which is
-      the honest answer for it.
-   3. ATOM-LEVEL GROUNDING. `checkGrounding` (grounding.js) checks every
-      number AND every proper name in the answer against the retrieved
-      passages, replacing the old regex that only compared digit strings.
+   What replaced the eoreader6.1 host (2026-09-04). Its corpus.js opens with
+   `import fs from "fs"` and needed an import-map shim to resolve in a browser
+   at all; 6.1 is retired. More importantly its session API was built to feed
+   a model passages to narrate, and this tab no longer does that.
 
    Pinned to a commit, not a branch: `@main` on a CDN is a moving target that
    would silently change this page's reading behaviour. */
@@ -7392,24 +7545,14 @@ function chatSnapshotKey() {
 async function ensureChatEngine() {
   if (!chatApi) {
     chatSetStatus('loading eoreader7 reading organs…', 'busy');
-    // Three organs, one import graph: source.js -> measure.js, grounding.js ->
-    // source.js + web.js, cite.js -> source.js + grounding.js. Nothing in that
-    // graph touches Node — unlike the 6.1 host, whose corpus.js opens with
-    // `import fs from "fs"` and therefore could never resolve in a browser.
-    const [source, cite, grounding] = await Promise.all([
-      import(EO7_ORGANS + 'source.js'),
-      import(EO7_ORGANS + 'cite.js'),
-      import(EO7_ORGANS + 'grounding.js'),
-    ]);
+    // One organ, one dependency: source.js -> measure.js, neither touching
+    // Node — unlike the 6.1 host, whose corpus.js opens with `import fs`.
+    const source = await import(EO7_ORGANS + 'source.js');
     chatApi = {
-      chunkSource: source.chunkSource,
-      retrieve: source.retrieve,
-      readRange: source.readRange,
-      buildSourceBlock: source.buildSourceBlock,
-      attribute: cite.attribute,
-      attributedRefs: cite.attributedRefs,
-      stripSelfCitations: cite.stripSelfCitations,
-      checkGrounding: grounding.checkGrounding,
+      chunkSource: source.chunkSource,   // cut the corpus into addressed passages
+      retrieve: source.retrieve,         // term-overlap retrieval, no relevance floor
+      tokenize: source.tokenize,         // the corpus's own word boundaries and stopwords
+      readRange: source.readRange,       // read an address back out of the source
     };
   }
   const modelId = document.getElementById('chat-model-select').value;
@@ -7756,8 +7899,14 @@ function indexChatEntities(chunks) {
   for (const [t, n] of df) if (n > chunks.length / 2) chatCommonTerms.add(t);
 }
 
+/* The corpus's OWN tokenizer, not a second one written here. Rolling my own
+   silently disagreed with it: eoreader7's `tokenize` carries a stopword set,
+   so "the" never enters a passage's terms — but my splitter kept it, and
+   "HIGHLANDS AT THE LAKE" was therefore "named" by any question containing
+   the word "the", scoring zero because the corpus had never heard of it. A
+   name is matched against passages, so it has to be cut the way passages are. */
 function chatTokens(s) {
-  return String(s).toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(t => t.length > 2);
+  return chatApi ? chatApi.tokenize(String(s)) : [];
 }
 
 /* Who does this question name? Each entity scores the summed distinctiveness
@@ -7783,7 +7932,17 @@ function resolveChatEntities(q) {
       score += chatNameIdf.get(t) || 0;
       on.push(t);
     }
-    if (on.length) scored.push({ entity: e, score, on });
+    // Strictly positive: a token sitting in every passage has an idf of zero
+    // and names nobody, however many entities happen to contain it.
+    if (!on.length || score <= 0) continue;
+    /* Weighted by HOW MUCH OF THE NAME the question actually used. Sharing one
+       word with a five-word company name is a mention; saying every word of a
+       name is naming it. Measured live: "what is the dismissal rate in district
+       19?" ranked CHERRY OAK MKT RATE APARTMENTS above council district 19,
+       because "rate" is rarer in this corpus than "19" — but "rate" is one
+       fifth of that company's name and "19" is all of the district's. This is
+       a share of the name, not a chosen weight. */
+    scored.push({ entity: e, score: score * (on.length / e.nameTokens.length), on });
   }
   scored.sort((a, b) => b.score - a.score || b.entity.cases - a.entity.cases);
   const top = scored[0];
@@ -7811,14 +7970,18 @@ function entityProfileArtifact(e) {
   cells.push(['Money judgment recorded', e.withJudgment
     ? `${e.withJudgment.toLocaleString()} (${chatPct(e.withJudgment, e.cases)}), ${money(e.judgmentTotal)} total`
     : 'none']);
+  // Every counterparty is an onward question, not a printed string.
+  const links = (list) => ({ links: list.map(([k, v]) => ({ label: k, q: k, count: v })) });
   const cpLabel = { attorney: 'Top landlords served', landlord: 'Top counsel used', defender: 'Top landlords opposed', district: 'Top landlords filing' }[e.kind];
   const cp = chatTopList(e.counterparties, 5);
-  if (cp.length) cells.push([cpLabel, cp.map(([k, v]) => `${k} (${v.toLocaleString()})`).join('; ')]);
-  if (e.opposing.size) cells.push([e.kind === 'defender' ? 'Opposing counsel' : 'Top plaintiff attorneys', chatTopList(e.opposing, 4).map(([k, v]) => `${k} (${v.toLocaleString()})`).join('; ')]);
+  if (cp.length) cells.push([cpLabel, links(cp)]);
+  if (e.opposing.size) cells.push([e.kind === 'defender' ? 'Opposing counsel' : 'Top plaintiff attorneys', links(chatTopList(e.opposing, 4))]);
   if (e.kind !== 'district') {
     const d = chatTopList(e.districts, 5);
-    if (d.length) cells.push(['Council districts', d.map(([k, v]) => `${k} (${v.toLocaleString()})`).join('; ')]);
+    if (d.length) cells.push(['Council districts', { links: d.map(([k, v]) => ({ label: `District ${k}`, q: `council district ${k}`, count: v })) }]);
   }
+  const mm = chatTopList(e.months, 3);
+  if (mm.length > 1) cells.push(['Busiest months', { links: mm.map(([k, v]) => ({ label: k, q: `${e.name} ${k}`, count: v })) }]);
   return {
     kind: 'table',
     title: e.name,
@@ -7884,11 +8047,12 @@ async function rebuildChatDigest() {
 
 const CHAT_SUGGESTIONS = [
   "What's the deal with McCoy?",
-  'American Homes 4 Rent',
+  'MCCOY, JENNIFER JO and HIGHLANDS AT THE LAKE',
+  'American Homes 4 Rent by district',
+  'MDHA over time',
   'How often does a tenant have a lawyer?',
-  'Table: cases by council district',
-  'Chart: cases by month filed',
-  'Which districts have the highest poverty rate?',
+  'Which census tracts are most likely to have increasing evictions?',
+  'Where are things headed by district?',
 ];
 
 function renderChatSuggestions() {
@@ -7926,9 +8090,13 @@ function detectChatArtifact(q) {
       .sort((a, b) => (+a[0] || 99) - (+b[0] || 99))
       .map(([d, v]) => ({
         label: `District ${d}`, value: v.total,
-        cells: [`District ${d}`, v.total.toLocaleString(), v.pending.toLocaleString(), v.dismissed.toLocaleString()],
+        cells: [`District ${chatDistrictNum(d) || d}`, v.total.toLocaleString(), v.pending.toLocaleString()],
+        q: `council district ${chatDistrictNum(d) || d}`,
       }));
-    return { kind, title: 'Cases by council district', head: ['District', 'Cases', 'Pending', 'Dismissed'], rows: items, provQuery };
+    // The dismissed column is gone for the reason the digest states: this
+    // source records PENDING and CLOSED and no disposition, so the column was
+    // zero on every row and read as a finding rather than as an absent field.
+    return { kind, title: 'Cases by council district', head: ['District', 'Cases', 'Pending'], rows: items, provQuery };
   }
   if (subject === 'status') {
     const items = Object.entries(s.statusCounts).sort((a, b) => b[1] - a[1])
@@ -7940,11 +8108,11 @@ function detectChatArtifact(q) {
     return { kind, title: 'Cases by month filed', head: ['Month', 'Cases'], rows: items, provQuery };
   }
   if (subject === 'plaintiffs') {
-    const items = s.topPlaintiffs.map(([name, n]) => ({ label: name, value: n, cells: [name, n.toLocaleString()] }));
+    const items = s.topPlaintiffs.map(([name, n]) => ({ label: name, value: n, cells: [name, n.toLocaleString()], q: name }));
     return { kind, title: 'Top plaintiffs by case count', head: ['Plaintiff', 'Cases'], rows: items, provQuery };
   }
   if (subject === 'attorneys') {
-    const items = s.topAttorneys.map(([name, n]) => ({ label: name, value: n, cells: [name, n.toLocaleString()] }));
+    const items = s.topAttorneys.map(([name, n]) => ({ label: name, value: n, cells: [name, n.toLocaleString()], q: name }));
     return { kind, title: 'Top attorneys by case count', head: ['Attorney', 'Cases'], rows: items, provQuery };
   }
   if (subject === 'demographics') {
@@ -7954,22 +8122,44 @@ function detectChatArtifact(q) {
       const pop = x.population != null ? x.population.toLocaleString() : '—';
       const pov = x.poverty && x.poverty.pct_total_poverty != null ? x.poverty.pct_total_poverty.toFixed(1) + '%' : '—';
       const inc = x.income && x.income.median_household_income != null ? '$' + Math.round(x.income.median_household_income).toLocaleString() : '—';
-      return { label: `District ${d}`, value: x.population, cells: [`District ${d}`, pop, pov, inc] };
+      return { label: `District ${d}`, value: x.population, cells: [`District ${d}`, pop, pov, inc], q: `council district ${d}` };
     });
     return { kind, title: 'District demographics (MSS 2026)', head: ['District', 'Population', 'Poverty rate', 'Median HH income'], rows: items, provQuery };
   }
   return null;
 }
 
+/* Returned data is the interface. Every party, district and month a card names
+   is the next question, so it is rendered as something you can press rather
+   than as text you would have to retype. `data-q` carries the question the
+   press asks — a real question in words, the same thing you could have typed,
+   so nothing is reachable by clicking that is not also reachable by asking. */
+function chatLink(label, q, suffix) {
+  return `<button type="button" class="data-chip" data-q="${escapeHtmlSafe(q ?? label)}">`
+    + `${escapeHtmlSafe(label)}${suffix ? `<span class="data-chip-n">${escapeHtmlSafe(suffix)}</span>` : ''}</button>`;
+}
+
+function artifactCell(c) {
+  // A cell is either plain text or a list of onward questions.
+  if (c && typeof c === 'object' && Array.isArray(c.links)) {
+    return c.links.map(l => chatLink(l.label, l.q, l.count != null ? l.count.toLocaleString() : null)).join(' ');
+  }
+  return escapeHtmlSafe(c);
+}
+
 function artifactHtml(a) {
   let body = '';
   if (a.kind === 'table') {
-    body = `<div class="artifact-table-wrap"><table><thead><tr>${
+    const head = a.head.some(h => h) ? `<thead><tr>${
       a.head.map((h, i) => `<th${i > 0 ? ' class="num"' : ''}>${escapeHtmlSafe(h)}</th>`).join('')
-    }</tr></thead><tbody>${
-      a.rows.map(r => `<tr>${r.cells.map((c, i) =>
-        `<td${i === 0 ? ' class="row-label"' : ' class="num"'}>${escapeHtmlSafe(c)}</td>`
-      ).join('')}</tr>`).join('')
+    }</tr></thead>` : '';
+    body = `<div class="artifact-table-wrap"><table>${head}<tbody>${
+      a.rows.map(r => `<tr>${r.cells.map((c, i) => {
+        // The row's own label is a question too, when the row names something
+        // this instrument holds a dossier on.
+        const inner = (i === 0 && r.q) ? chatLink(String(c), r.q) : artifactCell(c);
+        return `<td${i === 0 ? ' class="row-label"' : ' class="num"'}>${inner}</td>`;
+      }).join('')}</tr>`).join('')
     }</tbody></table></div>`;
   } else {
     const max = Math.max(1, ...a.rows.map(r => r.value || 0));
@@ -7978,8 +8168,9 @@ function artifactHtml(a) {
     const bars = a.rows.map((r, i) => {
       const y = i * rowH + 5;
       const bw = Math.max(2, ((r.value || 0) / max) * (w - padL - padR));
+      const lbl = `<text class="bar-label${r.q ? ' bar-link' : ''}"${r.q ? ` data-q="${escapeHtmlSafe(r.q)}"` : ''} x="${padL - 8}" y="${y + rowH / 2 - 2}" text-anchor="end">${escapeHtmlSafe(String(r.label).slice(0, 24))}</text>`;
       return `<rect class="bar" x="${padL}" y="${y}" width="${bw.toFixed(1)}" height="${rowH - 8}" rx="2"><title>${escapeHtmlSafe(r.label)}: ${(r.value || 0).toLocaleString()}</title></rect>`
-        + `<text class="bar-label" x="${padL - 8}" y="${y + rowH / 2 - 2}" text-anchor="end">${escapeHtmlSafe(String(r.label).slice(0, 24))}</text>`
+        + lbl
         + `<text class="bar-value" x="${padL + bw + 6}" y="${y + rowH / 2 - 2}">${(r.value || 0).toLocaleString()}</text>`;
     }).join('');
     body = `<svg class="chart-svg" viewBox="0 0 ${w} ${h}" role="img">${bars}</svg>`;
@@ -7987,72 +8178,592 @@ function artifactHtml(a) {
   return `<div class="artifact-title">${escapeHtmlSafe(a.title)}</div>${body}`;
 }
 
-/* The model is never told that addresses exist, so it is never asked to write
-   one — `buildSourceBlock` hands it passage text alone. Correspondence is
-   established afterward by measurement, not by trusting a self-report. */
-const CHAT_SYSTEM_PROMPT = [
-  'You answer questions about Nashville eviction case data using ONLY the data passages provided in the user message.',
-  'Rules:',
-  '- Never invent numbers, names, districts, or dates. If the passages do not contain the answer, say exactly what is missing.',
-  '- Do not add scraped+Princeton counts together; they are different measures.',
-  '- Keep answers short: 1-3 sentences unless asked to enumerate.',
-].join('\n');
 
-/* Render the answer once, carrying two mechanically-derived overlays:
 
-   - per-sentence provenance from `attribute` — a chip is appended to a
-     sentence only when its best-overlapping passage beat a null drawn from
-     the rest of the corpus. A summarizing or hedging sentence gets none,
-     which is the true answer for it.
-   - unsupported atoms from `checkGrounding` — every number and proper name
-     the retrieved passages do not carry, marked in place.
 
-   Both overlays are offset-addressed into the SAME raw answer string, so
-   they are applied in one walk and can never disagree about where they sit. */
-function renderGroundedAnswer(answer, entries, findings) {
-  const marks = [];
-  for (const f of findings) {
-    if (Number.isInteger(f.start) && Number.isInteger(f.end) && f.end > f.start) {
-      marks.push({ at: f.start, to: f.end, title: `not found in the retrieved passages: ${f.absent.join(', ')}` });
-    }
-  }
-  // Where each attributed sentence ends, found by walking forward — cite.js's
-  // splitSentences returns trimmed text without offsets, but it returns the
-  // sentences in order, so a cursor locates each one unambiguously.
-  const chips = [];
-  let cursor = 0;
-  for (const e of entries) {
-    const at = answer.indexOf(e.text, cursor);
-    if (at === -1) continue;
-    cursor = at + e.text.length;
-    if (e.ref) chips.push({ at: cursor, ref: e.ref, score: e.score, floor: e.floor });
-  }
-  const points = new Map();
-  for (const c of chips) points.set(c.at, (points.get(c.at) || []).concat(c));
+/* ─── Where things are headed ─────────────────────────────────────────────
+   "Which tracts are most likely to have increasing evictions" is not a
+   question a count can answer, and it is not one a slope should answer
+   either. A slope over noisy monthly counts will hand you a ranked list
+   every single time, including on data with no trend in it at all — the
+   ranking is produced by the method, not found in the records.
 
-  let out = '';
-  let i = 0;
-  const emit = (from, to) => {
-    // Chip insertion points inside this stretch are flushed as we pass them.
-    for (let k = from; k <= to; k++) {
-      if (!points.has(k)) continue;
-      out += escapeHtmlSafe(answer.slice(from, k));
-      for (const c of points.get(k)) out += spanChipHtml(c.ref, c);
-      points.delete(k);
-      from = k;
-    }
-    out += escapeHtmlSafe(answer.slice(from, to));
-  };
-  marks.sort((a, b) => a.at - b.at);
-  for (const m of marks) {
-    if (m.at < i) continue;
-    emit(i, m.at);
-    out += `<span class="unverified-num" title="${escapeHtmlSafe(m.title)}">${escapeHtmlSafe(answer.slice(m.at, m.to))}</span>`;
-    i = m.to;
-  }
-  emit(i, answer.length);
-  return `<p>${out.replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>')}</p>`;
+   So the direction is read as DYNAMICS and then tested against a null.
+
+   THE DYNAMICS. Each area's monthly filing count is embedded in delay
+   coordinates — a year of them, so a mode has to be visible across a full
+   seasonal cycle before it can be called a trend rather than a summer — and
+   eoreader7's `dmd` (native/kernel/dmd.js) fits the linear operator that
+   carries one window to the next. Its leading eigenvalue's `growth` is
+   log|λ|: above zero the area's own dynamics are expanding, below zero
+   they are decaying. Model order is `"numerical"`, derived from the
+   spectrum itself — the module refuses a silent default, and no golden
+   here says how many modes a docket has.
+
+   THE NULL. The same series is shuffled with eoreader7's seeded `shuffled`
+   (native/kernel/rng.js), which destroys the time ORDER while keeping every
+   count, and re-fit. Whatever growth survives that is growth the method
+   manufactures from this area's own noise. An area is reported only when
+   its real growth beats its own shuffled draws, and what is reported is HOW
+   MANY it beat — a measured number, not a cutoff chosen here. An area that
+   beats none of them is not a weak signal; it is no signal, and it is
+   absent from the answer rather than ranked last in it.
+
+   DRAWS AND SEED ARE DECLARED, not defaulted, and both ride in the
+   derivation so a run can be reproduced exactly. ──────────────────────── */
+
+const EO7_KERNEL = `https://cdn.jsdelivr.net/gh/clovenbradshaw-ctrl/eoreader7@${EO7_COMMIT}/native/kernel/`;
+const CHAT_DELAYS = 12;    // one year of delay coordinates
+const CHAT_DRAWS = 40;     // shuffled re-fits per area
+const CHAT_SEED = 'eviction-overwatch/trend';
+
+let chatDyn = null;
+
+async function ensureChatDynamics() {
+  if (chatDyn) return;
+  chatSetStatus('loading eoreader7 dynamics…', 'busy');
+  const [dmdMod, rngMod] = await Promise.all([
+    import(EO7_KERNEL + 'dmd.js'),
+    import(EO7_KERNEL + 'rng.js'),
+  ]);
+  chatDyn = { dmd: dmdMod.dmd, createSeededRng: rngMod.createSeededRng, shuffled: rngMod.shuffled };
 }
+
+/* Monthly counts per area, on ONE shared month axis. A month an area filed
+   nothing in is a zero, not a gap — an absent month would silently splice
+   two non-adjacent windows together and read the seam as a change. */
+function chatAreaSeries(grain) {
+  const key = grain === 'tract'
+    ? (r) => String(r.census_tract || '').trim() || null
+    : (r) => chatDistrictNum(r.council_district);
+  const months = new Set();
+  const per = new Map();
+  for (const r of allRows) {
+    const k = key(r); const m = caseFileDateToMonth(r.file_date);
+    if (!k || !m) continue;
+    months.add(m);
+    let s = per.get(k); if (!s) per.set(k, s = new Map());
+    s.set(m, (s.get(m) || 0) + 1);
+  }
+  const axis = sortMonthsAsc([...months]);
+  const out = new Map();
+  for (const [k, s] of per) out.set(k, axis.map(m => s.get(m) || 0));
+  return { axis, series: out };
+}
+
+/* Delay embedding: the two windows DMD needs, one step apart. */
+function chatHankel(series, delays) {
+  const cols = series.length - delays;
+  if (cols < 2) return null;
+  const X = [], Xp = [];
+  for (let d = 0; d < delays; d++) {
+    X.push(series.slice(d, d + cols - 1));
+    Xp.push(series.slice(d + 1, d + cols));
+  }
+  return { X, Xp };
+}
+
+function chatGrowth(series, delays) {
+  const h = chatHankel(series, delays);
+  if (!h) return null;
+  let out;
+  try { out = chatDyn.dmd(h.X, h.Xp, { rank: 'numerical' }); }
+  catch (_) { return null; }
+  const lead = out.eigenvalues[0];
+  return lead && Number.isFinite(lead.growth) ? lead.growth : null;
+}
+
+/* The measured direction of one area, and how much of it survived its own
+   shuffled null. */
+function chatTrend(name, series, { delays, draws, seed }) {
+  const growth = chatGrowth(series, delays);
+  if (growth === null) return null;
+  const rng = chatDyn.createSeededRng(`${seed}/${name}`);
+  const nulls = [];
+  for (let i = 0; i < draws; i++) {
+    const g = chatGrowth(chatDyn.shuffled(series, rng), delays);
+    if (g !== null) nulls.push(g);
+  }
+  if (!nulls.length) return null;
+  const beat = nulls.filter(g => growth > g).length;
+  nulls.sort((a, b) => a - b);
+  return {
+    name, growth, beat, draws: nulls.length,
+    nullMedian: nulls[nulls.length >> 1],
+    total: series.reduce((a, b) => a + b, 0),
+    recent: series.slice(-delays).reduce((a, b) => a + b, 0),
+    prior: series.slice(-2 * delays, -delays).reduce((a, b) => a + b, 0),
+  };
+}
+
+async function chatTrendArtifact(grain) {
+  await ensureChatDynamics();
+  const { axis, series } = chatAreaSeries(grain);
+  const need = CHAT_DELAYS + 3;   // structural: the embedding needs this many
+  const found = [];
+  let considered = 0, tooShort = 0;
+  for (const [name, s] of series) {
+    if (s.length < need) { tooShort++; continue; }
+    considered++;
+    const t = chatTrend(name, s, { delays: CHAT_DELAYS, draws: CHAT_DRAWS, seed: CHAT_SEED });
+    // Beat every draw, or it is not reported. Not a chosen bar — it is what
+    // "this is not what the method does to noise" means at this many draws.
+    if (t && t.growth > 0 && t.beat === t.draws) found.push(t);
+  }
+  found.sort((a, b) => b.growth - a.growth || b.recent - a.recent);
+  const label = grain === 'tract' ? 'Census tract' : 'District';
+  const rows = found.map(t => ({
+    label: `${label} ${t.name}`,
+    value: t.growth,
+    cells: [
+      grain === 'tract' ? `Tract ${t.name}` : `District ${t.name}`,
+      t.growth.toFixed(3),
+      `${t.prior.toLocaleString()} → ${t.recent.toLocaleString()}`,
+      t.total.toLocaleString(),
+    ],
+    q: grain === 'tract' ? null : `council district ${t.name}`,
+  }));
+  return {
+    artifact: {
+      kind: 'table',
+      title: found.length
+        ? `Where filings are headed — ${found.length} of ${considered} ${grain === 'tract' ? 'tracts' : 'districts'} with expanding dynamics that beat their own null`
+        : `No ${grain === 'tract' ? 'tract' : 'district'} shows expansion that survives its own null`,
+      head: [label, 'Growth (log |λ|)', 'Prior yr → last yr', 'All filings'],
+      rows: rows.length ? rows : [{
+        label: 'none', value: 0,
+        cells: [`${considered} ${grain === 'tract' ? 'tracts' : 'districts'} tested`,
+          '—',
+          'every expanding fit was matched by the same series shuffled',
+          '—'],
+      }],
+    },
+    found, considered, tooShort, axis,
+    method: {
+      op: 'REC',
+      grain,
+      engine: 'eoreader7 native/kernel/dmd.js::dmd + native/kernel/rng.js::shuffled',
+      commit: EO7_COMMIT,
+      embedding: `Hankel delay embedding, ${CHAT_DELAYS} delays (one year), one month per step`,
+      modelOrder: 'numerical — derived from the spectrum, never a chosen rank',
+      statistic: 'growth = log|λ| of the leading DMD eigenvalue',
+      nullModel: `the same series shuffled ${CHAT_DRAWS} times with a seeded Fisher-Yates, destroying time order and preserving every count`,
+      seed: CHAT_SEED,
+      reported: 'only areas whose real growth exceeded every shuffled draw',
+      excluded: `${tooShort} areas carried fewer than ${need} months and cannot support the embedding at all`,
+      months: axis.length,
+      warning: 'growth is the direction this area\'s own past dynamics are carrying, measured against a null. It is not a forecast, and it does not account for anything outside the filing record.',
+    },
+  };
+}
+
+/* ─── Derivations: a result that can leave this page and still be checkable ──
+   Every table this tab produces is a claim about 78,000 court records, and a
+   claim a lawyer might put in front of somebody else. So it is not rendered
+   and forgotten. It is landed as a DERIVATION, carrying three things a
+   screenshot cannot:
+
+     what generated it  — the question in the words asked, the move applied,
+                          which party was resolved and ON WHAT EVIDENCE, the
+                          join predicate, and the model's exact role (which is
+                          routing, never a figure);
+     what it stands on  — the passage addresses, WITH THE BYTES read back out
+                          of the corpus at export time, plus every case docket
+                          the count is over, so the arithmetic is re-runnable
+                          against the court's own records;
+     what it is not     — `witnesses: []`. This follows eoreader7's
+                          derivation.js wall: a derived result was stated
+                          nowhere, so it carries premises and provenance and
+                          never a witness of its own, and nothing downstream
+                          that counts witnesses can ever mistake it for
+                          something a source said.
+
+   The snapshot key and the pinned corpus commit ride along because the same
+   question against tomorrow's feed is a different derivation, and a claim that
+   cannot say which snapshot it came from cannot be checked at all. ───────── */
+
+const chatDerivations = new Map();
+let chatDerivationSeq = 0;
+
+function chatDerive({ question, op, subject, join, dockets, refs, routed, artifact }) {
+  const id = `derived:${Date.now().toString(36)}-${++chatDerivationSeq}`;
+  const move = CHAT_MOVES.find(m => m.op === op);
+  const d = {
+    id,
+    derivedAt: new Date().toISOString(),
+
+    generatedBy: {
+      instrument: 'Eviction Overwatch — chat with data',
+      question,
+      move: op,
+      moveMeans: move ? move.say : 'describe',
+      subject: subject ? {
+        name: subject.entity.name,
+        kind: subject.entity.kind,
+        matchedOn: subject.on,
+        // Why this party and not the other ones with the same name.
+        evidence: `summed corpus-wide distinctiveness of the name tokens the question used, weighted by the share of the name it used`,
+        score: +subject.score.toFixed(3),
+        alsoMatched: subject.alsoMatched || [],
+      } : null,
+      join: join || null,
+      // Stated plainly because it is the thing a reader will most want to know.
+      model: routed
+        ? { id: chatEngineModel, role: 'routing only', said: routed,
+            note: 'the model was asked which party and which move the question meant; it was resolved against the name index and the move vocabulary, and no figure in this result passed through it' }
+        : { id: null, role: 'not consulted', note: 'this result was resolved from the question mechanically; no model ran' },
+      corpus: {
+        engine: 'eoreader7',
+        commit: EO7_COMMIT,
+        organs: ['source.js::chunkSource', 'source.js::retrieve', 'source.js::tokenize', 'source.js::readRange'],
+        passages: chatChunks ? chatChunks.length : 0,
+      },
+      snapshot: {
+        key: chatSnapshotKey(),
+        cases: allRows.length,
+        fetchedAt: casesUpdatedAt || null,
+        source: FEED_URL,
+      },
+    },
+
+    premises: refs || [],
+    // Filled at export, read back out of the corpus rather than cached, so an
+    // address that no longer resolves is visible as one instead of shipping a
+    // stale copy of what it used to say.
+    provenance: null,
+    dockets: dockets || null,
+    result: artifact ? { title: artifact.title, head: artifact.head, rows: artifact.rows.map(r => r.cells.map(chatCellText)) } : null,
+
+    // derivation.js's wall. Nothing stated this; it was computed.
+    witnesses: [],
+  };
+  chatDerivations.set(id, d);
+  return d;
+}
+
+function chatCellText(c) {
+  if (c && typeof c === 'object' && Array.isArray(c.links)) {
+    return c.links.map(l => `${l.label}${l.count != null ? ` (${l.count})` : ''}`).join('; ');
+  }
+  return String(c ?? '');
+}
+
+/* Read the bytes back at export time — the re-opening that makes an address a
+   reference. An address that no longer resolves says so, in the file. */
+function chatSealDerivation(d) {
+  const sealed = JSON.parse(JSON.stringify(d));
+  sealed.provenance = (d.premises || []).map(ref => {
+    const text = chatApi && chatSources ? chatApi.readRange(chatSources, ref) : null;
+    return text == null
+      ? { ref, resolved: false, note: 'this address does not resolve in the current corpus — the snapshot has moved since the derivation was made' }
+      : { ref, resolved: true, text };
+  });
+  return sealed;
+}
+
+function chatDownload(name, text, mime) {
+  const blob = new Blob([text], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function chatExport(id, how) {
+  const d = chatDerivations.get(id);
+  if (!d) return;
+  const sealed = chatSealDerivation(d);
+  const stamp = sealed.derivedAt.slice(0, 19).replace(/[:T]/g, '-');
+  const slug = (sealed.generatedBy.subject?.name || sealed.generatedBy.move).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
+  if (how === 'json') {
+    chatDownload(`eviction-${slug}-${stamp}.json`, JSON.stringify(sealed, null, 2), 'application/json');
+    return;
+  }
+  /* CSV carries the derivation as a commented header ahead of the table, so
+     the provenance travels with the numbers even into a spreadsheet — a bare
+     CSV of counts is exactly the artifact that gets forwarded with its origin
+     stripped off. */
+  // Newlines flattened: a comment line that wraps stops looking like a comment
+  // line, and the model's routing text is free-form (measured live, it came
+  // back as two labelled lines rather than the one sentence it was asked for).
+  const q = (v) => `"${String(v ?? '').replace(/\s+/g, ' ').replace(/"/g, '""')}"`;
+  const L = [];
+  const g = sealed.generatedBy;
+  L.push(`# ${sealed.result?.title || 'Eviction Overwatch derivation'}`);
+  L.push(`# derivation,${q(sealed.id)}`);
+  L.push(`# derived_at,${q(sealed.derivedAt)}`);
+  L.push(`# question,${q(g.question)}`);
+  L.push(`# move,${q(g.move + ' — ' + g.moveMeans)}`);
+  if (g.subject) L.push(`# subject,${q(g.subject.name)},${q(g.subject.kind)},matched_on,${q(g.subject.matchedOn.join(' '))}`);
+  if (g.join) L.push(`# join,${q(JSON.stringify(g.join))}`);
+  L.push(`# model,${q(g.model.role)},${q(g.model.said || '')}`);
+  L.push(`# corpus,${q(g.corpus.engine + '@' + g.corpus.commit)},passages,${g.corpus.passages}`);
+  L.push(`# snapshot,${q(g.snapshot.key)},cases,${g.snapshot.cases},fetched,${q(g.snapshot.fetchedAt)}`);
+  for (const p of sealed.provenance) L.push(`# source,${q(p.ref)},${q(p.resolved ? 'resolves' : 'does not resolve')}`);
+  if (sealed.dockets) L.push(`# dockets,${sealed.dockets.length}`);
+  L.push('# witnesses,0,this result was computed and was stated by no source');
+  L.push('');
+  if (sealed.result) {
+    if (sealed.result.head.some(h => h)) L.push(sealed.result.head.map(q).join(','));
+    for (const r of sealed.result.rows) L.push(r.map(q).join(','));
+  }
+  if (sealed.dockets?.length) {
+    L.push('');
+    L.push('# the case dockets this result counts');
+    L.push('docket');
+    for (const dk of sealed.dockets) L.push(q(dk));
+  }
+  chatDownload(`eviction-${slug}-${stamp}.csv`, L.join('\n'), 'text/csv');
+}
+
+function chatExportStrip(d) {
+  return `<div class="export-strip">`
+    + `<span class="prov-label">derivation ${escapeHtmlSafe(d.id.slice(8))}</span>`
+    + `<button type="button" class="export-btn" onclick="chatExport('${d.id}','csv')">CSV ↓</button>`
+    + `<button type="button" class="export-btn" onclick="chatExport('${d.id}','json')">JSON with provenance ↓</button>`
+    + (d.dockets ? `<span class="prov-note">${d.dockets.length.toLocaleString()} dockets carried</span>` : '')
+    + `</div>`;
+}
+
+/* ─── The join ────────────────────────────────────────────────────────────
+   Two parties named in one question is a join: the cases where both hold.
+   This is the question a lawyer actually brings — not "how many does McCoy
+   file" but "how many does McCoy file FOR THIS LANDLORD, and in which
+   district, and did anyone show up for the tenant". It is a filter over the
+   live rows, so the result carries the dockets it counted and can be checked
+   one case at a time against the court's own record. */
+function chatEntityMatches(r, e) {
+  return e.kind === 'attorney' ? String(r.Attorney || '').trim() === e.name
+    : e.kind === 'landlord' ? String(r.Plaintiff_1 || '').trim() === e.name
+    : e.kind === 'defender' ? String(r.Def_Attorney || '').trim() === e.name
+    : chatDistrictNum(r.council_district) === e.name;
+}
+
+function chatJoinArtifact(a, b) {
+  const rows = allRows.filter(r => chatEntityMatches(r, a) && chatEntityMatches(r, b));
+  const districts = new Map(), months = new Map();
+  let pending = 0, withDef = 0, withAmt = 0, amtTotal = 0;
+  for (const r of rows) {
+    if (String(r.status || '').toUpperCase() === 'PENDING') pending++;
+    if (String(r.Def_Attorney || '').trim()) withDef++;
+    const amt = Number(r.judgment_amount);
+    if (Number.isFinite(amt) && amt > 0) { withAmt++; amtTotal += amt; }
+    chatBump(districts, chatDistrictNum(r.council_district));
+    chatBump(months, caseFileDateToMonth(r.file_date));
+  }
+  const cells = [
+    ['Cases where both hold', rows.length.toLocaleString()],
+    [`Share of ${a.name}'s filings`, chatPct(rows.length, a.cases)],
+    [`Share of ${b.name}'s filings`, chatPct(rows.length, b.cases)],
+  ];
+  if (rows.length) {
+    cells.push(['Pending / closed', `${pending.toLocaleString()} / ${(rows.length - pending).toLocaleString()}`]);
+    cells.push(['Tenant had a lawyer', `${withDef.toLocaleString()} — ${chatPct(withDef, rows.length)}`]);
+    cells.push(['Money judgment recorded', withAmt ? `${withAmt.toLocaleString()} — ${chatPct(withAmt, rows.length)}, $${Math.round(amtTotal).toLocaleString()} total` : 'none']);
+    const d = chatTopList(districts, 6);
+    if (d.length) cells.push(['Council districts', { links: d.map(([k, v]) => ({ label: `District ${k}`, q: `council district ${k}`, count: v })) }]);
+    const m = chatTopList(months, 4);
+    if (m.length) cells.push(['Busiest months', { links: m.map(([k, v]) => ({ label: k, q: `${a.name} ${k}`, count: v })) }]);
+  }
+  return {
+    artifact: {
+      kind: 'table',
+      title: `${a.name} × ${b.name}`,
+      head: ['', ''],
+      rows: cells.map(([k, v]) => ({ label: k, value: 0, cells: [k, v] })),
+    },
+    dockets: rows.map(r => r.docket),
+    predicate: {
+      op: 'CON',
+      left: { name: a.name, kind: a.kind, field: { attorney: 'Attorney', landlord: 'Plaintiff_1', defender: 'Def_Attorney', district: 'council_district' }[a.kind] },
+      right: { name: b.name, kind: b.kind, field: { attorney: 'Attorney', landlord: 'Plaintiff_1', defender: 'Def_Attorney', district: 'council_district' }[b.kind] },
+      rule: 'exact match on both fields, over every row of the live snapshot',
+      matched: rows.length,
+    },
+  };
+}
+
+/* Which move does this wording call for? Counted against the move vocabulary
+   above, most matches wins. This runs on the QUESTION first — most questions
+   name their own move and never need the model at all — and on the model's
+   sentence only when the question alone did not settle it. */
+/* A directional question asked of PLACES rather than of a party. "Where are
+   things headed", "which tracts are most likely to have increasing evictions"
+   — the move is REC either way, but the thing it is asked of is the map, and
+   that is answered by dynamics rather than by a count per month. */
+function chatDirectionalGrain(text) {
+  const t = ' ' + String(text).toLowerCase() + ' ';
+  const directional = /\b(headed|heading|direction|increasing|rising|growing|growth|trajectory|forecast|likely|worsening|escalating|trend)\b/.test(t);
+  if (!directional) return null;
+  if (/\btracts?\b|\bneighbou?rhoods?\b|\bcensus\b|\bblocks?\b/.test(t)) return 'tract';
+  if (/\bdistricts?\b|\bcouncil\b|\bwhere\b|\bareas?\b|\bmap\b|\bgeograph/.test(t)) return 'district';
+  return null;
+}
+
+function detectChatMove(text) {
+  const toks = new Set(chatTokens(text).concat(String(text).toLowerCase().split(/[^a-z]+/).filter(Boolean)));
+  let best = null, bestN = 0;
+  for (const m of CHAT_MOVES) {
+    const n = m.words.filter(w => toks.has(w)).length;
+    if (n > bestN) { bestN = n; best = m; }
+  }
+  return best ? { ...best, matched: bestN } : null;
+}
+
+/* ─── The moves themselves. Every number below is counted from the live rows;
+   none of them passes through a model. ─────────────────────────────────── */
+
+function chatRowsFor(entity) {
+  if (!entity) return allRows;
+  const k = entity.kind;
+  return allRows.filter(r =>
+    k === 'attorney' ? String(r.Attorney || '').trim() === entity.name
+    : k === 'landlord' ? String(r.Plaintiff_1 || '').trim() === entity.name
+    : k === 'defender' ? String(r.Def_Attorney || '').trim() === entity.name
+    : chatDistrictNum(r.council_district) === entity.name);
+}
+
+function chatMoveArtifact(op, entity) {
+  const f = chatFacts;
+  const scope = entity ? entity.name : 'all filings';
+  const rows = entity ? null : null; // counts come from the pre-built facts
+
+  if (op === 'SIG') {
+    // What stands out: the ranking the question is standing in. Within a named
+    // party that is its own counterparties; with no party it is the filers.
+    const list = entity ? chatTopList(entity.counterparties, 12) : f.landlords.slice(0, 12).map(e => [e.name, e.cases]);
+    const label = entity
+      ? { attorney: 'Landlord', landlord: 'Attorney', defender: 'Landlord opposed', district: 'Landlord' }[entity.kind]
+      : 'Landlord';
+    return {
+      kind: 'table',
+      title: entity ? `${scope} — by ${label.toLowerCase()}, most first` : 'Most filings, all parties',
+      head: [label, 'Filings'],
+      rows: list.map(([k, v]) => ({ label: k, value: v, cells: [k, v.toLocaleString()], q: k })),
+    };
+  }
+
+  if (op === 'SEG') {
+    const dm = entity ? entity.districts : new Map(f.districts.map(e => [e.name, e.cases]));
+    const items = [...dm.entries()].sort((a, b) => b[1] - a[1]);
+    return {
+      kind: 'table',
+      title: `${scope} — by council district`,
+      head: ['District', 'Filings', 'Share'],
+      rows: items.map(([k, v]) => ({
+        label: `District ${k}`, value: v,
+        cells: [`District ${k}`, v.toLocaleString(), chatPct(v, entity ? entity.cases : f.total)],
+        q: `council district ${k}`,
+      })),
+    };
+  }
+
+  if (op === 'REC') {
+    const mm = entity ? entity.months : (() => {
+      const m = new Map();
+      for (const r of allRows) chatBump(m, caseFileDateToMonth(r.file_date));
+      return m;
+    })();
+    const keys = sortMonthsAsc([...mm.keys()]);
+    return {
+      kind: 'chart',
+      title: `${scope} — filings by month`,
+      head: ['Month', 'Filings'],
+      rows: keys.map(k => ({ label: k, value: mm.get(k), cells: [k, mm.get(k).toLocaleString()], q: entity ? `${entity.name} ${k}` : null })),
+    };
+  }
+
+  if (op === 'CON') {
+    // Who this party actually meets across the docket.
+    if (!entity) return null;
+    const a = chatTopList(entity.counterparties, 8);
+    const b = chatTopList(entity.opposing, 8);
+    const cells = [];
+    const aLabel = { attorney: 'Landlords served', landlord: 'Counsel used', defender: 'Landlords opposed', district: 'Landlords filing' }[entity.kind];
+    if (a.length) cells.push([aLabel, { links: a.map(([k, v]) => ({ label: k, q: k, count: v })) }]);
+    if (b.length) cells.push([entity.kind === 'defender' ? 'Opposing counsel' : 'Plaintiff attorneys', { links: b.map(([k, v]) => ({ label: k, q: k, count: v })) }]);
+    if (!cells.length) return null;
+    return { kind: 'table', title: `${scope} — who this party meets`, head: ['', ''], rows: cells.map(([k, v]) => ({ label: k, value: 0, cells: [k, v] })) };
+  }
+
+  if (op === 'EVA') {
+    // The rates this source can actually support. Representation and money
+    // judgment are the only two outcome-shaped facts it records; a dismissal
+    // rate is NOT one of them, and saying so is the answer to asking for it.
+    const e = entity || { cases: f.total, withTenantCounsel: 0, withJudgment: 0, judgmentTotal: 0, judgmentAmounts: [] };
+    if (!entity) {
+      for (const r of allRows) {
+        if (String(r.Def_Attorney || '').trim()) e.withTenantCounsel++;
+        const amt = Number(r.judgment_amount);
+        if (Number.isFinite(amt) && amt > 0) { e.withJudgment++; e.judgmentTotal += amt; e.judgmentAmounts.push(amt); }
+      }
+    }
+    const sorted = [...e.judgmentAmounts].sort((x, y) => x - y);
+    const money = n => '$' + Math.round(n).toLocaleString();
+    const cells = [
+      ['Filings', e.cases.toLocaleString()],
+      ['Tenant had a lawyer', `${e.withTenantCounsel.toLocaleString()} — ${chatPct(e.withTenantCounsel, e.cases)}`],
+      ['Tenant unrepresented on the record', `${(e.cases - e.withTenantCounsel).toLocaleString()} — ${chatPct(e.cases - e.withTenantCounsel, e.cases)}`],
+      ['Money judgment recorded', e.withJudgment ? `${e.withJudgment.toLocaleString()} — ${chatPct(e.withJudgment, e.cases)}` : 'none'],
+    ];
+    if (e.withJudgment) cells.push(['Judgment total / median', `${money(e.judgmentTotal)} / ${money(sorted[sorted.length >> 1])}`]);
+    cells.push(['Dismissal rate', 'not recorded — this source has only PENDING and CLOSED, and CLOSED does not say who won']);
+    return { kind: 'table', title: `${scope} — rates this record supports`, head: ['', ''], rows: cells.map(([k, v]) => ({ label: k, value: 0, cells: [k, v] })) };
+  }
+  return null;
+}
+
+/* ─── The model drives the query. It does not answer. ─────────────────────
+   Every figure this tab ships is computed in JavaScript from the live rows.
+   The model is not asked to summarize them, characterize them, or say what
+   they mean — measured live, asked to narrate McCoy's dossier it produced
+   "the case with MCCOY is ranked 1775 of the 9,595 cases", a sentence whose
+   every number was real and whose every relation was invented. A check can
+   catch an absent figure; nothing mechanical can catch a true figure put in
+   a false relation. So it is never given the chance to make one.
+
+   What it is for is the one thing the mechanical layer cannot do: reading a
+   question a person actually typed. "who's suing the most in antioch", "does
+   anyone fight these", "what's the deal with mccoy" — the resolver needs a
+   party and a move, and getting there from those words is language work.
+
+   It answers in ORDINARY WORDS, not JSON. A half-billion-parameter model
+   asked for a schema spends its capacity on braces and quoting, and a
+   malformed one is a dead turn; asked for a short sentence it does the thing
+   it is actually good at. The sentence is then resolved MECHANICALLY against
+   the corpus — the party by the same name index the click chips use, the move
+   by the operator vocabulary below. Nothing the model writes is ever shown.
+
+   THE MOVE SPACE is eoreader7's operator basis, one register down: what can
+   be asked of a body of records at all. Backstage on purpose — the interface
+   shows plain data and plain words, never the algebra underneath.
+
+     DEF  identify      who is this party            -> its dossier card
+     SIG  what stands   who files most, who is top   -> ranked table
+     SEG  cut           by district, by month        -> grouped table
+     REC  recur         over time                    -> month series
+     CON  bind          this party against that one  -> joint table
+     EVA  weigh         how often, what share        -> rate table
+     NUL  nothing       the records do not carry it  -> said plainly       */
+
+const CHAT_MOVES = [
+  { op: 'DEF', say: 'describe', words: ['who', 'what', 'deal', 'about', 'tell', 'profile', 'background', 'is'] },
+  { op: 'SIG', say: 'rank', words: ['most', 'top', 'biggest', 'largest', 'worst', 'busiest', 'highest', 'rank', 'leading', 'frequent'] },
+  { op: 'SEG', say: 'break down', words: ['district', 'districts', 'where', 'neighborhood', 'area', 'breakdown', 'by'] },
+  { op: 'REC', say: 'trend', words: ['when', 'trend', 'over', 'time', 'month', 'monthly', 'year', 'yearly', 'since', 'lately', 'recently', 'headed', 'heading', 'direction', 'increasing', 'rising', 'growing', 'growth', 'trajectory', 'forecast', 'likely', 'worsening', 'escalating'] },
+  { op: 'CON', say: 'compare', words: ['against', 'versus', 'vs', 'between', 'with', 'for', 'opposing', 'opposite'] },
+  { op: 'EVA', say: 'weigh', words: ['often', 'rate', 'share', 'percent', 'percentage', 'proportion', 'average', 'typical', 'how'] },
+];
+
+/* Asked in the register the answer comes back in: a plain question, a plain
+   sentence back. No braces, no tags, no example of a format to imitate. */
+const CHAT_ROUTER_PROMPT = [
+  'You turn a question about eviction court records into one short instruction. You never answer the question yourself.',
+  'Reply with exactly one short sentence, in plain words, naming two things: which party or district the question is about, and which one of these to do — describe, rank, break down, trend, compare, or weigh.',
+  'Use the questioner\'s own names for people and companies. Do not invent a name that was not in the question.',
+  'If the question names no party, say so and pick the action alone.',
+].join('\n');
 
 function addChatMessage(role, html, provHtml) {
   const screen = document.getElementById('chat-screen');
@@ -8078,113 +8789,195 @@ async function askChat(q) {
   addChatMessage('user', escapeHtmlSafe(q));
   const myTurn = ++chatTurn;
 
-  /* A named entity is answered mechanically FIRST — the card's every figure is
-     computed from the live rows, so it is exact whether or not the model then
-     manages a sentence about it. The model still runs afterward, over the
-     entity's own dossier passage, to say what the card cannot: what the
-     numbers mean read together. */
-  const named = (chatApi && chatChunks) ? resolveChatEntities(q) : [];
-  const best = named.find(n => n.best);
-  if (best) {
-    const others = named.filter(n => !n.best);
-    const ties = others.filter(n => n.tied);
-    const card = entityProfileArtifact(best.entity);
-    const note = ties.length
-      ? `${ties.length + 1} entities match “${escapeHtmlSafe(best.on.join(' '))}” on identical name evidence — this is the one on the most filings`
-      : `every figure computed mechanically from ${allRows.length.toLocaleString()} live rows — no model involved`;
-    const prov = `<div class="prov-strip"><span class="prov-label">provenance</span>`
-      + `<span class="prov-note">${note}</span>`
-      + (best.entity.ref ? spanChipHtml(best.entity.ref) : '')
-      + `</div>`;
-    addChatMessage('assistant', artifactHtml(card), prov);
-    if (others.length) {
-      addChatMessage('assistant', `${ties.length ? 'Same name, different party' : 'Also matched'}: `
-        + others.map(n => `<button type="button" class="suggest-chip" onclick="askChat(this.dataset.q)" data-q="${escapeHtmlSafe(n.entity.name)}">`
-            + `${escapeHtmlSafe(n.entity.name)} · ${n.entity.cases.toLocaleString()}</button>`).join(' '));
-    }
+  /* THE WHOLE TURN READS ONE CORPUS. This has to happen before anything is
+     addressed, because `ensureChatSession` rebuilds whenever the snapshot key
+     moves — and the live feed refetches in the background, so it moves mid-
+     conversation. Resolving entities first and ensuring afterward is how a
+     turn ends up holding addresses from a corpus that no longer exists:
+     measured live, an entity card cited §52955–54172 while the passages the
+     turn went on to use came from a corpus where that dossier had shifted to
+     §52935–54152, so nothing matched and the turn answered about the wrong
+     parties entirely. */
+  if (chatApi && chatChunks) {
+    try { await ensureChatSession(false); } catch (e) { console.warn('[eo/chat] corpus refresh failed:', e); }
   }
-
-  const artifact = detectChatArtifact(q);
-  if (artifact && chatApi && chatChunks) {
-    const sp = chatApi.retrieve(chatChunks, artifact.provQuery, 1)[0];
-    const prov = `<div class="prov-strip"><span class="prov-label">provenance</span>`
-      + `<span class="prov-note">computed mechanically from ${allRows.length.toLocaleString()} live rows — no model involved</span>`
-      + (sp ? spanChipHtml(sp.ref) : '')
-      + `</div>`;
-    addChatMessage('assistant', artifactHtml(artifact), prov);
-    return;
-  }
-
-  if (!chatEngine || !chatChunks) {
+  if (!chatApi || !chatChunks) {
     addChatMessage('error', escapeHtmlSafe('Not ready yet — ' + document.getElementById('chat-status').textContent));
     return;
   }
 
-  chatBusy = true;
-  document.getElementById('chat-send').disabled = true;
-  chatSetStatus('thinking…', 'busy');
-  try {
-    await ensureChatSession(false);
-    // Retrieval is mechanical: a passage either shares a term with the question
-    // or it does not. There is no relevance floor to pick, and nothing is
-    // invented to fill a gap.
-    // Retrieval is seeded with the passages of whatever entities the question
-    // named. Term overlap alone would not reliably surface them: a question's
-    // ordinary words ("what", "the", "with") sit in every passage of a 10,000-
-    // passage corpus and can outscore the one word that identifies anybody.
-    const seeded = named.map(n => chatChunks.find(c => c.ref === n.entity.ref)).filter(Boolean);
-    const byRef = new Map(seeded.map(c => [c.ref, c]));
-    for (const c of chatApi.retrieve(chatChunks, q, 6)) if (!byRef.has(c.ref)) byRef.set(c.ref, c);
-    const passages = [...byRef.values()].slice(0, 6);
-    if (!passages.length) {
-      addChatMessage('assistant', escapeHtmlSafe('No part of the indexed snapshot matches that question. Try asking about districts, statuses, months, plaintiffs, attorneys, or demographics.'));
+  /* A table or chart the question asks for outright is answered outright. */
+  const artifact = detectChatArtifact(q);
+  if (artifact) {
+    const sp = chatApi.retrieve(chatChunks, artifact.provQuery, 1)[0];
+    const refs = sp ? [sp.ref] : [];
+    const d = chatDerive({ question: q, op: 'SEG', subject: null, refs, artifact });
+    addChatMessage('assistant', artifactHtml(artifact), chatProvStrip(
+      `computed from ${allRows.length.toLocaleString()} live rows — no model involved`, refs) + chatExportStrip(d));
+    return;
+  }
+
+  /* Resolve the question mechanically first: which party, which move. Most
+     questions carry both in their own words and never need the model. */
+  let named = resolveChatEntities(q);
+  let move = detectChatMove(q);
+  let routed = null;
+
+  /* The model is called only for what the resolver could not read out of the
+     question itself — and only to REPHRASE it, never to answer it. Its
+     sentence is then run back through the same two resolvers. Nothing it
+     writes is shown. */
+  if (chatEngine && (!named.length || !move)) {
+    chatBusy = true;
+    document.getElementById('chat-send').disabled = true;
+    chatSetStatus('reading the question…', 'busy');
+    try {
+      const r = await chatEngine.chat.completions.create({
+        messages: [
+          { role: 'system', content: CHAT_ROUTER_PROMPT },
+          { role: 'user', content: q },
+        ],
+        temperature: 0,
+        max_tokens: 60,
+      });
+      if (myTurn !== chatTurn) return;
+      routed = (r.choices[0].message.content || '').trim();
+      // Resolved against the corpus, not trusted. A party it names counts only
+      // if the name index already knew that party; a move counts only if the
+      // words are in the move vocabulary. An invented name resolves to nothing
+      // and the turn proceeds exactly as if the model had said nothing.
+      if (!named.length) named = resolveChatEntities(routed);
+      if (!move) move = detectChatMove(routed);
+    } catch (e) {
+      console.warn('[eo/chat] routing failed:', e);
+    } finally {
+      chatBusy = false;
+      document.getElementById('chat-send').disabled = false;
+      chatSetStatus(`ready — ${chatEngineModel}`, 'on');
+    }
+  }
+
+  const best = named.find(n => n.best);
+  const entity = best ? best.entity : null;
+  const op = (move && move.op) || 'DEF';
+  const how = routed ? ` · read from your question as “${escapeHtmlSafe(routed.replace(/\s+/g, ' ').slice(0, 90))}”` : '';
+
+  /* DEF, and anything with a named party, opens with that party's dossier —
+     every figure counted from the live rows. */
+  if (entity) {
+    const ties = named.filter(n => !n.best && n.tied);
+    const on = `matched on “${escapeHtmlSafe(best.on.join(' '))}”`;
+    best.alsoMatched = named.filter(n => !n.best).map(n => ({ name: n.entity.name, kind: n.entity.kind, cases: n.entity.cases, tied: n.tied }));
+    const card = entityProfileArtifact(entity);
+    const d = chatDerive({
+      question: q, op: 'DEF', subject: best, routed,
+      refs: entity.ref ? [entity.ref] : [],
+      dockets: chatRowsFor(entity).map(r => r.docket),
+      artifact: card,
+    });
+    addChatMessage('assistant', artifactHtml(card), chatProvStrip(
+      ties.length
+        ? `${on} — ${ties.length + 1} parties match on identical evidence; this is the one on the most filings${how}`
+        : `${on} · counted from ${allRows.length.toLocaleString()} live rows${how}`,
+      entity.ref ? [entity.ref] : []) + chatExportStrip(d));
+    const others = named.filter(n => !n.best);
+    if (others.length) {
+      addChatMessage('assistant', `${ties.length ? 'Same name, different party' : 'Also matched'}: `
+        + others.map(n => chatLink(n.entity.name, n.entity.name, n.entity.cases.toLocaleString())).join(' '));
+    }
+  }
+
+  /* TWO PARTIES NAMED IS A JOIN. Not two entities that merely tie on the same
+     word — those are one name worn by different people — but two matched on
+     DIFFERENT evidence, which is a question about where their dockets meet. */
+  const partner = named.find(n => !n.best && !n.tied && n.entity !== entity
+    && !n.on.every(t => best && best.on.includes(t)));
+  if (entity && partner) {
+    const j = chatJoinArtifact(entity, partner.entity);
+    const refs = [entity.ref, partner.entity.ref].filter(Boolean);
+    const d = chatDerive({
+      question: q, op: 'CON', subject: best, routed, refs,
+      join: j.predicate, dockets: j.dockets, artifact: j.artifact,
+    });
+    addChatMessage('assistant', artifactHtml(j.artifact), chatProvStrip(
+      `${j.dockets.length.toLocaleString()} of ${allRows.length.toLocaleString()} rows match both — counted, not estimated`,
+      refs) + chatExportStrip(d));
+    return;
+  }
+
+  /* A directional question about PLACES runs the dynamics, not a count. */
+  const grain = chatDirectionalGrain(q) || (routed ? chatDirectionalGrain(routed) : null);
+  if (grain && !entity) {
+    chatBusy = true;
+    document.getElementById('chat-send').disabled = true;
+    chatSetStatus(`fitting dynamics and its null across every ${grain}…`, 'busy');
+    try {
+      const t = await chatTrendArtifact(grain);
+      if (myTurn !== chatTurn) return;
+      const sp = chatApi.retrieve(chatChunks, grain === 'tract' ? 'council district filings month' : q, 1)[0];
+      const refs = sp ? [sp.ref] : [];
+      const d = chatDerive({
+        question: q, op: 'REC', subject: null, routed, refs,
+        join: t.method,
+        dockets: null,
+        artifact: t.artifact,
+      });
+      addChatMessage('assistant', artifactHtml(t.artifact), chatProvStrip(
+        `${t.considered} ${grain === 'tract' ? 'tracts' : 'districts'} fitted over ${t.axis.length} months with eoreader7's DMD, each tested against ${CHAT_DRAWS} shuffles of its own series — `
+        + `${t.found.length} beat every draw${t.tooShort ? `; ${t.tooShort} too short to embed` : ''}`,
+        refs) + chatExportStrip(d));
+      addChatMessage('assistant',
+        `<p class="method-note">Growth is log|λ| of the leading mode: it is the direction this area's own past filings are carrying, measured against what the same numbers produce in a shuffled order. It is not a forecast, and nothing outside the filing record is in it.</p>`);
+      return;
+    } catch (e) {
+      console.warn('[eo/chat] dynamics failed:', e);
+      addChatMessage('error', escapeHtmlSafe(e.message || String(e)));
+      return;
+    } finally {
+      chatBusy = false;
+      document.getElementById('chat-send').disabled = false;
+      chatSetStatus(`ready — ${chatEngineModel || 'mechanical'}`, 'on');
+    }
+  }
+
+  /* Then the move itself, when it asks for something the card does not show. */
+  if (op !== 'DEF') {
+    const art = chatMoveArtifact(op, entity);
+    if (art) {
+      const sp = chatApi.retrieve(chatChunks, entity ? entity.name : q, 1)[0];
+      const refs = entity && entity.ref ? [entity.ref] : (sp ? [sp.ref] : []);
+      const d = chatDerive({
+        question: q, op, subject: best, routed, refs,
+        dockets: entity ? chatRowsFor(entity).map(r => r.docket) : null,
+        artifact: art,
+      });
+      addChatMessage('assistant', artifactHtml(art), chatProvStrip(
+        `counted from ${allRows.length.toLocaleString()} live rows — no model involved${entity ? '' : how}`,
+        refs) + chatExportStrip(d));
       return;
     }
-    const block = chatApi.buildSourceBlock(passages);
-    const response = await chatEngine.chat.completions.create({
-      messages: [
-        { role: 'system', content: CHAT_SYSTEM_PROMPT },
-        { role: 'user', content: `Question: ${q}\n\n${block}` },
-      ],
-      temperature: 0.2,
-      max_tokens: 600,
-    });
-    if (myTurn !== chatTurn) return;
-    let answer = (response.choices[0].message.content || '').trim();
-    // A bracket surviving into the output is not a reference to defer to — the
-    // model was never shown one — so it is removed rather than resolved.
-    // (`stripSelfCitations` returns `{ text, removed }`, not a string.)
-    const selfCited = chatApi.stripSelfCitations(answer);
-    answer = selfCited.text;
-    // The whole corpus is the null pool: a phrase that appears in every
-    // section cannot say which section an answer came from.
-    const entries = chatApi.attribute(answer, passages, chatChunks);
-    const ground = chatApi.checkGrounding(answer, passages, { question: q });
-    const attributed = chatApi.attributedRefs(entries);
-    const html = renderGroundedAnswer(answer, entries, ground.findings);
-    const note = ground.examined
-      ? (ground.clean
-          ? `${ground.atomsChecked} figures and names checked against these passages — all found`
-          : `${ground.findings.length} of ${ground.atomsChecked} figures/names underlined — not found in these passages`)
-      : 'no passages to check against';
-    const prov = `<div class="prov-strip"><span class="prov-label">provenance</span>${
-      passages.map(c => spanChipHtml(c.ref, { used: attributed.includes(c.ref) })).join('')
-    }<span class="prov-note">${escapeHtmlSafe(note)}</span></div>`;
-    addChatMessage('assistant', html, prov);
-    chatSetStatus(`ready — ${chatEngineModel}`, 'on');
-  } catch (e) {
-    console.warn('[eo/chat] turn failed:', e);
-    addChatMessage('error', escapeHtmlSafe(e.message || String(e)));
-    chatSetStatus(e.message, 'err');
-  } finally {
-    chatBusy = false;
-    document.getElementById('chat-send').disabled = false;
   }
+
+  if (entity) return;
+
+  /* NUL — nothing in the records answers this. Said plainly, with what the
+     records DO carry, rather than filled in. */
+  const near = chatApi.retrieve(chatChunks, q, 3);
+  addChatMessage('assistant',
+    `<p>Nothing in these records answers that. They hold one row per detainer warrant: who filed, which attorney, which council district, the filing date, whether the case is pending or closed, and any money judgment amount. They do not record why a case closed, so who won is not in here.</p>`
+    + `<p>Ask about a party by name — ${chatLink('MCCOY, JENNIFER JO', 'MCCOY, JENNIFER JO')} ${chatLink('MDHA', 'MDHA')} — or a ${chatLink('council district', 'council district 19')}.</p>`,
+    near.length ? chatProvStrip('nearest passages in the record', near.map(c => c.ref)) : '');
 }
 
-/* A chip names a real address — `source#start-end` — and clicking it re-opens
-   exactly those characters. The range IS the label: it is what the chip
-   claims, so showing anything shorter would be showing something else. */
+/* One provenance strip, one shape, everywhere — every answer says what it was
+   counted from and offers the bytes back. */
+function chatProvStrip(note, refs) {
+  return `<div class="prov-strip"><span class="prov-label">provenance</span>`
+    + `<span class="prov-note">${note}</span>`
+    + (refs || []).map(r => spanChipHtml(r)).join('')
+    + `</div>`;
+}
+
 function spanChipHtml(ref, opts) {
   const m = String(ref).match(/#(\d+)-(\d+)$/);
   const short = m ? `${m[1]}–${m[2]}` : String(ref).slice(0, 12);
@@ -8198,6 +8991,8 @@ function spanChipHtml(ref, opts) {
 document.addEventListener('click', e => {
   const chip = e.target.closest('.cite-chip, .span-chip');
   if (chip) { openSpanModal(chip.dataset.spanId); return; }
+  const q = e.target.closest('[data-q]');
+  if (q && document.getElementById('chat-view').contains(q)) { askChat(q.dataset.q); return; }
 });
 
 function openSpanModal(spanId) {
@@ -8356,10 +9151,10 @@ function bindViewControls() {
     if (hzc) hzc.textContent = '+';
   }
 
-  // The two summary cards collapse and stay collapsed. They are context, not
+  // The summary cards collapse and stay collapsed. They are context, not
   // the point of the page, and above a map they cost the one thing the map
   // needs most: vertical room.
-  for (const [btnId, key] of [['toggle-districts', 'districts'], ['toggle-attorneys', 'attorneys']]) {
+  for (const [btnId, key] of [['toggle-districts', 'districts'], ['toggle-attorneys', 'attorneys'], ['toggle-landlords', 'landlords']]) {
     const btn = document.getElementById(btnId);
     if (!btn) continue;
     const card = btn.closest('.stat-card');
@@ -8372,6 +9167,24 @@ function bindViewControls() {
       const next = !card.classList.contains('collapsed');
       apply(next);
       try { localStorage.setItem('eo-collapse-' + key, next ? '1' : '0'); } catch {}
+    });
+  }
+
+  // One more toggle above those three: collapse the whole overview row at
+  // once, not just one card at a time.
+  const rowBtn = document.getElementById('stats-row-collapse');
+  const row = document.getElementById('stats-row');
+  if (rowBtn && row) {
+    const applyRow = (collapsed) => {
+      row.classList.toggle('collapsed', collapsed);
+      rowBtn.textContent = collapsed ? '+' : '–';
+      rowBtn.setAttribute('aria-expanded', String(!collapsed));
+    };
+    applyRow(localStorage.getItem('eo-stats-row-collapsed') === '1');
+    rowBtn.addEventListener('click', () => {
+      const next = !row.classList.contains('collapsed');
+      applyRow(next);
+      try { localStorage.setItem('eo-stats-row-collapsed', next ? '1' : '0'); } catch {}
     });
   }
 }
