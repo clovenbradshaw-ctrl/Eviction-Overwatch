@@ -1529,27 +1529,6 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
     </form>
   </div>
 
-  <div class="stats-row" id="stats-row">
-    <div class="stat-card">
-      <button type="button" class="stat-label" id="toggle-districts" aria-expanded="true" aria-controls="top-districts">
-        <span class="stat-caret">▾</span> Top Districts
-      </button>
-      <div id="top-districts" class="stat-list"></div>
-    </div>
-    <div class="stat-card">
-      <button type="button" class="stat-label" id="toggle-attorneys" aria-expanded="true" aria-controls="top-attorneys">
-        <span class="stat-caret">▾</span> Top Attorneys
-      </button>
-      <div id="top-attorneys" class="stat-list"></div>
-    </div>
-    <div class="stat-card">
-      <button type="button" class="stat-label" id="toggle-landlords" aria-expanded="true" aria-controls="top-landlords">
-        <span class="stat-caret">▾</span> Top Landlords
-      </button>
-      <div id="top-landlords" class="stat-list"></div>
-    </div>
-  </div>
-
   <div class="view-bar">
     <div class="group">
       <label>View</label>
@@ -1620,6 +1599,31 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   <div class="toolbar" id="local-toolbar">
     <input id="search" placeholder="Search docket, plaintiff, attorney, address...">
     <div class="filter-row" id="filters"></div>
+  </div>
+
+  <!-- Sits under the filters/search on purpose, and is filter-aware
+       (buildStats reads getFiltered(), not allRows) -- these are a summary
+       of what's currently shown, not a fixed all-time ranking that ignores
+       whatever the reader just filtered down to. -->
+  <div class="stats-row" id="stats-row">
+    <div class="stat-card">
+      <button type="button" class="stat-label" id="toggle-districts" aria-expanded="true" aria-controls="top-districts">
+        <span class="stat-caret">▾</span> Top Districts
+      </button>
+      <div id="top-districts" class="stat-list"></div>
+    </div>
+    <div class="stat-card">
+      <button type="button" class="stat-label" id="toggle-attorneys" aria-expanded="true" aria-controls="top-attorneys">
+        <span class="stat-caret">▾</span> Top Attorneys
+      </button>
+      <div id="top-attorneys" class="stat-list"></div>
+    </div>
+    <div class="stat-card">
+      <button type="button" class="stat-label" id="toggle-landlords" aria-expanded="true" aria-controls="top-landlords">
+        <span class="stat-caret">▾</span> Top Landlords
+      </button>
+      <div id="top-landlords" class="stat-list"></div>
+    </div>
   </div>
 
   <div class="table-header" id="table-header">
@@ -2006,6 +2010,11 @@ async function loadLandlordMapperSnapshot() {
     lmSnapshotByKey = byKey;
     lmSnapshotExportedAt = parsed.exportedAt || null;
     console.log(`[lm-snapshot] loaded ${byKey.size} properties, captured ${lmSnapshotExportedAt}`);
+    // This races loadData()/the Map tab's own property-index build — if
+    // either finished first without the other, Top Landlords rendered
+    // without network grouping (or not at all). Refresh now that both
+    // pieces it needs might actually be available.
+    if (typeof buildStats === 'function' && typeof allRows !== 'undefined' && allRows?.length) buildStats();
   } catch (e) {
     console.warn('[lm-snapshot] failed to load, falling back to live-only lookups:', e.message);
     lmSnapshotByKey = new Map();
@@ -2553,8 +2562,12 @@ function updateSubtitle() {
 /* ───────────────────────── Existing per-case stats / filters / table ───────────────────────── */
 
 function buildStats() {
+  // getFiltered(), not allRows — these are a summary of what's currently
+  // shown (filters + search applied), not a fixed all-time ranking. Cheap
+  // to recompute per render at this row count.
+  const filteredRows = getFiltered();
   const districts = {}, attorneys = {};
-  allRows.forEach(r => {
+  filteredRows.forEach(r => {
     if (r.council_district) districts[r.council_district] = (districts[r.council_district] || 0) + 1;
     const a = r.Attorney;
     if (a && a !== ", PRS") attorneys[a] = (attorneys[a] || 0) + 1;
@@ -2573,7 +2586,7 @@ function buildStats() {
     `<div class="stat-item"><span class="stat-link" onclick="showAttorneyProfile('${a.replace(/'/g, "\\'")}')">${a.split(",")[0]}</span><span class="stat-count">${c}</span></div>`
   ).join("");
 
-  buildLandlordStat();
+  buildLandlordStat(filteredRows);
 }
 
 // Groups every geocoded property's eviction count by real-world owner —
@@ -2583,11 +2596,19 @@ function buildStats() {
 // snapshot match (not yet enriched, or genuinely no confident match)
 // falls back to grouping by its raw plaintiff name, so it still counts
 // toward *someone* rather than silently vanishing from the ranking.
+//
+// filteredRows scopes the COUNT to whatever's currently filtered/searched
+// (getFiltered()) — only a property with at least one case surviving that
+// filter shows up at all, and its contribution to the owner's total is
+// just the filtered cases, not every case that property ever had.
 let landlordAgg = null;
-function buildLandlordAggregation() {
+function buildLandlordAggregation(filteredRows) {
   if (!llPropertyIndex) return [];
+  const keepDockets = new Set(filteredRows.map(r => r.docket));
   const byGroup = new Map();
   for (const p of llPropertyIndex.properties) {
+    const casesInFilter = p.cases.filter(c => keepDockets.has(c.docket));
+    if (!casesInFilter.length) continue;
     const assertion = lmSnapshotByKey ? lmSnapshotByKey.get(p.key) : null;
     const matched = assertion && assertion.status === 'matched' && assertion.data;
     const groupKey = matched
@@ -2604,17 +2625,17 @@ function buildLandlordAggregation() {
       });
     }
     const g = byGroup.get(groupKey);
-    g.totalCases += p.evictionCount;
+    g.totalCases += casesInFilter.length;
     g.properties.push(p);
   }
   return [...byGroup.values()].sort((a, b) => b.totalCases - a.totalCases);
 }
 
-function buildLandlordStat() {
+function buildLandlordStat(filteredRows) {
   const el = document.getElementById('top-landlords');
   if (!el) return;
-  if (!llPropertyIndex) { el.innerHTML = '<div class="pp-gap-note">Building once the map data is ready…</div>'; return; }
-  landlordAgg = buildLandlordAggregation();
+  if (!llPropertyIndex) { el.innerHTML = '<div class="pp-gap-note">Building once the map data is ready (open the Map tab once)…</div>'; return; }
+  landlordAgg = buildLandlordAggregation(filteredRows || getFiltered());
   el.innerHTML = landlordAgg.map(g =>
     `<div class="stat-item"><span class="stat-link" onclick="showLandlordProfile('${escapeAttr(g.key)}')">${escapeHtml(g.label)}${g.isLmMatched ? '' : ' <span class="pp-gap-note" style="display:inline">(unmatched)</span>'}</span><span class="stat-count">${g.totalCases}</span></div>`
   ).join('');
@@ -3789,7 +3810,13 @@ async function ensureEvictionsLayer(shouldBuild, status, note) {
       return;
     }
 
+    const isFirstBuild = !llPropertyIndex;
     if (!llPropertyIndex) llPropertyIndex = buildPropertyIndex();
+    // Top Landlords depends on llPropertyIndex, which only exists once the
+    // Map tab has been opened once — refresh it now that it's ready rather
+    // than leaving the "building once map data is ready" placeholder up
+    // forever for anyone who never visits the Map tab.
+    if (isFirstBuild) buildStats();
     const { properties, totalCases, withCoords } = llPropertyIndex;
     const pct = totalCases ? Math.round(100 * withCoords / totalCases) : 0;
     note.textContent = `${properties.length.toLocaleString()} mapped buildings, from ${withCoords.toLocaleString()} of ${totalCases.toLocaleString()} cases with a resolved address (${pct}%). Cases without a geocoded address aren't shown here — see the Cases tab for the full docket.`;
@@ -4258,7 +4285,13 @@ function computeHotZones() {
 
   for (const r of allRows) {
     const geoid = r.tract_geoid || r.census_tract;
-    if (!geoid) continue;
+    // A geocoded defendant address is sometimes genuinely outside Davidson
+    // County (a forwarding address, a different state entirely) — that's
+    // correct geocoding, not a data error, but it doesn't belong in a
+    // Nashville tract ranking. tract_geoid is only ever a bare 6-digit
+    // fragment (no FIPS prefix) or a real 11-digit GEOID, so length alone
+    // can't gate this; require the Davidson prefix explicitly.
+    if (!geoid || !String(geoid).startsWith(DAVIDSON_FIPS)) continue;
     const t = parseUsDate(r.file_date);
     if (!t) continue;
     if (t >= llStartTs && t <= llCursorTs) {
@@ -4309,7 +4342,9 @@ function holonMonthlySeries(grain) {
   const idx = new Map(months.map((m, i) => [m, i]));
   const keyOf = grain === 'owner' ? (r) => (r.Plaintiff_1 || '').trim() || null
               : grain === 'building' ? (r) => normalizeAddressKey(r.address_formatted)
-              : (r) => r.tract_geoid || r.census_tract || null;
+              // Same Davidson-only gate as computeHotZones — an out-of-
+              // county geocode is correct data, just not a Nashville tract.
+              : (r) => { const g = r.tract_geoid || r.census_tract; return g && String(g).startsWith(DAVIDSON_FIPS) ? g : null; };
   const series = new Map();
   for (const r of allRows) {
     const key = keyOf(r);
@@ -6972,6 +7007,7 @@ function setVisibility() {
 
 function render() {
   setVisibility();
+  buildStats(); // filter/search-dependent — recompute every render, not just on load
   if (viewMode === 'live') {
     renderLiveView();
   } else {
