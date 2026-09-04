@@ -383,6 +383,7 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 #grid-view td.cell-amber { background: rgba(232,167,53,0.50); color: #1a1410; }
 #grid-view td.cell-red   { background: rgba(232,93,58,0.55); color: #fff3ee; }
 #grid-view td.cell-na    { color: var(--dim); }
+#grid-view td.coverage-bigger { color: var(--gold); font-weight: 600; }
 #grid-view td.cell-green .ratio,
 #grid-view td.cell-red   .ratio { color: rgba(255,255,255,0.85); }
 #grid-view td.cell-amber .ratio { color: rgba(0,0,0,0.7); }
@@ -3112,11 +3113,16 @@ function renderCoverageGrid() {
   </tr></thead><tbody>`;
 
   for (const { month, princeton, scraped } of rows) {
+    // Bold + a ▲ on whichever side is larger, so which one is ahead reads
+    // at a glance without doing the percentage math in your head.
+    const pBig = princeton > scraped, sBig = scraped > princeton;
+    const pCell = `<td class="num${pBig ? ' coverage-bigger' : ''}">${princeton || '—'}${pBig ? ' ▲' : ''}</td>`;
+    const sCell = `<td class="num${sBig ? ' coverage-bigger' : ''}">${scraped || '—'}${sBig ? ' ▲' : ''}</td>`;
     if (princeton === 0) {
-      html += `<tr><td class="row-label">${month}</td><td class="num">—</td><td class="num">${scraped || '—'}</td><td class="num cell-na">—</td></tr>`;
+      html += `<tr><td class="row-label">${month}</td><td class="num">—</td>${sCell}<td class="num cell-na">—</td></tr>`;
     } else {
       const ratio = scraped / princeton;
-      html += `<tr><td class="row-label">${month}</td><td class="num">${princeton}</td><td class="num">${scraped}</td>
+      html += `<tr><td class="row-label">${month}</td>${pCell}${sCell}
         <td class="num ${ratioClass(ratio)}">${(ratio * 100).toFixed(0)}%</td></tr>`;
     }
   }
