@@ -279,12 +279,25 @@ h1 {
   margin-left: 6px; cursor: pointer; font-weight: bold;
 }
 
+.landlord-summary {
+  font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums;
+}
+.landlord-more {
+  margin-top: 4px;
+}
+.landlord-more summary {
+  cursor: pointer; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--dim); list-style: none;
+}
+.landlord-more summary::-webkit-details-marker { display: none; }
+.landlord-more summary::before { content: '▸ '; }
+.landlord-more[open] summary::before { content: '▾ '; }
 .landlord-note {
   margin-top: 6px; max-width: 640px; font-size: 12px; line-height: 1.5;
   color: var(--dim); font-family: var(--serif, inherit);
 }
 .landlord-rate {
-  margin-top: 4px; font-size: 12px; color: var(--dim);
+  margin-top: 4px; max-width: 640px; font-size: 12px; line-height: 1.5; color: var(--dim);
 }
 .landlord-rate b { color: var(--gold); font-variant-numeric: tabular-nums; }
 
@@ -3320,37 +3333,41 @@ function updateFilterBtns() {
   if (chip) {
     if (landlordFilterKey) {
       chip.style.display = '';
-      let extra = '';
+      // One compact summary line, always visible. Anything more than that
+      // -- the full provenance note, the other-owners breakdown -- is real
+      // but not something to read every time the chip renders, so it's
+      // tucked behind a native <details> instead of dumped on screen.
+      const summaryBits = [];
+      let detailHtml = '';
       const note = landlordFilterNoteFor(landlordFilterKey);
-      if (note) extra += `<div class="landlord-note">${escapeHtml(note)}</div>`;
+      if (note) detailHtml += `<div class="landlord-note">${escapeHtml(note)}</div>`;
       if (landlordFilterKey.startsWith('lm:')) {
         const mergedKey = landlordFilterKey.slice(3);
         const rate = landlordRateContext(mergedKey);
         if (rate) {
           const pctile = Math.round((1 - (rate.rank - 1) / rate.totalNetworks) * 100);
-          extra += `<div class="landlord-rate">`
-            + `<b>${rate.per100units.toFixed(1)}</b> filings per 100 units `
-            + `<span class="dim">(${rate.cases} filings / ${rate.unitCount.toLocaleString()} units)</span> — `
-            + `ranks <b>${rate.rank}</b> of ${rate.totalNetworks} Nashville landlords tracked here by unit count, `
-            + `higher than <b>${pctile}%</b> of them`
-            + `</div>`;
+          summaryBits.push(`${rate.unitCount.toLocaleString()} units`);
+          summaryBits.push(`${rate.cases} filings, ${rate.per100units.toFixed(1)}/100 units`
+            + ` (${pctile < 50 ? 'below' : 'above'} median)`);
+          detailHtml += `<div class="landlord-rate">ranks <b>${rate.rank}</b> of ${rate.totalNetworks} `
+            + `Nashville landlords tracked here by unit count — higher than <b>${pctile}%</b> of them.</div>`;
         }
         const elsewhere = landlordManagedElsewhereContext(mergedKey);
-        if (elsewhere) {
-          const bits = [];
-          if (elsewhere.elsewhereCases) {
-            const ownerList = elsewhere.topOtherOwners.map(([label, n]) => `${escapeHtml(label)} (${n})`).join(', ');
-            bits.push(`filed as plaintiff on <b>${elsewhere.elsewhereCases}</b> more case${elsewhere.elsewhereCases === 1 ? '' : 's'} `
-              + `Landlord Mapper traces to a different owner — managing, not owning: ${ownerList}`);
-          }
-          if (elsewhere.unenrichedCases) {
-            bits.push(`<b>${elsewhere.unenrichedCases}</b> more with this name on the filing but no address yet to check ownership on`);
-          }
-          extra += `<div class="landlord-rate">${bits.join(' · ')}</div>`;
+        if (elsewhere?.elsewhereCases) {
+          const top = elsewhere.topOtherOwners[0];
+          summaryBits.push(`+${elsewhere.elsewhereCases} for other owners`
+            + (top ? ` (mostly ${escapeHtml(top[0])})` : ''));
+          const ownerList = elsewhere.topOtherOwners.map(([label, n]) => `${escapeHtml(label)} (${n})`).join(', ');
+          detailHtml += `<div class="landlord-rate">Also filed as plaintiff on <b>${elsewhere.elsewhereCases}</b> case${elsewhere.elsewhereCases === 1 ? '' : 's'} `
+            + `Landlord Mapper traces to a different owner — managing, not owning: ${ownerList}.`
+            + (elsewhere.unenrichedCases ? ` (Plus <b>${elsewhere.unenrichedCases}</b> more with no address yet to check.)` : '')
+            + `</div>`;
         }
       }
+      const summary = summaryBits.length ? ` <span class="landlord-summary">${summaryBits.join(' · ')}</span>` : '';
+      const details = detailHtml ? `<details class="landlord-more"><summary>details</summary>${detailHtml}</details>` : '';
       chip.innerHTML = `<span class="filter-btn active">Landlord: ${escapeHtml(landlordFilterLabel || landlordFilterKey)}
-        <span class="clear-x" onclick="clearLandlordFilter(event)">×</span></span>${extra}`;
+        <span class="clear-x" onclick="clearLandlordFilter(event)">×</span></span>${summary}${details}`;
     } else {
       chip.style.display = 'none';
       chip.innerHTML = '';
