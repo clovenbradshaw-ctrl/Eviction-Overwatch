@@ -662,6 +662,14 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 }
 .ll-recenter-btn:hover { background: var(--bg); color: var(--gold); }
 
+.ll-buildings-toggle-btn {
+  display: block; height: 26px; margin: 10px 10px 0 0;
+  background: var(--surface); color: var(--text); border: 1px solid var(--border);
+  border-radius: 3px; font-size: 12px; line-height: 24px; text-align: center;
+  cursor: pointer; padding: 0 10px; white-space: nowrap; font-family: var(--mono, inherit);
+}
+.ll-buildings-toggle-btn:hover { background: var(--bg); color: var(--gold); border-color: var(--gold-dim); }
+
 /* ── The clip: a Premiere-style trim/scrub strip over the whole record ──
    Four date fields and a slider that did not know about each other became one
    object you can see and drag. The histogram behind the window is the point:
@@ -1106,6 +1114,24 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 .live-col-head .cw { margin-left: auto; color: #2f6b2f; font-variant-numeric: tabular-nums; }
 .live-col-head .cw b { color: #7dff5c; }
 .live-col-head .idle { color: #1f5c1f; font-style: italic; }
+/* A worker that is deliberately not running -- killswitched, outside its
+   permitted hours, or cooling down -- is shown STATIC rather than as a live
+   column repeating the same "idling" line every few minutes. */
+.live-col.static { opacity: .55; }
+.live-col.static .live-screen { background: #010301; }
+.live-col-head .static-badge {
+  border: 1px solid #7a5c1f; border-radius: 2px; padding: 0 5px;
+  color: #ffb020; background: #1f1608; letter-spacing: .06em;
+  text-transform: uppercase; font-size: 10px;
+}
+.live-static-note {
+  padding: 14px 12px; color: #6b5a2a; line-height: 1.8;
+  font-family: var(--mono); font-size: 12px;
+}
+.live-static-note b {
+  color: #ffb020; font-weight: 600; letter-spacing: .04em;
+}
+.live-static-note .why { color: #5a4a22; font-size: 11px; }
 .live-rate .grp {
   display: flex; gap: 14px; align-items: baseline; padding-right: 14px;
   border-right: 1px solid #123312; margin-right: 4px; flex-wrap: wrap;
@@ -2193,8 +2219,8 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
               <button type="button" data-val="groups" class="on" title="Sets of tracts whose month-over-month change moves together, discovered from the data">Groups</button>
             </div>
             <div class="hz-seg" id="hz-grain-seg">
-              <button type="button" data-val="tract" class="on">Tracts</button>
-              <button type="button" data-val="building">Buildings</button>
+              <button type="button" data-val="tract">Tracts</button>
+              <button type="button" data-val="building" class="on">Buildings</button>
               <button type="button" data-val="owner">Owners</button>
             </div>
             <div class="hz-sub" id="hz-sub"></div>
@@ -2837,6 +2863,18 @@ let llClusterGroup = null;
 let llHeatLayer = null;
 let llPropertyIndex = null;   // built once per snapshot, keyed by normalized address
 let llLayerMode = 'heat';     // 'dots' | 'heat' — heat leads by default so the map reads as "where evictions concentrate," not a scatter of individual buildings
+let llBuildingsToggleControl = null; // the on-map dots/heat button -- see setLlLayerMode()
+
+// Single place that changes llLayerMode -- called from the on-map button AND
+// the #ll-layer-seg toolbar buttons, so whichever one the user didn't click
+// still repaints to match.
+function setLlLayerMode(mode) {
+  llLayerMode = mode;
+  document.querySelectorAll('#ll-layer-seg button').forEach(b => b.classList.toggle('on', b.dataset.val === mode));
+  if (llBuildingsToggleControl?._paint) llBuildingsToggleControl._paint();
+  updateLandlordsLayer();
+  syncMapUrl();
+}
 let llOpenAddressKey = null;
 const _lmLookupCache = new Map();  // address key -> resolved Landlord Mapper result (or null)
 
@@ -4729,6 +4767,34 @@ async function renderMapView() {
       },
     });
     new RecenterControl().addTo(leafletMap);
+    // A single, unambiguous, always-on-the-map way to switch between
+    // individual building markers and the aggregated heat blob -- the
+    // #ll-layer-seg pair up in the toolbar does the same thing, but it's
+    // easy to lose in a busy control row, and its own label ("Buildings")
+    // collides with the unrelated Hot Zones grain toggle right below it.
+    const BuildingsToggleControl = L.Control.extend({
+      options: { position: 'topright' },
+      onAdd: function () {
+        const btn = L.DomUtil.create('button', 'll-buildings-toggle-btn');
+        btn.type = 'button';
+        const paint = () => {
+          const showingBuildings = llLayerMode === 'dots';
+          btn.textContent = showingBuildings ? '◆ Buildings' : '▨ Heat map';
+          btn.title = showingBuildings
+            ? 'Showing individual buildings — click for the heat map'
+            : 'Showing the heat map — click to see individual buildings';
+        };
+        paint();
+        L.DomEvent.disableClickPropagation(btn);
+        btn.addEventListener('click', () => {
+          setLlLayerMode(llLayerMode === 'dots' ? 'heat' : 'dots');
+          paint();
+        });
+        this._paint = paint;
+        return btn;
+      },
+    });
+    llBuildingsToggleControl = new BuildingsToggleControl().addTo(leafletMap);
     // Esri's hosted "Dark Gray Canvas" basemap (base + labels, two stacked
     // tile layers) -- free, no API key, no account, ever. Two other free
     // options were tried and rejected first, both live: CARTO's hosted
@@ -5351,7 +5417,7 @@ function signalRadiusFor(p, ctx) {
 
 const HOTZONE_COUNT = 12;
 let hzView = 'groups';  // 'zones' | 'groups' — groups (holons) leads by default
-let hzGrain = 'tract';  // 'tract' | 'building' | 'owner'
+let hzGrain = 'building';  // 'tract' | 'building' | 'owner' — buildings lead by default, tracts are opt-in
 
 function tractDisplayName(geoid) {
   const info = agg.tractInfo?.[geoid];
@@ -6411,12 +6477,7 @@ function openPropertyPanel(key) {
 
     <div class="pp-section">
       <div class="pp-section-label">Code violations / habitability</div>
-      <div class="pp-gap-note">
-        Not yet available for Nashville — Metro Codes violation and
-        condemnation records aren't integrated into this app or into
-        Landlord Mapper's Nashville dataset yet. This section is left
-        visible, empty, and named on purpose rather than silently omitted.
-      </div>
+      ${formatCodeViolations(codeViolationsByAddressKey?.get(p.key) || [])}
     </div>
 
     <div class="pp-section" style="border-bottom:none">
@@ -7456,6 +7517,31 @@ const LIVE_SWEEP_DONE_RE = /^(p\d+-W\d+):\s+(\d+)\s+rows/;
 const LIVE_SWEEP_WINDOW_RE = /^──\s*(p\d+-W\d+):\s*(\d{2}\/\d{2}\/\d{4})\s*[–-]\s*(\d{2}\/\d{2}\/\d{4})/;
 const LIVE_COOLDOWN_RE = /cooling down|backing off|displaced/i;
 
+// Lines that mean "this worker is deliberately parked", not "this worker is
+// broken". Shown as a single STATIC state instead of a repeating idle log.
+const LIVE_STATIC_RES = [
+  [/KILLSWITCH engaged/i,                      'held by killswitch'],
+  [/outside its permitted hours\s*\(([^)]+)\)/i, null],
+  [/in cooldown,\s*(\d+)min left/i,            null],
+  [/no sweep account available/i,              'no account free'],
+  [/idling\s+\d+s/i,                          'no account free'],
+  [/already leased by another worker/i,        'no account free'],
+];
+// Any of these means it is actually working again.
+const LIVE_ACTIVE_RE = /worker leased|LOGGING IN|^──\s*p\d|rows\s*→|Searching for/i;
+
+function liveStaticReason(body) {
+  for (const [re, fixed] of LIVE_STATIC_RES) {
+    const m = body.match(re);
+    if (!m) continue;
+    if (fixed) return fixed;
+    if (/permitted hours/i.test(re.source)) return `runs ${m[1]}`;
+    if (/cooldown/i.test(re.source)) return `cooling down, ${m[1]}min left`;
+    return 'parked';
+  }
+  return null;
+}
+
 // Green stays with the primary (it is what the single-worker view has always
 // looked like); sweep slots take the other hues in the order they appear.
 const LIVE_WORKER_COLORS = ['#39ff14', '#22d3ee', '#f59e0b', '#c084fc', '#f472b6'];
@@ -7472,6 +7558,7 @@ function liveWorkerState(id, kind) {
     w = { id, kind: kind || 'primary', alias: '', cooling: false,
           caseTs: [], eventTs: [], cases: 0, windows: 0, rows: 0,
           window: '', el: null, screen: null, lines: 0,
+          static: false, staticReason: '',
           color: liveNextColor(kind || 'primary') };
     liveWorkers.set(id, w);
     liveEnsureColumns();
@@ -7510,12 +7597,25 @@ function liveEnsureColumns() {
   liveRenderHeads();
 }
 
+// Replace the column body with a single explanation of why it is parked,
+// rather than letting the same idle line repeat forever.
+function liveSetStatic(w) {
+  if (!w.el || !w.screen) return;
+  w.el.classList.add('static');
+  const why = w.staticReason || '';
+  w.screen.innerHTML =
+    `<div class="live-static-note"><b>waiting until start</b>` +
+    (why ? `<br><span class="why">${liveEsc(why)}</span>` : '') + `</div>`;
+}
+
 function liveRenderHeads() {
   for (const w of liveWorkers.values()) {
     if (!w.head) continue;
     const label = w.kind === 'primary' ? 'enrichment' : 'status sweep';
     const alias = w.alias
       ? `<span class="alias${w.cooling ? ' cooling' : ''}">${liveEsc(w.alias)}</span>` : '';
+    const staticBadge = w.static
+      ? `<span class="static-badge">static · ${liveEsc(w.staticReason || 'parked')}</span>` : '';
     let right;
     if (w.kind === 'primary') {
       right = `<b>${w.cases}</b> cases`;
@@ -7524,7 +7624,7 @@ function liveRenderHeads() {
     }
     const cur = w.window ? `<span class="kind">${liveEsc(w.window)}</span>` : '';
     w.head.innerHTML =
-      `<span class="name">${liveEsc(w.id)}</span>` + alias +
+      `<span class="name">${liveEsc(w.id)}</span>` + alias + staticBadge +
       `<span class="kind">${label}</span>` + cur +
       `<span class="cw">${right}</span>`;
   }
@@ -7683,7 +7783,8 @@ function liveRenderRate() {
   const eventsPerSec = recentEvents.length / 10;
   livePeakEventsPerSec = Math.max(livePeakEventsPerSec, eventsPerSec);
 
-  const active = [...liveWorkers.values()].filter(w => w.eventTs.length || w.lines);
+  const active = [...liveWorkers.values()].filter(w => !w.static && (w.eventTs.length || w.lines));
+  const parked = [...liveWorkers.values()].filter(w => w.static);
   const cr = liveCaseRates();
   const sr = liveSweepRates();
 
@@ -7693,7 +7794,8 @@ function liveRenderRate() {
   ).join('');
   groups.push(
     `<span class="grp"><span class="lbl">fleet</span>` +
-    `<span>${dots} <b>${active.length || liveWorkers.size}</b> <span class="dim">worker${(active.length || liveWorkers.size) === 1 ? '' : 's'}</span></span>` +
+    `<span>${dots} <b>${active.length}</b> <span class="dim">working</span></span>` +
+    (parked.length ? `<span><b>${parked.length}</b> <span class="dim">static</span></span>` : '') +
     `<span><b>${eventsPerSec.toFixed(2)}</b> <span class="dim">events/sec</span></span>` +
     `<span><b>${livePeakEventsPerSec.toFixed(2)}</b> <span class="dim">peak/sec</span></span></span>`);
 
@@ -7748,6 +7850,30 @@ function liveHandleMessage(evt) {
     const am = body.match(LIVE_ALIAS_RE);
     if (am) { w.alias = am[1]; if (!LIVE_COOLDOWN_RE.test(body)) w.cooling = false; }
     if (LIVE_COOLDOWN_RE.test(body)) w.cooling = true;
+
+    // Parked vs working. "no account free" is a weaker signal than an explicit
+    // killswitch or hours window, so it never overwrites a specific reason.
+    const sr = liveStaticReason(body);
+    if (sr) {
+      w.static = true;
+      if (!(sr === 'no account free' && w.staticReason && w.staticReason !== 'no account free')) {
+        w.staticReason = sr;
+      }
+      w.window = '';
+      liveSetStatic(w);
+      liveRenderHeads();
+      return; // don't stream the parked chatter into the column
+    }
+    if (LIVE_ACTIVE_RE.test(body) && w.static) {
+      w.static = false; w.staticReason = '';
+      if (w.el) { w.el.classList.remove('static'); }
+      if (w.screen) w.screen.innerHTML = '';
+      liveRenderHeads();
+    }
+    // While parked, show nothing else at all -- not the retry chatter, not a
+    // Playwright teardown traceback from the scheduled restart. The column is
+    // one line saying it is waiting, and that is the whole story.
+    if (w.static) return;
 
     const wm = body.match(LIVE_SWEEP_WINDOW_RE);
     if (wm) w.window = wm[2] + '–' + wm[3];
@@ -12570,12 +12696,7 @@ function bindViewControls() {
     });
   });
   document.querySelectorAll('#ll-layer-seg button').forEach(b => {
-    b.addEventListener('click', () => {
-      llLayerMode = b.dataset.val;
-      document.querySelectorAll('#ll-layer-seg button').forEach(x => x.classList.toggle('on', x === b));
-      updateLandlordsLayer();
-      syncMapUrl();
-    });
+    b.addEventListener('click', () => setLlLayerMode(b.dataset.val));
   });
   document.querySelectorAll('#map-mode-seg button').forEach(b => {
     b.addEventListener('click', () => {
