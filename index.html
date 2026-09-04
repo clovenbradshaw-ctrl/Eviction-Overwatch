@@ -279,6 +279,15 @@ h1 {
   margin-left: 6px; cursor: pointer; font-weight: bold;
 }
 
+.landlord-note {
+  margin-top: 6px; max-width: 640px; font-size: 12px; line-height: 1.5;
+  color: var(--dim); font-family: var(--serif, inherit);
+}
+.landlord-rate {
+  margin-top: 4px; font-size: 12px; color: var(--dim);
+}
+.landlord-rate b { color: var(--gold); font-variant-numeric: tabular-nums; }
+
 .date-range-filter {
   display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap;
 }
@@ -1477,6 +1486,44 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   margin-left: 5px; font-family: var(--mono); font-size: 9px; color: var(--dim);
   font-variant-numeric: tabular-nums;
 }
+.say {
+  margin-top: 9px; padding: 9px 11px;
+  font-family: var(--serif); font-size: 13px; line-height: 1.6; color: #ddd5c2;
+  background: rgba(196,164,74,0.05); border-left: 2px solid var(--gold-dim); border-radius: 0 3px 3px 0;
+}
+.censored {
+  display: inline-block; width: 0.62em; text-align: center;
+  color: var(--gold-dim); background: rgba(196,164,74,0.12);
+  border-radius: 2px; cursor: help; font-family: var(--mono);
+}
+.say-note {
+  display: block; margin-top: 6px; font-family: var(--sans, inherit);
+  font-size: 9px; font-style: italic; color: var(--dim);
+}
+.reading-audit {
+  margin-top: 8px; font-size: 10px; color: var(--dim);
+  border-top: 1px dashed var(--surface); padding-top: 6px;
+}
+.reading-audit summary {
+  cursor: pointer; font-size: 9px; text-transform: uppercase; letter-spacing: 0.09em;
+  color: var(--dim); list-style: none;
+}
+.reading-audit summary::-webkit-details-marker { display: none; }
+.reading-audit summary::before { content: '▸ '; }
+.reading-audit[open] summary::before { content: '▾ '; }
+.ra-table { width: 100%; border-collapse: collapse; margin: 7px 0 5px; font-size: 10px; }
+.ra-table th {
+  text-align: left; font-weight: normal; font-size: 8px; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--dim); padding: 2px 8px 3px 0;
+  border-bottom: 1px solid var(--surface);
+}
+.ra-table td { padding: 3px 8px 3px 0; vertical-align: top; border-bottom: 1px solid rgba(255,255,255,0.03); }
+.ra-role { font-family: var(--mono); color: var(--gold-dim); white-space: nowrap; }
+.ra-val { color: var(--muted); }
+.ra-detail { display: block; color: var(--dim); font-style: italic; margin-top: 1px; }
+.ra-from { font-family: var(--mono); color: var(--muted); }
+.ra-by { color: var(--dim); font-style: italic; }
+.ra-model { color: var(--dim); font-style: italic; line-height: 1.5; }
 .export-strip {
   display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
   margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--surface);
@@ -1582,6 +1629,173 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 }
 
 
+/* ─── Narrow screens ───────────────────────────────────────────────────────
+   The page was built at desktop width and had no breakpoint anywhere, which
+   on a phone meant a horizontal scrollbar over the whole document and every
+   grid squeezed to unreadable columns. A tenant looking up their own landlord
+   is doing it on a phone, standing outside a courthouse, so this is not a
+   polish pass.
+
+   Three rules do most of the work: multi-column grids collapse to one column,
+   anything genuinely wide (a data table, the audit record) scrolls INSIDE its
+   own box rather than pushing the page, and controls that were a single row
+   either wrap or scroll horizontally on purpose. Touch targets come up to
+   something a thumb can hit. */
+@media (max-width: 760px) {
+  html, body { max-width: 100%; overflow-x: hidden; }
+
+  /* The header was spending the whole first screen on itself. On a phone the
+     subtitle ran to six lines of counts — enriched totals, tract coverage,
+     a Princeton row count, a footnote about filings with no tract — none of
+     which is why anyone opened this on a phone, and all of which is in the
+     Sources tab. The title, the sign-in and the date stay; the recital goes. */
+  header {
+    flex-direction: row; align-items: center; justify-content: space-between;
+    gap: 10px; padding: 10px 12px;
+  }
+  .subtitle { display: none; }
+  .header-right { align-items: flex-end; gap: 2px; }
+  .updated, .bg-sync { text-align: right; font-size: 9px; }
+  h1 { font-size: 17px; line-height: 1.15; }
+  .login-btn { padding: 5px 12px; min-height: 32px; }
+
+  /* Every fixed multi-column grid becomes one column. */
+  .stats-row, .profile-cols, .coverage-grid { grid-template-columns: 1fr !important; gap: 12px; }
+  .stats-row { padding: 12px 14px; }
+  .stat-list { max-height: 180px; }
+
+  /* The view switcher WRAPS rather than scrolling. Scrolling it sideways hid
+     half the tabs behind an edge with nothing to say they were there — on a
+     phone the strip showed Cases, Districts, Timeline, Coverage and simply
+     stopped, so Map, Sources, Live and Chat did not appear to exist. Eight
+     short labels fit two rows; two visible rows beat four hidden tabs. */
+  #view-seg, .seg {
+    display: flex; flex-wrap: wrap; gap: 4px; padding: 4px;
+  }
+  #view-seg button, .seg button {
+    flex: 1 1 auto; min-height: 34px; padding: 6px 10px; font-size: 12px;
+  }
+  /* Suggestions DO scroll — they are examples, not navigation, and the row
+     is visibly clipped mid-chip, which reads as more-to-the-right. */
+  .chat-suggestions {
+    display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 6px;
+    -webkit-overflow-scrolling: touch; scrollbar-width: none; padding-bottom: 4px;
+  }
+  .chat-suggestions::-webkit-scrollbar { display: none; }
+  .suggest-chip { flex: 0 0 auto; }
+
+  /* Filter chips scroll sideways rather than becoming five stacked rows —
+     five buttons on five lines is most of a phone screen spent on controls
+     nobody has touched yet. */
+  #filters, .filter-row {
+    display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 6px;
+    -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  }
+  #filters::-webkit-scrollbar, .filter-row::-webkit-scrollbar { display: none; }
+  #filters > *, .filter-row > * { flex: 0 0 auto; }
+  #local-toolbar { padding: 8px 12px; }
+  .date-range-filter { flex-wrap: wrap; gap: 6px; }
+  input, select, button { font-size: 16px; }   /* 16px stops iOS zooming on focus */
+
+  /* THE CONTROLS BELONG TO THE CASE TABLE, so on a phone they are only shown
+     where they do something. Arriving at the chat tab used to mean scrolling
+     past a search box, five filter chips, a date range and a filings
+     histogram — all of which filter a table that is not on screen. On a
+     desktop they cost a strip; on a phone they cost the whole first screen. */
+  body.narrow-chat #local-toolbar,
+  body.narrow-chat #coverage-headline,
+  body.narrow-chat .stats-row-header,
+  body.narrow-chat #stats-row { display: none; }
+
+  /* Any table wide enough to matter scrolls in its own box. */
+  .table-wrap, .artifact-table-wrap, .coverage-wrap, .ra-wrap {
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+  }
+  table { font-size: 11px; }
+  #tbody td, thead th { padding: 6px 8px; white-space: nowrap; }
+
+  /* One frozen column, not two. The coverage table pins Month AND Princeton,
+     the second at a desktop offset of 120px — which on a 375px screen spends
+     a third of the width on a column before a single figure is shown, and the
+     figures themselves end up off the right edge. Month stays pinned so a row
+     can still be identified while scrolling; Princeton scrolls with the rest. */
+  #grid-view .coverage-tbl th:nth-child(2),
+  #grid-view .coverage-tbl td:nth-child(2) { position: static; }
+  #grid-view .coverage-tbl th:nth-child(1),
+  #grid-view .coverage-tbl td:nth-child(1) { left: 0; max-width: 82px; }
+  #grid-view .coverage-tbl { font-size: 11px; }
+  #grid-view .coverage-tbl th, #grid-view .coverage-tbl td { padding: 5px 7px; }
+
+  /* Map needs a real height on a phone or it collapses to nothing. */
+  #map, .map-pane { height: 60vh !important; min-height: 320px; }
+
+  /* ── the chat tab ── */
+  #chat-view { padding: 0 10px 10px; }
+  /* The status bar was five lines of its own: a status string, a corpus
+     inventory, a model picker and a re-index button, above an empty chat.
+     The inventory and the re-index control move behind the model picker's
+     own row; the dot and the status stay, because "ready" is the one thing
+     you need before typing. */
+  .chat-bar { flex-wrap: wrap; gap: 4px 8px; padding: 6px 0; }
+  .chat-status { font-size: 10px; }
+  .chat-spans { display: none; }
+  .chat-model-select, .chat-rebuild { min-height: 32px; font-size: 11px; }
+  .chat-rebuild { margin-left: auto; }
+  .chat-screen { max-height: none; }
+  .chat-msg { max-width: 100%; }
+  .chat-composer { position: sticky; bottom: 0; background: var(--bg); padding: 8px 0; z-index: 5; }
+  #chat-send { min-height: 40px; padding: 0 16px; }
+
+  /* A fact card is two columns of prose on a phone, which leaves four
+     characters per line. Stack the label above its value instead. */
+  .chat-msg .bubble table, .chat-msg .bubble tbody,
+  .chat-msg .bubble tr, .chat-msg .bubble td { display: block; width: auto; }
+  .chat-msg .bubble thead { display: none; }
+  .chat-msg .bubble tr {
+    padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+  .chat-msg .bubble td { padding: 1px 0; white-space: normal; }
+  .chat-msg .bubble td.row-label {
+    font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--dim); margin-bottom: 2px;
+  }
+  .chat-msg .bubble td.num { text-align: left; font-size: 13px; color: var(--text); }
+
+  /* A ranked table read as stacked blocks loses the ranking, so ranked
+     artifacts keep their columns and scroll instead. */
+  .artifact-table-wrap.ranked table,
+  .artifact-table-wrap.ranked tbody,
+  .artifact-table-wrap.ranked tr,
+  .artifact-table-wrap.ranked td { display: revert; white-space: nowrap; }
+  .artifact-table-wrap.ranked thead { display: table-header-group; }
+
+  .chart-svg { min-width: 520px; }
+  .artifact-table-wrap { overflow-x: auto; }
+
+  .data-chip { font-size: 12px; padding: 5px 9px; min-height: 30px; }
+  .span-chip, .export-btn { min-height: 28px; padding: 4px 8px; }
+  .prov-strip { gap: 4px; }
+
+  /* The reasoning record is four columns of text; on a phone it stacks. */
+  .ra-table, .ra-table tbody, .ra-table tr, .ra-table td { display: block; width: auto; }
+  .ra-table thead { display: none; }
+  .ra-table tr { padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+  .ra-table td { padding: 1px 0; }
+  .ra-role { font-size: 9px; }
+  .ra-from::before { content: 'from '; color: var(--dim); }
+  .ra-by::before { content: '— '; }
+
+  .span-modal { width: 94vw; max-height: 78vh; }
+  .say { font-size: 14px; }
+}
+
+/* Very narrow — a small phone in portrait. */
+@media (max-width: 400px) {
+  header { padding: 12px 10px 10px; }
+  .stats-row { padding: 10px; }
+  h1 { font-size: 16px; }
+  .chart-svg { min-width: 420px; }
+}
 </style>
 </head>
 <body>
@@ -2661,6 +2875,7 @@ async function refetchSnapshot() {
   enrichCaseRows(allRows);
   rebuildLocalAggregates();
   llPropertyIndex = buildPropertyIndex(); // keep Top Landlords current on background refresh too
+  _landlordRateIndex = null; // stale after a property-index rebuild
   if (princetonRows) rebuildPrincetonAggregates();
 
   document.getElementById('updated').textContent = 'Updated ' + (casesUpdatedAt || '—').split('T')[0];
@@ -2803,6 +3018,17 @@ const MANUAL_LANDLORD_LABELS = {
   '49:2291': 'Freeman Webb Company',
 };
 
+// Longer, viewer-facing provenance for the few entries above that need more
+// than a name fix explained -- shown in the landlord filter chip, not just
+// left as a code comment only a reader of the source would ever see.
+const MANUAL_LANDLORD_NOTES = {
+  '49:2291': 'Bill (William) Freeman co-founded Freeman Webb Company in 1979 with Jimmy Webb. '
+    + 'He stepped down as CEO before his death in Nov. 2024 — his son Bob Freeman, also a sitting '
+    + 'TN state representative, is the company’s current president, so filings in this record '
+    + 'reflect his tenure. Landlord Mapper traces 19 buildings / 816 units to this network; it does '
+    + 'not include properties Freeman Webb manages for other owners (e.g. MDHA) without holding title.',
+};
+
 // Single resolver both buildLandlordAggregation (property-based) and
 // topLandlordsFor (row-based) call, so the manual-merge list only has to
 // be maintained in one place.
@@ -2811,7 +3037,8 @@ function resolveLandlordNetwork(portfolioUrl, fallbackLabel) {
   if (!rawKey) return null;
   const mergedKey = MANUAL_LANDLORD_MERGES[rawKey] || rawKey;
   const label = MANUAL_LANDLORD_LABELS[mergedKey] || fallbackLabel;
-  return { key: mergedKey, label };
+  const note = MANUAL_LANDLORD_NOTES[mergedKey] || null;
+  return { key: mergedKey, label, note };
 }
 
 // General-purpose version of the same merge, for any arbitrary set of case
@@ -2954,6 +3181,102 @@ function landlordKeyForRow(r) {
   return 'raw:' + raw;
 }
 
+// A landlordFilterKey for a Landlord Mapper network is always 'lm:' +
+// the merged key MANUAL_LANDLORD_NOTES is keyed by -- looked up here
+// instead of threading the note text through every click-through call
+// site (Top Landlords, attorney/holon profiles, etc.).
+function landlordFilterNoteFor(key) {
+  if (!key || !key.startsWith('lm:')) return null;
+  return MANUAL_LANDLORD_NOTES[key.slice(3)] || null;
+}
+
+// Filings-per-100-units for one LM-tracked network, ranked against every
+// other network in this dataset with a known unit count -- computed from
+// the data itself, not asserted, so "is this a lot?" has a real answer.
+// Built once and cached: it's an O(all matched properties) scan, and
+// updateFilterBtns() (which reads it) runs on plenty of unrelated filter
+// changes too.
+let _landlordRateIndex = null;
+function getLandlordRateIndex() {
+  if (_landlordRateIndex) return _landlordRateIndex;
+  if (!llPropertyIndex || !lmSnapshotByKey) return null;
+  const byNetwork = new Map(); // mergedKey -> {label, unitCount, cases}
+  for (const p of llPropertyIndex.properties) {
+    const assertion = lmSnapshotByKey.get(p.key);
+    if (assertion?.status !== 'matched' || !assertion.data || !assertion.data.unitCount) continue;
+    const resolved = resolveLandlordNetwork(assertion.data.portfolioUrl, assertion.data.networkName);
+    if (!resolved) continue;
+    if (!byNetwork.has(resolved.key)) byNetwork.set(resolved.key, { key: resolved.key, unitCount: assertion.data.unitCount, cases: 0 });
+    byNetwork.get(resolved.key).cases += p.cases.length;
+  }
+  const rates = [...byNetwork.values()]
+    .filter(n => n.unitCount >= 50) // exclude tiny portfolios where the rate is mostly noise
+    .map(n => ({ ...n, per100units: n.cases / n.unitCount * 100 }))
+    .sort((a, b) => b.per100units - a.per100units);
+  _landlordRateIndex = rates;
+  return rates;
+}
+
+function landlordRateContext(mergedKey) {
+  const rates = getLandlordRateIndex();
+  if (!rates) return null;
+  const idx = rates.findIndex(r => r.key === mergedKey);
+  if (idx === -1) return null;
+  return { ...rates[idx], rank: idx + 1, totalNetworks: rates.length };
+}
+
+// The ownership count above is scoped to what Landlord Mapper traces back
+// to THIS network by address. A management company can file eviction as
+// plaintiff on a building it doesn't own -- e.g. Freeman Webb managing
+// MDHA public housing -- and those filings correctly count toward the
+// actual owner's LM network, not this one, so they'd otherwise just
+// disappear from view here. This surfaces them as their own, separately
+// labeled figure rather than folding them into the ownership count (which
+// would overstate what's actually owned) or hiding them behind a caveat.
+//
+// General, not hand-coded per landlord: probes raw Plaintiff_1 text for
+// (a substring of) this network's own LM networkName, then checks where
+// each match actually resolves -- same network (already counted, skip),
+// a DIFFERENT network (managed on someone else's behalf), or no address
+// yet (can't tell which).
+function landlordManagedElsewhereContext(mergedKey) {
+  if (!llPropertyIndex || !lmSnapshotByKey || !allRows.length) return null;
+  let networkName = null;
+  for (const p of llPropertyIndex.properties) {
+    const assertion = lmSnapshotByKey.get(p.key);
+    if (assertion?.status === 'matched' && assertion.data
+        && resolveLandlordNetwork(assertion.data.portfolioUrl, assertion.data.networkName)?.key === mergedKey) {
+      networkName = assertion.data.networkName;
+      break;
+    }
+  }
+  if (!networkName || networkName.length < 4) return null;
+  const needle = networkName.toUpperCase();
+
+  let elsewhereCases = 0;
+  const elsewhereOwners = new Map(); // other network's label -> case count
+  let unenrichedCases = 0;
+  for (const r of allRows) {
+    const p = (r.Plaintiff_1 || '').toUpperCase();
+    if (!p.includes(needle)) continue;
+    if (!r.address_formatted) { unenrichedCases++; continue; }
+    const addrKey = normalizeAddressKey(r.address_formatted);
+    const assertion = addrKey ? lmSnapshotByKey.get(addrKey) : null;
+    const matched = assertion?.status === 'matched' && assertion.data
+      ? resolveLandlordNetwork(assertion.data.portfolioUrl, assertion.data.networkName) : null;
+    if (matched && matched.key === mergedKey) continue; // already in the ownership count
+    elsewhereCases++;
+    const label = matched ? matched.label : 'unmatched / not traced by Landlord Mapper';
+    elsewhereOwners.set(label, (elsewhereOwners.get(label) || 0) + 1);
+  }
+  if (!elsewhereCases && !unenrichedCases) return null;
+  return {
+    elsewhereCases,
+    unenrichedCases,
+    topOtherOwners: [...elsewhereOwners.entries()].sort((a, b) => b[1] - a[1]),
+  };
+}
+
 // Click-through from any list (Top Landlords, a landlord/district/holon
 // profile's own plaintiff rows) filters the existing Cases table in place
 // -- no modal. Switches to the Cases view so the filtered result is
@@ -2997,8 +3320,37 @@ function updateFilterBtns() {
   if (chip) {
     if (landlordFilterKey) {
       chip.style.display = '';
+      let extra = '';
+      const note = landlordFilterNoteFor(landlordFilterKey);
+      if (note) extra += `<div class="landlord-note">${escapeHtml(note)}</div>`;
+      if (landlordFilterKey.startsWith('lm:')) {
+        const mergedKey = landlordFilterKey.slice(3);
+        const rate = landlordRateContext(mergedKey);
+        if (rate) {
+          const pctile = Math.round((1 - (rate.rank - 1) / rate.totalNetworks) * 100);
+          extra += `<div class="landlord-rate">`
+            + `<b>${rate.per100units.toFixed(1)}</b> filings per 100 units `
+            + `<span class="dim">(${rate.cases} filings / ${rate.unitCount.toLocaleString()} units)</span> — `
+            + `ranks <b>${rate.rank}</b> of ${rate.totalNetworks} Nashville landlords tracked here by unit count, `
+            + `higher than <b>${pctile}%</b> of them`
+            + `</div>`;
+        }
+        const elsewhere = landlordManagedElsewhereContext(mergedKey);
+        if (elsewhere) {
+          const bits = [];
+          if (elsewhere.elsewhereCases) {
+            const ownerList = elsewhere.topOtherOwners.map(([label, n]) => `${escapeHtml(label)} (${n})`).join(', ');
+            bits.push(`filed as plaintiff on <b>${elsewhere.elsewhereCases}</b> more case${elsewhere.elsewhereCases === 1 ? '' : 's'} `
+              + `Landlord Mapper traces to a different owner — managing, not owning: ${ownerList}`);
+          }
+          if (elsewhere.unenrichedCases) {
+            bits.push(`<b>${elsewhere.unenrichedCases}</b> more with this name on the filing but no address yet to check ownership on`);
+          }
+          extra += `<div class="landlord-rate">${bits.join(' · ')}</div>`;
+        }
+      }
       chip.innerHTML = `<span class="filter-btn active">Landlord: ${escapeHtml(landlordFilterLabel || landlordFilterKey)}
-        <span class="clear-x" onclick="clearLandlordFilter(event)">×</span></span>`;
+        <span class="clear-x" onclick="clearLandlordFilter(event)">×</span></span>${extra}`;
     } else {
       chip.style.display = 'none';
       chip.innerHTML = '';
