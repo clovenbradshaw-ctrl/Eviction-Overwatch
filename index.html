@@ -280,10 +280,11 @@ h1 {
 }
 
 .landlord-summary {
+  display: block; margin-top: 6px; max-width: 640px; line-height: 1.5;
   font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums;
 }
 .landlord-more {
-  margin-top: 4px;
+  margin-top: 8px;
 }
 .landlord-more summary {
   cursor: pointer; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
@@ -2560,6 +2561,8 @@ let globalDateEndTs = null;
 let _drhMonths = [];  // cached month buckets for the histogram + drag-handle math
 let landlordFilterKey = null;   // merged-owner filter -- not a plain field match, see setLandlordFilter()
 let landlordFilterLabel = null;
+let holonFilterFn = null;       // predicate, not a key -- see setHolonFilter()
+let holonFilterLabel = null;
 
 let viewMode = 'cases';       // 'cases' | 'districts' | 'timeline' | 'coverage' | 'map' | 'sources'
 let coverageDir  = 'desc';    // 'desc' = newest on left, 'asc' = oldest on left
@@ -3313,6 +3316,32 @@ function clearLandlordFilter(e) {
   syncMapUrl();
 }
 
+// Same click-through-filters-the-table pattern as setLandlordFilter, for a
+// Hot Zones group -- a set of tracts/buildings/owners whose filings move
+// together, not a single field value, so it can't ride the plain `filters`
+// object either. Not URL-synced: which group is "group 3" depends on the
+// clip window and threshold in effect when it was computed, so an index
+// alone wouldn't reproduce the same group after a reload.
+function setHolonFilterFromGroup(i) {
+  const g = window._holonGroups?.[i];
+  if (!g) return;
+  const label = `${g.members.length} ${window._holonRes?.spec?.noun || 'items'} moving together (group ${String.fromCharCode(65 + i)})`;
+  holonFilterFn = holonMemberRowFilter(hzGrain, g.members);
+  holonFilterLabel = label;
+  viewMode = 'cases';
+  document.querySelectorAll('#view-seg button').forEach(b => b.classList.toggle('on', b.dataset.val === 'cases'));
+  updateFilterBtns();
+  render();
+}
+
+function clearHolonFilter(e) {
+  if (e) e.stopPropagation();
+  holonFilterFn = null;
+  holonFilterLabel = null;
+  updateFilterBtns();
+  render();
+}
+
 function updateFilterBtns() {
   FILTER_FIELDS.forEach(f => {
     const btn = document.getElementById("fbtn-" + f.key);
@@ -3373,6 +3402,17 @@ function updateFilterBtns() {
       chip.innerHTML = '';
     }
   }
+  const hchip = document.getElementById('holon-filter-chip');
+  if (hchip) {
+    if (holonFilterFn) {
+      hchip.style.display = '';
+      hchip.innerHTML = `<span class="filter-btn active">Group: ${escapeHtml(holonFilterLabel || 'moving together')}
+        <span class="clear-x" onclick="clearHolonFilter(event)">×</span></span>`;
+    } else {
+      hchip.style.display = 'none';
+      hchip.innerHTML = '';
+    }
+  }
 }
 
 function buildHeader() {
@@ -3399,6 +3439,9 @@ function getFiltered() {
   });
   if (landlordFilterKey) {
     rows = rows.filter(r => landlordKeyForRow(r) === landlordFilterKey);
+  }
+  if (holonFilterFn) {
+    rows = rows.filter(holonFilterFn);
   }
   if (globalDateStartTs != null || globalDateEndTs != null) {
     rows = rows.filter(r => {
@@ -5367,7 +5410,7 @@ function renderHolons() {
        Narrow the window or treat it as one undifferentiated mass.</div>`
     : '';
   body.innerHTML = warn + res.groups.map((g, i) => `
-    <div class="hz-row" onclick="showHolonProfile(${i})" title="Open a profile of this group">
+    <div class="hz-row" onclick="setHolonFilterFromGroup(${i})" title="Filter the Cases table to this group's buildings">
       <span class="hz-rank">${String.fromCharCode(65 + i)}</span>
       <span>
         <span class="hz-name">${g.members.length} ${gspec.noun} moving together</span>
