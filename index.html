@@ -166,10 +166,15 @@ h1 {
 .btn-primary[disabled] { opacity: 0.5; cursor: wait; }
 
 .stats-row {
-  display: grid; grid-template-columns: 1fr 1fr;
+  display: grid; grid-template-columns: 1fr 1fr 1fr;
   gap: 16px; padding: 16px 24px;
   border-bottom: 1px solid var(--border);
 }
+
+/* Full ranked lists (not just a top-5) need a cap so a 200-entry landlord
+   list doesn't push the map/table out of the viewport — scroll inside the
+   card instead of growing it. */
+.stat-list { max-height: 220px; overflow-y: auto; }
 
 .stat-card {
   padding: 12px 16px; background: var(--surface);
@@ -579,6 +584,13 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
   background: var(--surface); color: var(--text); border-color: var(--border);
 }
 .leaflet-control-zoom a:hover { background: var(--bg); color: var(--gold); }
+.ll-recenter-btn {
+  display: block; width: 26px; height: 26px; margin-top: 6px;
+  background: var(--surface); color: var(--text); border: 1px solid var(--border);
+  border-radius: 3px; font-size: 15px; line-height: 26px; text-align: center;
+  cursor: pointer; padding: 0;
+}
+.ll-recenter-btn:hover { background: var(--bg); color: var(--gold); }
 
 /* ── The clip: a Premiere-style trim/scrub strip over the whole record ──
    Four date fields and a slider that did not know about each other became one
@@ -1522,13 +1534,19 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
       <button type="button" class="stat-label" id="toggle-districts" aria-expanded="true" aria-controls="top-districts">
         <span class="stat-caret">▾</span> Top Districts
       </button>
-      <div id="top-districts"></div>
+      <div id="top-districts" class="stat-list"></div>
     </div>
     <div class="stat-card">
       <button type="button" class="stat-label" id="toggle-attorneys" aria-expanded="true" aria-controls="top-attorneys">
         <span class="stat-caret">▾</span> Top Attorneys
       </button>
-      <div id="top-attorneys"></div>
+      <div id="top-attorneys" class="stat-list"></div>
+    </div>
+    <div class="stat-card">
+      <button type="button" class="stat-label" id="toggle-landlords" aria-expanded="true" aria-controls="top-landlords">
+        <span class="stat-caret">▾</span> Top Landlords
+      </button>
+      <div id="top-landlords" class="stat-list"></div>
     </div>
   </div>
 
@@ -1578,14 +1596,14 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
     </div>
     <div class="group" id="map-layers-group" style="display:none">
       <label>Layers</label>
-      <label class="ll-layer-check"><input type="checkbox" id="layer-tracts" checked> Census tracts</label>
+      <label class="ll-layer-check"><input type="checkbox" id="layer-tracts"> Census tracts</label>
       <label class="ll-layer-check"><input type="checkbox" id="layer-evictions" checked> Evictions</label>
     </div>
     <div class="group" id="ll-mode-group" style="display:none">
       <label>Buildings</label>
       <div class="seg" id="ll-layer-seg">
-        <button data-val="dots" class="on">Buildings</button>
-        <button data-val="heat">Heat map</button>
+        <button data-val="dots">Buildings</button>
+        <button data-val="heat" class="on">Heat map</button>
       </div>
     </div>
     <div class="group" id="ll-signal-group" style="display:none">
@@ -1673,10 +1691,10 @@ tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
           <div>
             <div class="hz-title">Hot zones</div>
             <div class="hz-seg" id="hz-seg">
-              <button type="button" data-val="zones" class="on">Zones</button>
-              <button type="button" data-val="groups" title="Sets of tracts whose month-over-month change moves together, discovered from the data">Groups</button>
+              <button type="button" data-val="zones">Tracts</button>
+              <button type="button" data-val="groups" class="on" title="Sets of tracts whose month-over-month change moves together, discovered from the data">Groups</button>
             </div>
-            <div class="hz-seg" id="hz-grain-seg" style="display:none">
+            <div class="hz-seg" id="hz-grain-seg">
               <button type="button" data-val="tract" class="on">Tracts</button>
               <button type="button" data-val="building">Buildings</button>
               <button type="button" data-val="owner">Owners</button>
@@ -2254,7 +2272,7 @@ const TRAJECTORY_HALF_LIFE_MONTHS = 3;  // hotness fades to 50% after 3 months
 let llClusterGroup = null;
 let llHeatLayer = null;
 let llPropertyIndex = null;   // built once per snapshot, keyed by normalized address
-let llLayerMode = 'dots';     // 'dots' | 'heat'
+let llLayerMode = 'heat';     // 'dots' | 'heat' — heat leads by default so the map reads as "where evictions concentrate," not a scatter of individual buildings
 let llOpenAddressKey = null;
 const _lmLookupCache = new Map();  // address key -> resolved Landlord Mapper result (or null)
 
@@ -2542,16 +2560,64 @@ function buildStats() {
     if (a && a !== ", PRS") attorneys[a] = (attorneys[a] || 0) + 1;
   });
 
-  const topD = Object.entries(districts).sort((a, b) => b[1] - a[1]).slice(0, 5);
-  const topA = Object.entries(attorneys).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  // Full ranked lists, not a top-5 — the card scrolls (.stat-list) so the
+  // whole ranking is reachable, not just a token slice of it.
+  const topD = Object.entries(districts).sort((a, b) => b[1] - a[1]);
+  const topA = Object.entries(attorneys).sort((a, b) => b[1] - a[1]);
 
   document.getElementById("top-districts").innerHTML = topD.map(([d, c]) =>
-    `<div class="stat-item"><span class="stat-link" onclick="setFilter('council_district','${d}')">${shorten(d, "Council District ")}</span><span class="stat-count">${c}</span></div>`
+    `<div class="stat-item"><span class="stat-link" onclick="showDistrictProfile('${d.replace(/'/g, "\\'")}')">${shorten(d, "Council District ")}</span><span class="stat-count">${c}</span></div>`
   ).join("");
 
   document.getElementById("top-attorneys").innerHTML = topA.map(([a, c]) =>
-    `<div class="stat-item"><span class="stat-link" onclick="setFilter('Attorney','${a.replace(/'/g, "\\'")}')">${a.split(",")[0]}</span><span class="stat-count">${c}</span></div>`
+    `<div class="stat-item"><span class="stat-link" onclick="showAttorneyProfile('${a.replace(/'/g, "\\'")}')">${a.split(",")[0]}</span><span class="stat-count">${c}</span></div>`
   ).join("");
+
+  buildLandlordStat();
+}
+
+// Groups every geocoded property's eviction count by real-world owner —
+// via the Landlord Mapper snapshot's network, when a property has one,
+// rather than by the raw Plaintiff_1 string, which fragments one owner
+// across every LLC/spelling variant they file under. A property with no
+// snapshot match (not yet enriched, or genuinely no confident match)
+// falls back to grouping by its raw plaintiff name, so it still counts
+// toward *someone* rather than silently vanishing from the ranking.
+let landlordAgg = null;
+function buildLandlordAggregation() {
+  if (!llPropertyIndex) return [];
+  const byGroup = new Map();
+  for (const p of llPropertyIndex.properties) {
+    const assertion = lmSnapshotByKey ? lmSnapshotByKey.get(p.key) : null;
+    const matched = assertion && assertion.status === 'matched' && assertion.data;
+    const groupKey = matched
+      ? 'lm:' + (assertion.data.portfolioUrl || assertion.data.networkName)
+      : 'raw:' + (p.primaryLandlord || '(no plaintiff on file)');
+    if (!byGroup.has(groupKey)) {
+      byGroup.set(groupKey, {
+        key: groupKey,
+        label: matched ? (assertion.data.networkName || p.primaryLandlord || 'Unnamed owner') : (p.primaryLandlord || '(no plaintiff on file)'),
+        portfolioUrl: matched ? assertion.data.portfolioUrl : null,
+        isLmMatched: matched,
+        totalCases: 0,
+        properties: [],
+      });
+    }
+    const g = byGroup.get(groupKey);
+    g.totalCases += p.evictionCount;
+    g.properties.push(p);
+  }
+  return [...byGroup.values()].sort((a, b) => b.totalCases - a.totalCases);
+}
+
+function buildLandlordStat() {
+  const el = document.getElementById('top-landlords');
+  if (!el) return;
+  if (!llPropertyIndex) { el.innerHTML = '<div class="pp-gap-note">Building once the map data is ready…</div>'; return; }
+  landlordAgg = buildLandlordAggregation();
+  el.innerHTML = landlordAgg.map(g =>
+    `<div class="stat-item"><span class="stat-link" onclick="showLandlordProfile('${escapeAttr(g.key)}')">${escapeHtml(g.label)}${g.isLmMatched ? '' : ' <span class="pp-gap-note" style="display:inline">(unmatched)</span>'}</span><span class="stat-count">${g.totalCases}</span></div>`
+  ).join('');
 }
 
 function buildFilters() {
@@ -3278,6 +3344,9 @@ function bindTimelineHover() {
 
 /* ───────────────────────── Map view (heat map + time slider) ───────────────────────── */
 
+const NASHVILLE_CENTER = [36.16, -86.78];
+const NASHVILLE_ZOOM = 10;
+
 // Active data layer for the map: returns { data, months, max } for whichever
 // source is selected. Recomputes max each call (cheap; runs once per render).
 function mapLayer() {
@@ -3536,7 +3605,26 @@ async function renderMapView() {
     // Zoom sits bottom-left: the hot-zones panel owns the top-left corner and
     // the two detail panels own the right edge.
     leafletMap = L.map('map', { zoomControl: false, attributionControl: false });
+    // Explicit Nashville/Davidson County starting view — shown immediately,
+    // before any data has loaded, rather than sitting on Leaflet's [0,0]
+    // default until the fit-to-data below (robustBounds) eventually fires.
+    leafletMap.setView(NASHVILLE_CENTER, NASHVILLE_ZOOM);
     L.control.zoom({ position: 'bottomleft' }).addTo(leafletMap);
+    // A quick way back after panning/zooming away — same spot a reader
+    // already expects controls to live, right under zoom.
+    const RecenterControl = L.Control.extend({
+      options: { position: 'bottomleft' },
+      onAdd: function () {
+        const btn = L.DomUtil.create('button', 'll-recenter-btn');
+        btn.type = 'button';
+        btn.title = 'Re-center on Nashville';
+        btn.innerHTML = '⌂';
+        L.DomEvent.disableClickPropagation(btn);
+        btn.addEventListener('click', () => leafletMap.setView(NASHVILLE_CENTER, NASHVILLE_ZOOM));
+        return btn;
+      },
+    });
+    new RecenterControl().addTo(leafletMap);
     // Esri's hosted "Dark Gray Canvas" basemap (base + labels, two stacked
     // tile layers) -- free, no API key, no account, ever. Two other free
     // options were tried and rejected first, both live: CARTO's hosted
@@ -4151,7 +4239,7 @@ function signalRadiusFor(p, ctx) {
    Both are shown; neither is merged into a score. */
 
 const HOTZONE_COUNT = 12;
-let hzView = 'zones';   // 'zones' | 'groups'
+let hzView = 'groups';  // 'zones' | 'groups' — groups (holons) leads by default
 let hzGrain = 'tract';  // 'tract' | 'building' | 'owner'
 
 function tractDisplayName(geoid) {
@@ -4244,11 +4332,53 @@ function holonMonthlySeries(grain) {
    reader is entitled to know which groups are neighbourhoods and which are
    simply people acting alike. */
 const HOLON_GRAINS = Object.freeze({
-  tract:    { label: 'Tracts',    minFilings: 60, gate: 'adjacent',  noun: 'tracts',    gateNote: 'and share a boundary' },
-  building: { label: 'Buildings', minFilings: 12, gate: 'proximity', noun: 'buildings', gateNote: `and sit within ${'400'}m of one another` },
-  owner:    { label: 'Owners',    minFilings: 20, gate: 'none',      noun: 'owners',    gateNote: 'with no spatial gate — a portfolio is not a place' },
+  tract:    { label: 'Tracts',    gate: 'adjacent',  noun: 'tracts',    gateNote: 'and share a boundary' },
+  building: { label: 'Buildings', gate: 'proximity', noun: 'buildings', gateNote: `and sit within ${'400'}m of one another` },
+  owner:    { label: 'Owners',    gate: 'none',      noun: 'owners',    gateNote: 'with no spatial gate — a portfolio is not a place' },
 });
 const HOLON_PROXIMITY_M = 400;
+
+function _seededRng(seed) {
+  let s0 = seed;
+  return () => ((s0 = (s0 * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+}
+function _shuffledCopy(s, rnd) {
+  const c = s.slice();
+  for (let i = c.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [c[i], c[j]] = [c[j], c[i]]; }
+  return c;
+}
+
+/* How many filings does a tract/building/owner need before its month-
+   over-month pattern is signal rather than small-count noise? Not a
+   hand-set number — swept from a candidate grid, and at each candidate
+   the SAME real-vs-shuffled-control comparison already used for the
+   correlation bar itself (HOLON_THRESHOLD) decides whether that cutoff
+   clears the noise floor. Returns the smallest candidate where real
+   co-movement measurably beats its own null (edges > 2x the control's);
+   null if nothing in the tested range does, which computeTractHolons
+   reports honestly rather than silently falling back to a guess. */
+const MIN_FILINGS_CANDIDATES = [3, 5, 8, 12, 16, 20, 25, 30, 40, 50, 60, 80, 100, 130, 160, 200];
+// Compute-budget guard, not a statistical choice: owners have no spatial
+// gate to prune pairs before the dot product, so an uncapped sweep at a
+// low cutoff with thousands of eligible owners could hang the tab. Skip
+// that candidate and let the sweep try the next, smaller-but-still-
+// untested-cutoff instead of never finishing.
+const MIN_FILINGS_ELIGIBLE_CAP = 1200;
+
+function deriveMinFilings(grain, series, totals) {
+  for (const cutoff of MIN_FILINGS_CANDIDATES) {
+    const eligible = [...series.entries()].filter(([id]) => (totals.get(id) || 0) >= cutoff);
+    if (eligible.length < 4) continue;
+    if (HOLON_GRAINS[grain]?.gate === 'none' && eligible.length > MIN_FILINGS_ELIGIBLE_CAP) continue;
+    const vecs = eligible.map(([id, s]) => [id, _zdiff(s)]);
+    const real = _linkTracts(vecs, HOLON_THRESHOLD, grain);
+    const rnd = _seededRng(20260904);
+    const ctrlVecs = eligible.map(([id, s]) => [id, _zdiff(_shuffledCopy(s, rnd))]);
+    const ctrl = _linkTracts(ctrlVecs, HOLON_THRESHOLD, grain);
+    if (real.edges > 0 && real.edges > ctrl.edges * 2) return cutoff;
+  }
+  return null;
+}
 
 function holonDisplayName(grain, id) {
   if (grain === 'tract') return tractDisplayName(id);
@@ -4335,24 +4465,25 @@ function computeTractHolons(grain = hzGrain) {
   const spec = HOLON_GRAINS[grain] || HOLON_GRAINS.tract;
   const { months, series } = holonMonthlySeries(grain);
   if (months.length < 6) return { refused: 'window too short — a group needs at least 6 months of change to be visible' };
-  const eligible = [...series.entries()].filter(([, s]) => s.reduce((a, b) => a + b, 0) >= spec.minFilings);
-  if (eligible.length < 4) return { refused: `only ${eligible.length} ${spec.noun} have ${spec.minFilings}+ filings in this window` };
+
+  const totals = new Map([...series.entries()].map(([id, s]) => [id, s.reduce((a, b) => a + b, 0)]));
+  const minFilings = deriveMinFilings(grain, series, totals);
+  if (minFilings === null) {
+    return { refused: `no filing-count cutoff (tested ${MIN_FILINGS_CANDIDATES[0]}–${MIN_FILINGS_CANDIDATES[MIN_FILINGS_CANDIDATES.length - 1]}+) separates real co-movement from a shuffled-control null for ${spec.noun} in this window` };
+  }
+  const eligible = [...series.entries()].filter(([id]) => (totals.get(id) || 0) >= minFilings);
+  if (eligible.length < 4) return { refused: `only ${eligible.length} ${spec.noun} have ${minFilings}+ filings in this window` };
 
   const vecs = eligible.map(([id, s]) => [id, _zdiff(s)]);
   const real = _linkTracts(vecs, HOLON_THRESHOLD, grain);
 
   // The control, run every time and shown every time.
-  let s0 = 20260903; const rnd = () => ((s0 = (s0 * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
-  const ctrlVecs = eligible.map(([id, s]) => {
-    const c = s.slice();
-    for (let i = c.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [c[i], c[j]] = [c[j], c[i]]; }
-    return [id, _zdiff(c)];
-  });
+  const rnd = _seededRng(20260903);
+  const ctrlVecs = eligible.map(([id, s]) => [id, _zdiff(_shuffledCopy(s, rnd))]);
   const ctrl = _linkTracts(ctrlVecs, HOLON_THRESHOLD, grain);
 
-  const totals = new Map(eligible.map(([id, s]) => [id, s.reduce((a, b) => a + b, 0)]));
   return {
-    grain, spec,
+    grain, spec, minFilings,
     eligible: eligible.length,
     months: months.length,
     groups: real.groups.map(members => ({
@@ -4385,7 +4516,7 @@ function renderHolons() {
        Narrow the window or treat it as one undifferentiated mass.</div>`
     : '';
   body.innerHTML = warn + res.groups.map((g, i) => `
-    <div class="hz-row" onclick="highlightHolon(${i})" title="Show this group on the map">
+    <div class="hz-row" onclick="showHolonProfile(${i})" title="Open a profile of this group">
       <span class="hz-rank">${String.fromCharCode(65 + i)}</span>
       <span>
         <span class="hz-name">${g.members.length} ${gspec.noun} moving together</span>
@@ -4394,12 +4525,13 @@ function renderHolons() {
       <span class="hz-n">${g.filings.toLocaleString()}</span>
     </div>`).join('')
     + `<div class="hz-note">Grouped where month-over-month change correlates at ${HOLON_THRESHOLD}+ ${gspec.gateNote}
-       (${res.edges} linked pairs among ${res.eligible} ${gspec.noun} with ${gspec.minFilings}+ filings).
+       (${res.edges} linked pairs among ${res.eligible} ${gspec.noun} with ${res.minFilings}+ filings).
        Control — each ${gspec.noun.replace(/s$/, '')}'s own months shuffled, counts kept, co-timing destroyed —
        produced <strong>${res.control.edges} pair${res.control.edges === 1 ? '' : 's'}</strong>
        and ${res.control.groups} group${res.control.groups === 1 ? '' : 's'} on the same window.
        ${res.control.edges === 0 ? "The control found nothing, so these groups are the material's own." : 'Read the gap between those two numbers as the strength of the finding.'}</div>`;
   window._holonGroups = res.groups;
+  window._holonRes = res;
 }
 
 /** Paint one emergent group onto the tract layer. */
@@ -4419,6 +4551,137 @@ function highlightHolon(i) {
     const inGroup = set.has(String(l.feature.properties.GEOID));
     l.setStyle({ weight: inGroup ? 3 : 1, color: inGroup ? '#e85d3a' : '#2a2820', fillOpacity: inGroup ? 0.9 : 0.35 });
   });
+}
+
+/* ─────────────────────── Holon (group) profile modal ───────────────────
+   The profile for the holonic unit itself — the group, not any one of its
+   member tracts/buildings/owners. Same posture as the district/attorney/
+   landlord profiles (a dp-backdrop modal), but the subject is a set that
+   only exists because the data said these members move together; the
+   description leads with that finding (correlation + its control), not
+   just a member list, so a reader gets *why this group exists* before
+   *what's in it*. */
+function holonMemberRowFilter(grain, members) {
+  const set = new Set(members);
+  if (grain === 'tract') return (r) => set.has(r.tract_geoid || r.census_tract);
+  if (grain === 'building') return (r) => set.has(normalizeAddressKey(r.address_formatted));
+  return (r) => set.has((r.Plaintiff_1 || '').trim());
+}
+
+function showHolonProfile(i) {
+  const esc = escapeHtmlSafe;
+  const g = window._holonGroups?.[i];
+  const res = window._holonRes;
+  if (!g || !res) return;
+  const spec = res.spec;
+  const grain = res.grain;
+
+  const rowFilter = holonMemberRowFilter(grain, g.members);
+  const rows = allRows.filter(rowFilter);
+
+  const months = {}, landlords = {}, districts = {};
+  for (const r of rows) {
+    const m = caseFileDateToMonth(r.file_date);
+    if (m) months[m] = (months[m] || 0) + 1;
+    if (r.Plaintiff_1) landlords[r.Plaintiff_1] = (landlords[r.Plaintiff_1] || 0) + 1;
+    if (r.council_district) districts[r.council_district] = (districts[r.council_district] || 0) + 1;
+  }
+  const monthKeys = sortMonthsAsc(Object.keys(months));
+  const maxMonth = Math.max(1, ...monthKeys.map(m => months[m]));
+  const topLandlords = Object.entries(landlords).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const topDistricts = Object.entries(districts).sort((a, b) => b[1] - a[1]).slice(0, 6);
+  const recentCases = [...rows].sort((x, y) => (parseUsDate(y.file_date) || 0) - (parseUsDate(x.file_date) || 0)).slice(0, 10);
+
+  const memberNames = g.members.map(m => holonDisplayName(grain, m));
+
+  const description = `
+    <strong>${g.members.length} ${spec.noun}</strong> whose month-over-month filing
+    changes correlate at <strong>${HOLON_THRESHOLD}+</strong> ${spec.gateNote} — discovered from the data,
+    not drawn from any administrative map. Part of ${res.edges} linked pair${res.edges === 1 ? '' : 's'}
+    found among ${res.eligible} eligible ${spec.noun} (${res.minFilings}+ filings each) in the current window.
+    A control run — each ${spec.noun.replace(/s$/, '')}'s own months shuffled, its total kept, only the
+    co-timing destroyed — found ${res.control.edges} pair${res.control.edges === 1 ? '' : 's'} on the same
+    data. ${res.control.edges === 0
+      ? 'The control found nothing, so this co-movement is the material’s own, not an artifact of the test.'
+      : 'Read the gap between those two counts as the strength of this particular finding, not a certainty.'}`;
+
+  const profileHtml = `
+    <div class="dp-backdrop" id="holon-modal" onclick="if (event.target === this) closeHolonProfile()">
+      <div class="dp-modal">
+        <div class="dp-header">
+          <div>
+            <h2>${g.members.length} ${esc(spec.label)} Moving Together</h2>
+            <div class="dp-sub">${g.filings.toLocaleString()} filing${g.filings === 1 ? '' : 's'} across this group · ${esc(SRC_SCRAPED)}</div>
+          </div>
+          <button class="dp-close" onclick="closeHolonProfile()">×</button>
+        </div>
+        <div class="dp-body">
+          <div class="profile-section">
+            <h3>What's Happening</h3>
+            <div class="pp-gap-note" style="font-size:12px;line-height:1.6">${description}</div>
+          </div>
+
+          <div class="profile-section">
+            <h3>Members</h3>
+            <div class="hz-why" style="font-size:12px">${memberNames.map(esc).join(' · ')}</div>
+          </div>
+
+          ${monthKeys.length > 1 ? `
+          <div class="profile-section">
+            <h3>Monthly Filings, Group Combined</h3>
+            <div class="trend-wrap">
+              <div class="profile-trend">
+                ${monthKeys.map(m => `<div class="bar" style="height:${Math.max(2, (months[m] / maxMonth) * 44)}px" title="${m}: ${months[m]}"></div>`).join('')}
+              </div>
+              <div class="trend-axis"><span>${monthKeys[0]}</span><span>${monthKeys[monthKeys.length - 1]}</span></div>
+            </div>
+          </div>` : ''}
+
+          <div class="profile-cols">
+            <div class="profile-section">
+              <h3>Top Landlords in This Group</h3>
+              <ul class="profile-list">${topLandlords.map(([n, c]) =>
+                `<li><span>${esc(n)}</span><span class="count">${c}</span></li>`).join('') || '<li><span class="pp-gap-note">No plaintiff on file for these cases.</span></li>'}</ul>
+            </div>
+            ${grain !== 'tract' ? `
+            <div class="profile-section">
+              <h3>Districts Touched</h3>
+              <ul class="profile-list">${topDistricts.map(([d, c]) =>
+                `<li><span>${esc(shorten(d, 'Council District '))}</span><span class="count">${c}</span></li>`).join('')}</ul>
+            </div>` : ''}
+          </div>
+
+          <div class="profile-section" style="margin-bottom:0">
+            <h3>Recent Cases</h3>
+            <table style="width:100%;border-collapse:collapse"><tbody>
+              ${recentCases.map(c => `
+                <tr onclick="closeHolonProfile(); openRecordPanel('${escapeAttr(c.docket)}')" style="cursor:pointer">
+                  <td style="padding:5px 8px;font-size:11px">${esc(c.file_date || '')}</td>
+                  <td style="padding:5px 8px;font-size:11px">${esc(c.docket)}</td>
+                  <td style="padding:5px 8px;font-size:11px">${esc(c.Plaintiff_1 || '')}</td>
+                  <td style="padding:5px 8px;font-size:11px">${esc(c.address_formatted || '')}</td>
+                </tr>`).join('')}
+            </tbody></table>
+            <button class="filter-btn" style="cursor:pointer;margin-top:10px" onclick="closeHolonProfile(); highlightHolon(${i})">Show this group on the map →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  const wrap = document.createElement('div');
+  wrap.innerHTML = profileHtml;
+  document.body.appendChild(wrap.firstElementChild);
+  document.addEventListener('keydown', escCloseHolonProfile);
+}
+
+function closeHolonProfile() {
+  const m = document.getElementById('holon-modal');
+  if (m) m.remove();
+  document.removeEventListener('keydown', escCloseHolonProfile);
+}
+
+function escCloseHolonProfile(e) {
+  if (e.key === 'Escape') closeHolonProfile();
 }
 
 function renderHotZones() {
@@ -4772,6 +5035,13 @@ function bindLandlordsTimeControls() {
 
 function buildLandlordsLayers(properties, maxHeat, ctx = {}) {
   if (llClusterGroup) { leafletMap.removeLayer(llClusterGroup); llClusterGroup = null; }
+  // llHeatLayer gets reassigned to a fresh L.heatLayer below on every call
+  // (every time-slider move, half-life edit, or play tick) — without this,
+  // the OLD layer object stays attached to the map under a reference
+  // nothing points to anymore, and every subsequent rebuild stacks another
+  // one on top. That's what was accumulating into an ever-thickening,
+  // never-clearing blob rather than reflecting the current window.
+  if (llHeatLayer) { leafletMap.removeLayer(llHeatLayer); llHeatLayer = null; }
   llClusterGroup = L.markerClusterGroup({
     maxClusterRadius: 50,
     iconCreateFunction: (cluster) => {
@@ -6479,6 +6749,189 @@ function filterCasesByDistrict(d) {
     b.classList.toggle('on', b.dataset.val === 'cases'));
   updateFilterBtns();
   render();
+}
+
+/* ─────────────────────── Attorney profile modal ───────────────────────
+   Lighter than the district one on purpose -- there's no MSS/Princeton
+   join for an attorney, just what's directly derivable from their own
+   cases: who they file for, where, and how that's trended. */
+function showAttorneyProfile(attorney) {
+  const esc = escapeHtmlSafe;
+  const rows = allRows.filter(r => r.Attorney === attorney);
+  if (!rows.length) return;
+
+  const topList = (obj, n) => Object.entries(obj).sort((x, y) => y[1] - x[1]).slice(0, n);
+  const districts = {}, plaintiffs = {}, months = {};
+  for (const r of rows) {
+    if (r.council_district) districts[r.council_district] = (districts[r.council_district] || 0) + 1;
+    if (r.Plaintiff_1) plaintiffs[r.Plaintiff_1] = (plaintiffs[r.Plaintiff_1] || 0) + 1;
+    const m = caseFileDateToMonth(r.file_date);
+    if (m) months[m] = (months[m] || 0) + 1;
+  }
+  const topDistricts = topList(districts, 8);
+  const topPlaintiffs = topList(plaintiffs, 8);
+  const monthKeys = sortMonthsAsc(Object.keys(months));
+  const maxMonth = Math.max(1, ...monthKeys.map(m => months[m]));
+
+  const recentCases = [...rows].sort((x, y) => (parseUsDate(y.file_date) || 0) - (parseUsDate(x.file_date) || 0)).slice(0, 10);
+
+  const profileHtml = `
+    <div class="dp-backdrop" id="attorney-modal" onclick="if (event.target === this) closeAttorneyProfile()">
+      <div class="dp-modal">
+        <div class="dp-header">
+          <div>
+            <h2>${esc(attorney.split(',')[0])}</h2>
+            <div class="dp-sub">${rows.length.toLocaleString()} case${rows.length === 1 ? '' : 's'} as plaintiff counsel · ${esc(SRC_SCRAPED)}</div>
+          </div>
+          <button class="dp-close" onclick="closeAttorneyProfile()">×</button>
+        </div>
+        <div class="dp-body">
+          ${monthKeys.length > 1 ? `
+          <div class="profile-section">
+            <h3>Monthly Filings</h3>
+            <div class="trend-wrap">
+              <div class="profile-trend">
+                ${monthKeys.map(m => `<div class="bar" style="height:${Math.max(2, (months[m] / maxMonth) * 44)}px" title="${m}: ${months[m]}"></div>`).join('')}
+              </div>
+              <div class="trend-axis"><span>${monthKeys[0]}</span><span>${monthKeys[monthKeys.length - 1]}</span></div>
+            </div>
+          </div>` : ''}
+
+          <div class="profile-cols">
+            <div class="profile-section">
+              <h3>Top Districts</h3>
+              <ul class="profile-list">${topDistricts.map(([d, c]) =>
+                `<li><span>${esc(shorten(d, 'Council District '))}</span><span class="count">${c}</span></li>`).join('')}</ul>
+            </div>
+            <div class="profile-section">
+              <h3>Top Plaintiffs Represented</h3>
+              <ul class="profile-list">${topPlaintiffs.map(([n, c]) =>
+                `<li><span>${esc(n)}</span><span class="count">${c}</span></li>`).join('')}</ul>
+            </div>
+          </div>
+
+          <div class="profile-section" style="margin-bottom:0">
+            <h3>Recent Cases</h3>
+            <table style="width:100%;border-collapse:collapse"><tbody>
+              ${recentCases.map(r => `
+                <tr onclick="closeAttorneyProfile(); openRecordPanel('${escapeAttr(r.docket)}')" style="cursor:pointer">
+                  <td style="padding:5px 8px;font-size:11px">${esc(r.file_date || '')}</td>
+                  <td style="padding:5px 8px;font-size:11px">${esc(r.docket)}</td>
+                  <td style="padding:5px 8px;font-size:11px">${esc(r.Plaintiff_1 || '')}</td>
+                  <td style="padding:5px 8px;font-size:11px">${esc(r.address_formatted || '')}</td>
+                </tr>`).join('')}
+            </tbody></table>
+            <button class="filter-btn" style="cursor:pointer;margin-top:10px" onclick="closeAttorneyProfile(); setFilter('Attorney','${attorney.replace(/'/g, "\\'")}')">View all ${rows.length} cases in Cases tab →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  const wrap = document.createElement('div');
+  wrap.innerHTML = profileHtml;
+  document.body.appendChild(wrap.firstElementChild);
+  document.addEventListener('keydown', escCloseAttorneyProfile);
+}
+
+function closeAttorneyProfile() {
+  const m = document.getElementById('attorney-modal');
+  if (m) m.remove();
+  document.removeEventListener('keydown', escCloseAttorneyProfile);
+}
+
+function escCloseAttorneyProfile(e) {
+  if (e.key === 'Escape') closeAttorneyProfile();
+}
+
+/* ─────────────────────── Landlord profile modal ───────────────────────
+   "Landlord" here means a landlordAgg group — a Landlord Mapper NETWORK
+   when a property matched one (so every LLC/spelling variant that owner
+   files under is already folded together), or a raw plaintiff-name
+   fallback otherwise. Every cross-property claim here is still Landlord
+   Mapper's own inference, not ours -- same posture as the property
+   panel's LM_TAG, just at the owner level instead of the building level. */
+function showLandlordProfile(key) {
+  const esc = escapeHtmlSafe;
+  if (!landlordAgg) return;
+  const g = landlordAgg.find(x => x.key === key);
+  if (!g) return;
+
+  const allCases = g.properties.flatMap(p => p.cases);
+  const months = {};
+  for (const c of allCases) {
+    const m = caseFileDateToMonth(c.file_date);
+    if (m) months[m] = (months[m] || 0) + 1;
+  }
+  const monthKeys = sortMonthsAsc(Object.keys(months));
+  const maxMonth = Math.max(1, ...monthKeys.map(m => months[m]));
+
+  const sortedProps = [...g.properties].sort((a, b) => b.evictionCount - a.evictionCount);
+  const recentCases = [...allCases].sort((x, y) => (parseUsDate(y.file_date) || 0) - (parseUsDate(x.file_date) || 0)).slice(0, 10);
+
+  const lmLine = g.isLmMatched
+    ? `<a href="${escapeAttr(g.portfolioUrl)}" target="_blank" rel="noopener">View full ownership portfolio on Landlord Mapper →</a> ${LM_TAG}`
+    : `<span class="pp-gap-note">No confident Landlord Mapper match — grouped by the plaintiff name on file instead, so this may split one real owner across multiple entries if they file under more than one name.</span>`;
+
+  const profileHtml = `
+    <div class="dp-backdrop" id="landlord-modal" onclick="if (event.target === this) closeLandlordProfile()">
+      <div class="dp-modal">
+        <div class="dp-header">
+          <div>
+            <h2>${esc(g.label)}</h2>
+            <div class="dp-sub">${g.totalCases.toLocaleString()} eviction${g.totalCases === 1 ? '' : 's'} across ${g.properties.length.toLocaleString()} propert${g.properties.length === 1 ? 'y' : 'ies'} in this dataset</div>
+          </div>
+          <button class="dp-close" onclick="closeLandlordProfile()">×</button>
+        </div>
+        <div class="dp-body">
+          <div class="profile-section">${lmLine}</div>
+
+          ${monthKeys.length > 1 ? `
+          <div class="profile-section">
+            <h3>Monthly Filings, All Properties Combined</h3>
+            <div class="trend-wrap">
+              <div class="profile-trend">
+                ${monthKeys.map(m => `<div class="bar" style="height:${Math.max(2, (months[m] / maxMonth) * 44)}px" title="${m}: ${months[m]}"></div>`).join('')}
+              </div>
+              <div class="trend-axis"><span>${monthKeys[0]}</span><span>${monthKeys[monthKeys.length - 1]}</span></div>
+            </div>
+          </div>` : ''}
+
+          <div class="profile-section">
+            <h3>Properties</h3>
+            <ul class="profile-list">${sortedProps.slice(0, 30).map(p =>
+              `<li><span class="stat-link" onclick="closeLandlordProfile(); openPropertyPanel('${escapeAttr(p.key)}')">${esc(p.addressDisplay)}</span><span class="count">${p.evictionCount}</span></li>`).join('')}</ul>
+            ${sortedProps.length > 30 ? `<div class="pp-gap-note">+ ${sortedProps.length - 30} more properties not shown here</div>` : ''}
+          </div>
+
+          <div class="profile-section" style="margin-bottom:0">
+            <h3>Recent Cases</h3>
+            <table style="width:100%;border-collapse:collapse"><tbody>
+              ${recentCases.map(c => `
+                <tr onclick="closeLandlordProfile(); openRecordPanel('${escapeAttr(c.docket)}')" style="cursor:pointer">
+                  <td style="padding:5px 8px;font-size:11px">${esc(c.file_date || '')}</td>
+                  <td style="padding:5px 8px;font-size:11px">${esc(c.docket)}</td>
+                  <td style="padding:5px 8px;font-size:11px">${esc(c.Plaintiff_1 || '')}</td>
+                </tr>`).join('')}
+            </tbody></table>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  const wrap = document.createElement('div');
+  wrap.innerHTML = profileHtml;
+  document.body.appendChild(wrap.firstElementChild);
+  document.addEventListener('keydown', escCloseLandlordProfile);
+}
+
+function closeLandlordProfile() {
+  const m = document.getElementById('landlord-modal');
+  if (m) m.remove();
+  document.removeEventListener('keydown', escCloseLandlordProfile);
+}
+
+function escCloseLandlordProfile(e) {
+  if (e.key === 'Escape') closeLandlordProfile();
 }
 
 /* ───────────────────────── Dispatch ───────────────────────── */
