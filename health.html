@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sync Health — Nashville Eviction Tracker</title>
+<style>
+  :root {
+    --bg:#0e0d0b; --bg-alt:#15130f; --surface:#1a1813; --border:#2a2620;
+    --text:#e8e2d0; --muted:#8a8272; --dim:#4f4a40;
+    --gold:#c4a44a; --gold-dim:#7a6630;
+    --ok:#39ff14; --warn:#ffb020; --bad:#ff4136;
+    --mono:"JetBrains Mono","SF Mono",Menlo,Consolas,monospace;
+    --serif:Georgia,"Times New Roman",serif;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:var(--mono); font-size:13px; }
+  header { display:flex; align-items:baseline; gap:14px; padding:16px 22px; border-bottom:1px solid var(--border); flex-wrap:wrap; }
+  header h1 { font-family:var(--serif); font-weight:400; font-size:20px; margin:0; }
+  header .sub { color:var(--muted); font-size:11px; }
+  header .sp { margin-left:auto; }
+  header a { color:var(--gold); text-decoration:none; font-size:11px; }
+  .overall { display:flex; align-items:center; gap:10px; padding:12px 22px; border-bottom:1px solid var(--border); background:var(--bg-alt); }
+  .dot { width:10px; height:10px; border-radius:50%; background:var(--dim); flex:0 0 10px; }
+  .dot.ok { background:var(--ok); box-shadow:0 0 8px rgba(57,255,20,.6); }
+  .dot.warn { background:var(--warn); box-shadow:0 0 8px rgba(255,176,32,.6); }
+  .dot.bad { background:var(--bad); box-shadow:0 0 8px rgba(255,65,54,.6); }
+  .overall b { font-weight:600; letter-spacing:.04em; }
+  .overall .age { color:var(--muted); margin-left:auto; font-size:11px; }
+  main { padding:18px 22px 40px; display:grid; gap:14px; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:5px; padding:12px 14px; }
+  .card.wide { grid-column:1 / -1; }
+  .card h2 { margin:0 0 10px; font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); display:flex; align-items:center; gap:8px; }
+  .card h2 .dot { width:8px; height:8px; flex-basis:8px; }
+  .row { display:flex; justify-content:space-between; gap:10px; padding:4px 0; border-bottom:1px solid rgba(255,255,255,.04); }
+  .row:last-child { border-bottom:0; }
+  .row .k { color:var(--muted); }
+  .row .v { font-variant-numeric:tabular-nums; text-align:right; }
+  .row .v.ok { color:var(--ok); } .row .v.warn { color:var(--warn); } .row .v.bad { color:var(--bad); }
+  .why { margin-top:8px; padding:8px 10px; background:rgba(196,164,74,.06); border-left:3px solid var(--gold-dim); color:var(--muted); font-size:11px; line-height:1.5; }
+  .why b { color:var(--text); font-weight:500; }
+  .bars { display:flex; align-items:flex-end; gap:3px; height:54px; margin-top:8px; }
+  .bars .b { flex:1; background:var(--gold); min-height:2px; position:relative; }
+  .bars .b.we { background:var(--gold-dim); }
+  .bars .b.gap { background:var(--bad); }
+  .bars .b span { position:absolute; bottom:-16px; left:0; right:0; text-align:center; font-size:8px; color:var(--dim); }
+  .procs { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px,1fr)); gap:8px; }
+  .proc { border:1px solid var(--border); border-radius:4px; padding:8px; }
+  .proc .n { font-weight:600; font-size:12px; margin-bottom:4px; display:flex; align-items:center; gap:6px; }
+  .proc .m { color:var(--muted); font-size:11px; }
+  .acct { display:flex; gap:8px; align-items:center; padding:5px 0; border-bottom:1px solid rgba(255,255,255,.04); flex-wrap:wrap; }
+  .acct:last-child { border-bottom:0; }
+  .badge { border:1px solid var(--border); border-radius:2px; padding:0 6px; font-size:10px; letter-spacing:.06em; color:var(--muted); }
+  .badge.on { color:var(--ok); border-color:rgba(57,255,20,.3); }
+  .badge.hold { color:var(--warn); border-color:rgba(255,176,32,.35); }
+  .badge.kill { color:var(--bad); border-color:rgba(255,65,54,.35); }
+  .err { padding:22px; color:var(--bad); }
+  .foot { padding:0 22px 30px; color:var(--dim); font-size:10px; line-height:1.6; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Sync Health</h1>
+  <span class="sub">Davidson County detainer warrants · CaseLink → Eviction Overwatch</span>
+  <span class="sp"></span>
+  <a href="./">← tracker</a>
+</header>
+<div class="overall"><div class="dot" id="o-dot"></div><b id="o-text">loading…</b><span class="age" id="o-age"></span></div>
+<main id="main"></main>
+<div class="foot" id="foot"></div>
+<script>
+const SYNC_URL = 'https://n8n.intelechia.com/live/sync';
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = n => n == null ? '—' : Number(n).toLocaleString();
+const ago = s => s == null ? '—' : s < 90 ? `${s}s ago` : s < 5400 ? `${Math.round(s/60)}m ago` : `${(s/3600).toFixed(1)}h ago`;
+const secsSince = iso => { if (!iso) return null; const t = Date.parse(iso.replace(' ', 'T')); return isNaN(t) ? null : Math.max(0, Math.round((Date.now() - t) / 1000)); };
+
+// Every judgement below is a threshold on a MEASURED quantity, and the card
+// says which quantity and why. Process liveness alone is never trusted: the
+// August outage sat "online" in pm2 for six days while delivering nothing.
+function grade(d) {
+  const p = d.primary || {}, s = d.sweep || {}, data = d.data || {}, feed = d.feed || {};
+  const procs = Object.fromEntries((d.processes || []).map(x => [x.name, x]));
+  const g = {};
+
+  // Primary: last completed cycle within ~2 cycles (cycles run ~26 min)
+  const cyc = secsSince(p.last_cycle_at);
+  g.primary = cyc == null ? 'bad' : cyc < 3600 ? 'ok' : cyc < 7200 ? 'warn' : 'bad';
+  if (procs.caselink && procs.caselink.status !== 'online') g.primary = 'bad';
+  if ((p.logins_failed_recent || 0) >= 3) g.primary = 'bad';
+
+  // Discovery: newest filing we hold vs today (weekends tolerated)
+  const newest = data.newest_file_date ? new Date(data.newest_file_date + 'T12:00:00') : null;
+  const daysOld = newest ? Math.floor((Date.now() - newest.getTime()) / 86400000) : null;
+  g.discovery = daysOld == null ? 'bad' : daysOld <= 1 ? 'ok' : daysOld <= 3 ? 'warn' : 'bad';
+  if ((data.gaps || []).length) g.discovery = 'bad';
+
+  // Sweep: produced a window recently, or holds a claim
+  const sw = secsSince(s.last_window_at);
+  g.sweep = sw == null ? 'warn' : sw < 900 ? 'ok' : sw < 3600 ? 'warn' : 'bad';
+  if ((s.drops_waiting || 0) > 400) g.sweep = 'warn';
+
+  // Feed: last forwarded line from the primary
+  const fl = feed.seconds_since_line ? feed.seconds_since_line.primary : null;
+  g.feed = fl == null ? 'bad' : fl < 300 ? 'ok' : fl < 1200 ? 'warn' : 'bad';
+  if (procs['live-stream'] && procs['live-stream'].status !== 'online') g.feed = 'bad';
+
+  // Snapshot served to the app: rewritten every cycle
+  const sa = (d.snapshot || {}).age_seconds;
+  g.snapshot = sa == null ? 'bad' : sa < 2700 ? 'ok' : sa < 5400 ? 'warn' : 'bad';
+
+  const order = ['bad', 'warn', 'ok'];
+  const worst = Object.values(g).sort((a, b) => order.indexOf(a) - order.indexOf(b))[0] || 'bad';
+  return { g, worst, cyc, daysOld, sw, fl, sa };
+}
+
+function card(title, state, rows, why, extraHtml) {
+  return `<div class="card">
+    <h2><span class="dot ${state}"></span>${esc(title)}</h2>
+    ${rows.map(([k, v, cls]) => `<div class="row"><span class="k">${esc(k)}</span><span class="v ${cls || ''}">${v}</span></div>`).join('')}
+    ${extraHtml || ''}
+    ${why ? `<div class="why">${why}</div>` : ''}
+  </div>`;
+}
+
+function render(d) {
+  const { g, worst, cyc, daysOld, sw, fl, sa } = grade(d);
+  const p = d.primary || {}, s = d.sweep || {}, data = d.data || {}, feed = d.feed || {};
+  document.getElementById('o-dot').className = 'dot ' + worst;
+  document.getElementById('o-text').textContent =
+    worst === 'ok' ? 'ALL SYSTEMS SYNCING' : worst === 'warn' ? 'DEGRADED — see cards' : 'ATTENTION NEEDED';
+  document.getElementById('o-age').textContent = `measured ${esc(d.now || '')}`;
+
+  const cards = [];
+
+  cards.push(card('Discovery · are new filings arriving?', g.discovery, [
+    ['newest filing held', esc(data.newest_file_date || '—'), g.discovery],
+    ['age', daysOld == null ? '—' : `${daysOld} day${daysOld === 1 ? '' : 's'}`],
+    ['filed today (so far)', fmt(data.today_so_far)],
+    ['weekday gaps, last 14d', (data.gaps || []).length ? esc(data.gaps.join(', ')) : 'none', (data.gaps || []).length ? 'bad' : 'ok'],
+  ], `Judged on the <b>newest file_date we hold</b> and on <b>any weekday with zero filings</b> in the last 14 days. Weekends sit near zero by nature and are not counted.`,
+    `<div class="bars">${(data.days || []).map(x => {
+      const max = Math.max(1, ...(data.days || []).map(y => y.n));
+      const h = Math.max(2, Math.round(50 * x.n / max));
+      const cls = x.weekend ? 'we' : (x.n === 0 ? 'gap' : '');
+      return `<div class="b ${cls}" style="height:${h}px" title="${esc(x.date)} ${esc(x.dow)}: ${x.n} filings"><span>${esc(x.dow[0])}</span></div>`;
+    }).join('')}</div><div style="height:14px"></div>`));
+
+  cards.push(card('Primary · EPSILON enrichment', g.primary, [
+    ['last cycle completed', cyc == null ? '—' : ago(cyc), g.primary],
+    ['cycle length', p.last_cycle_seconds ? `${Math.round(p.last_cycle_seconds / 60)} min` : '—'],
+    ['cases held', fmt(p.total)],
+    ['open (PENDING)', fmt(p.pending)],
+    ['enrichment backlog', fmt(p.job3_backlog), (p.job3_backlog || 0) > 3000 ? 'warn' : ''],
+    ['cases drilled, last hour', fmt(p.cases_last_hour)],
+    ['addresses extracted, last hour', fmt(p.addresses_last_hour)],
+    ['failed logins, recent', fmt(p.logins_failed_recent), (p.logins_failed_recent || 0) >= 3 ? 'bad' : ''],
+  ], `Judged on <b>time since the last CYCLE COMPLETE</b> (cycles run ~26 min) and on <b>failed-login lines</b> — the signal that was missing when a wrong password ran for six days looking healthy.`));
+
+  cards.push(card('Status sweep · SIGMA / ALPHA', g.sweep, [
+    ['last window swept', sw == null ? '—' : ago(sw), g.sweep],
+    ['pass', fmt(s.pass)],
+    ['windows swept / total', `${fmt(s.windows_swept)} / ${fmt(s.windows_total)}`],
+    ['skipped (all cases closed)', fmt(s.windows_skipped_closed)],
+    ['statuses observed this pass', fmt(s.statuses_observed)],
+    ['drops waiting for merge', fmt(s.drops_waiting), (s.drops_waiting || 0) > 400 ? 'warn' : ''],
+    ['open cases per index', s.pending_index ? fmt(s.pending_index.open_total) : '—'],
+    ['claims held', (s.claims_open || []).length ? esc(s.claims_open.join(', ')) : 'none'],
+  ], `The sweep re-reads the results grid backwards through history, a few hundred statuses per search. Judged on <b>time since a window was completed</b>. A merge is the primary's job; drops piling up means the primary is not consuming them.`));
+
+  // The backlog, counted from the records themselves — not from any queue,
+  // which can be empty while the work is not done.
+  const bl = data.backlog || {};
+  const st = bl.pending_status_stale || {};
+  cards.push(card('Backlog · what still needs doing', (bl.need_status_update || 0) > 2000 || (bl.no_address_reachable || 0) > 40000 ? 'warn' : 'ok', [
+    ['open cases needing a status update (>7d)', fmt(bl.need_status_update), (bl.need_status_update || 0) > 2000 ? 'warn' : 'ok'],
+    ['  checked within 7 days', fmt(st['<=7d']), 'ok'],
+    ['  8–30 days stale', fmt(st['8-30d'])],
+    ['  31–90 days stale', fmt(st['31-90d']), (st['31-90d'] || 0) ? 'warn' : ''],
+    ['  over 90 days stale', fmt(st['>90d']), (st['>90d'] || 0) ? 'bad' : ''],
+    ['  never checked', fmt(st['never']), (st['never'] || 0) ? 'bad' : ''],
+    ['never enriched at all', fmt(bl.never_enriched), (bl.never_enriched || 0) ? 'warn' : 'ok'],
+    ['flagged for re-drill (status changed)', fmt(bl.flagged_for_redrill)],
+    ['no address, still reachable', fmt(bl.no_address_reachable), (bl.no_address_reachable || 0) > 40000 ? 'warn' : ''],
+    ['no address, tried 3× (unfindable)', fmt(bl.address_unfindable)],
+  ], `<b>Status</b>: an open case is "stale" by the age of its last confirmed check — the sweep clears these a few hundred at a time. <b>Enrichment</b>: "no address, still reachable" is the tier-4 pool the primary works after flagged work, at ~40s a case; that number is the honest size of the address gap.`));
+
+  cards.push(card('Last merge · sweep → primary', p.last_merge ? 'ok' : 'warn', p.last_merge ? [
+    ['drops merged', fmt(p.last_merge.drops)],
+    ['observations', fmt(p.last_merge.observations)],
+    ['status changes found', fmt(p.last_merge.status_changes), p.last_merge.status_changes ? 'ok' : ''],
+    ['new dockets', fmt(p.last_merge.new)],
+  ] : [['no merge in the retained log', '—', 'warn']],
+  `Each status change here is a case whose status moved and nobody knew. A run of zeros on a healthy sweep means the backlog has caught up, not that it stopped.`));
+
+  cards.push(card('Served snapshot · what the app reads', g.snapshot, [
+    ['rewritten', sa == null ? '—' : ago(sa), g.snapshot],
+    ['size', (d.snapshot || {}).bytes ? `${((d.snapshot.bytes) / 1048576).toFixed(1)} MB` : '—'],
+    ['cases', fmt(data.total)],
+    ['with an address', `${fmt(data.with_address)} (${data.address_pct == null ? '—' : data.address_pct + '%'})`, (data.address_pct || 0) < 50 ? 'warn' : ''],
+    ['flagged for enrichment', fmt(data.flagged_for_enrichment)],
+  ], `Rewritten at the end of every cycle. If this goes stale while the primary looks alive, the primary is looping without completing.`));
+
+  cards.push(card('Live feed', g.feed, [
+    ['last line from primary', fl == null ? 'never' : ago(fl), g.feed],
+    ...Object.entries(feed.seconds_since_line || {}).filter(([w]) => w !== 'primary').map(([w, t]) => [`last line from ${w}`, ago(t)]),
+    ['viewers connected', fmt(feed.clients)],
+  ], `Judged on <b>time since the tailer forwarded a line</b>, not on whether the page shows text — the feed went silent at midnight after log rotation while still replaying an old backlog on connect.`));
+
+  // processes + accounts, full width
+  const procs = (d.processes || []);
+  cards.push(`<div class="card wide"><h2>Processes</h2><div class="procs">${procs.map(x => `
+    <div class="proc"><div class="n"><span class="dot ${x.status === 'online' ? 'ok' : x.status === 'stopped' ? 'warn' : 'bad'}"></span>${esc(x.name)}</div>
+    <div class="m">${esc(x.status)} · up ${x.uptime_seconds != null ? ago(x.uptime_seconds).replace(' ago','') : '—'} · ${fmt(x.restarts)} restarts · ${x.memory_mb} MB</div></div>`).join('')}</div>
+    <div class="why">Online is <b>necessary, not sufficient</b>: every card above judges on what the process actually produced.</div></div>`);
+
+  const accts = d.accounts || [];
+  cards.push(`<div class="card wide"><h2>Accounts</h2>${accts.map(a => {
+    const badges = [];
+    if (a.killswitch) badges.push('<span class="badge kill">killswitch</span>');
+    if (a.cooling) badges.push(`<span class="badge hold">cooling until ${esc((a.cooldown_until||'').slice(11,16))}Z</span>`);
+    if (a.leased) badges.push(`<span class="badge ${a.lease_alive ? 'on' : 'kill'}">${a.lease_alive ? 'in use' : 'STALE LEASE'}</span>`);
+    if (a.hours_ct) badges.push(`<span class="badge">${esc(a.hours_ct[0])}:00–${esc(a.hours_ct[1])}:00 CT only</span>`);
+    if (a.shared) badges.push('<span class="badge hold">shared with a person</span>');
+    return `<div class="acct"><b style="min-width:70px">${esc(a.alias)}</b><span class="badge">${esc((a.roles||[]).join('/'))}</span>${badges.join('')}<span style="margin-left:auto;color:var(--muted);font-size:11px">last ${esc(a.last_result||'—')} ${a.last_try ? ago(secsSince(a.last_try)) : ''}</span></div>`;
+  }).join('')}<div class="why">One process per account, enforced by a pid-checked lease. A <b>stale lease</b> means a worker died holding it and the next one will reclaim it.</div></div>`);
+
+  document.getElementById('main').innerHTML = cards.join('');
+  document.getElementById('foot').innerHTML =
+    `Source: <code>${esc(SYNC_URL)}</code>, computed on the VM from its own logs and files. Snapshot figures are cached ten minutes. Refreshes every 60s.`;
+}
+
+async function load() {
+  try {
+    const r = await fetch(SYNC_URL, { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    render(await r.json());
+  } catch (e) {
+    document.getElementById('o-dot').className = 'dot bad';
+    document.getElementById('o-text').textContent = 'CANNOT REACH THE VM';
+    document.getElementById('main').innerHTML = `<div class="err">${esc(e.message)} — the health endpoint on the VM is not answering. That is itself a finding: the feed server is down or the VM is unreachable.</div>`;
+  }
+}
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>

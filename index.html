@@ -1195,6 +1195,11 @@ tr:nth-child(even) td { background: rgba(var(--wash-rgb),0.015); }
 }
 .live-status.err { color: #ff4136; text-shadow: 0 0 4px rgba(255,65,54,0.5); }
 .live-meta { margin-left: auto; font-size: 11px; color: #2f6b2f; }
+.live-health-link {
+  font-family: var(--mono); font-size: 11px; color: #7dff5c; text-decoration: none;
+  border: 1px solid #1f5c1f; border-radius: 3px; padding: 1px 8px; margin-left: 10px;
+}
+.live-health-link:hover { background: #0c1f0c; }
 .live-redact-note {
   font-size: 10px; color: #2f6b2f; margin-left: 12px;
 }
@@ -2668,6 +2673,7 @@ body.narrow-chat #stats-row { display: none; }
       <div class="live-dot" id="live-dot"></div>
       <span class="live-status" id="live-status">disconnected</span>
       <span class="live-redact-note">defendant names auto-redacted</span>
+      <a class="live-health-link" href="health.html" target="_blank" rel="noopener" title="Health of the whole sync: discovery, primary, sweep, feed, backlog">sync health ↗</a>
       <span class="live-meta" id="live-meta"></span>
     </div>
     <div class="live-rate" id="live-rate" style="display:none"></div>
