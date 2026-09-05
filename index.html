@@ -9459,12 +9459,22 @@ function escCloseLandlordProfile(e) {
    "updated" timestamp) — so a hardcoded `calc(100vh - Npx)` drifts out of
    sync with the real chrome as soon as either does. Measure it instead: only
    when the tab is actually visible, since a hidden element's own top is 0. */
+let chatSizePending = false;
 function sizeChatView() {
-  const el = document.getElementById('chat-view');
-  if (!el || el.style.display === 'none') return;
-  const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
-  const top = el.getBoundingClientRect().top;
-  el.style.height = Math.max(480, vh - top - 24) + 'px';
+  if (chatSizePending) return;
+  chatSizePending = true;
+  // Measured on the next frame, not now: the same tick that shows the tab
+  // also adds body.narrow-chat, which hides the case-table controls above the
+  // conversation. Measured synchronously, the controls were still there —
+  // 678px of chrome instead of 150 — and the conversation got its floor.
+  requestAnimationFrame(() => {
+    chatSizePending = false;
+    const el = document.getElementById('chat-view');
+    if (!el || el.style.display === 'none') return;
+    const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+    const top = el.getBoundingClientRect().top;
+    el.style.height = Math.max(480, vh - top - 24) + 'px';
+  });
 }
 window.addEventListener('resize', sizeChatView);
 if (window.visualViewport) window.visualViewport.addEventListener('resize', sizeChatView);
