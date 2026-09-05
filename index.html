@@ -1973,6 +1973,14 @@ body.narrow-chat #stats-row { display: none; }
 /* An inline chip sits inside a sentence, so it must not fight the prose. */
 .chat-msg .bubble .span-chip { margin-left: 3px; padding: 1px 4px; }
 .prov-note { font-size: 9px; color: var(--dim); font-style: italic; }
+/* The answer's own line: what was matched and its timeframe, always shown —
+   see chatCollapseFooter. Everything else (citations, the reading steps,
+   the export buttons) moves into the <details> right after it. */
+.prov-note-line {
+  display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline;
+  margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--surface);
+}
+.prov-note-line .prov-note { font-style: normal; }
 
 /* Returned data you can press. Sized to sit inside a table cell without
    turning the card into a wall of buttons. */
@@ -11847,19 +11855,25 @@ const chatEvidenceWords = (re, text) => {
    Every question this tab reads becomes a short pipeline of operator acts —
    the same acts the reading log records — and that pipeline is shown under
    the question, so what was read is never a guess: which party, which
-   filing dates, which rows, which move. The notation is the one on record
-   for EOQL: operator(target, operand), commas between arguments, acts joined
-   by → into a pipeline (eo-historian, 2026-03-09 and 2026-03-11). It reads
-   as well as it writes: a pipeline typed into the box is run as written,
-   so a reading that came out wrong can be corrected by hand and re-asked.
+   filing dates, which rows, which move. Prefix, the way EOQL is on record
+   as being (eo-historian, 2026-03-09: "operator pipelines... not JOINs"):
+   operator first, then its words, no parens, no commas, no quotes needed
+   (2026-09-05). It nests without them the way prefix notation always does —
+   an act's argument runs until the NEXT operator keyword starts, however far
+   that is, so → between acts is punctuation now, not something the parser
+   needs; "SEG last 6 months DEF landlord MDHA" is two acts with nothing
+   between them. It reads as well as it writes: a pipeline typed into the
+   box is run as written, so a reading that came out wrong can be corrected
+   by hand and re-asked. The old operator(a, b) form still parses.
 
-     SEG(filed, 2025-01-01..2025-12-31)     the filing dates counted (the scope)
-     DEF(landlord, "MDHA")                  the party; CON(attorney, "…") a second
-     SIG(landlords) → SEG(rows, unrepresented)   a roster, and which rows it counts
-     SIG(rank) · SEG(by, district) · REC(by, month) · CON(meet) · EVA(rate)   the move
-     REC(trend, districts) · REC(forecast, tracts) · SYN(groups, districts)
-     EVA(measure, "filings / population * 1000")
-     NUL(duration)                          what the record cannot answer      */
+     SEG filed 2025-01-01..2025-12-31        the filing dates counted (the scope)
+     DEF landlord MDHA                       the party; CON attorney … a second;
+                                              the kind word is optional either way
+     SIG landlords → SEG rows unrepresented  a roster, and which rows it counts
+     SIG rank · SEG by district · REC by month · CON meet · EVA rate   the move
+     REC trend districts · REC forecast tracts · SYN groups districts
+     EVA measure filings / population * 1000
+     NUL duration                            what the record cannot answer      */
 
 const CHAT_EOQL_OPS = ['NUL', 'SIG', 'INS', 'SEG', 'CON', 'SYN', 'DEF', 'EVA', 'REC'];
 const CHAT_EOQL_PLURAL = { landlord: 'landlords', attorney: 'attorneys', defender: 'defenders', district: 'districts' };
@@ -11911,30 +11925,73 @@ function chatParseSpan(s) {
 
 const chatEoqlSpan = (scope) => `${scope.from ? chatDate(scope.from) : ''}..${scope.to ? chatDate(scope.to) : ''}`;
 
-/* Is this text a pipeline? It starts with an operator name, followed by its
-   arguments, an arrow, or nothing. A leading `>>` is allowed and ignored. */
+/* Where does one act end and the next begin? By the next operator KEYWORD —
+   not by an arrow. → / -> / |> / a newline still work when typed, but they're
+   punctuation now, not what the parser depends on: "SEG last 6 months DEF
+   landlord MDHA" is two acts with nothing between them, found by scanning
+   for the next of the nine words. This is what lets it nest without parens
+   the way prefix notation does elsewhere — an operator's argument runs
+   until the next operator starts, however long that takes, so an act never
+   has to say where its own words stop.
+
+   The one thing this costs: a name that happens to spell an operator
+   ("AVANA REC APARTMENTS") would be misread as two acts. Quoting it is the
+   escape — a quoted span is opaque to this scan even though the letters
+   inside it are the same, which is also why quoting the WHOLE of an act's
+   argument turns off the optional leading keyword (DEF's kind word, SEG's
+   filed/by/rows): a quoted argument means "this exact text," full stop. */
+function chatEoqlUnquote(s) {
+  const t = String(s || '').trim();
+  return t.length >= 2 && t[0] === '"' && t[t.length - 1] === '"' ? t.slice(1, -1) : t;
+}
+
+function chatEoqlSplitActs(text) {
+  const opRe = /"[^"]*"|\b(NUL|SIG|INS|SEG|CON|SYN|DEF|EVA|REC)\b/gi;
+  const marks = [];
+  let m;
+  while ((m = opRe.exec(text))) if (m[1]) marks.push({ start: m.index, end: opRe.lastIndex, op: m[1].toUpperCase() });
+  if (!marks.length) return null;
+  return marks.map((mk, i) => ({
+    op: mk.op,
+    // An explicit arrow can land anywhere in this slice — trailing, if it's
+    // the one that led into the NEXT act's mark, not just leading — so
+    // every occurrence is scrubbed, not just one anchored at the start.
+    rest: text.slice(mk.end, i + 1 < marks.length ? marks[i + 1].start : text.length)
+      .replace(/→|->|\|>/g, ' ').replace(/\s+/g, ' ').trim(),
+  }));
+}
+
 function chatParseEoql(text) {
-  let t = String(text || '').trim().replace(/^>>\s*/, '');
-  if (!/^(NUL|SIG|INS|SEG|CON|SYN|DEF|EVA|REC)\s*(\(|$|→|->|\|>)/i.test(t)) return null;
-  const segments = t.split(/\s*(?:→|->|\|>)\s*/).filter(Boolean);
-  const steps = [];
-  for (const seg of segments) {
-    const m = seg.match(/^([A-Za-z]{3})\s*(?:\(([\s\S]*)\))?\s*$/);
-    if (!m) return { error: `“${seg}” is not an act — expected operator(target, operand)` };
-    const op = m[1].toUpperCase();
-    if (!CHAT_EOQL_OPS.includes(op)) return { error: `${op} is not one of the nine operators: ${CHAT_EOQL_OPS.join(', ')}` };
-    // Arguments split on commas outside quotes; quotes stripped.
-    const args = [];
-    let cur = '', inQ = false;
-    for (const ch of (m[2] || '')) {
-      if (ch === '"') { inQ = !inQ; continue; }
-      if (ch === ',' && !inQ) { args.push(cur.trim()); cur = ''; continue; }
-      cur += ch;
+  const raw = String(text || '').trim().replace(/^>>\s*/, '');
+  if (!raw || !/^(NUL|SIG|INS|SEG|CON|SYN|DEF|EVA|REC)\b/i.test(raw)) return null;
+  const acts = chatEoqlSplitActs(raw);
+  if (!acts) return null;
+  const steps = acts.map(({ op, rest }) => {
+    let args;
+    if (rest.startsWith('(') && rest.endsWith(')')) {
+      // The old operator(a, b) form: commas split outside quotes, quotes stripped.
+      args = []; let cur = '', inQ = false;
+      for (const ch of rest.slice(1, -1)) {
+        if (ch === '"') { inQ = !inQ; continue; }
+        if (ch === ',' && !inQ) { args.push(cur.trim()); cur = ''; continue; }
+        cur += ch;
+      }
+      if (cur.trim() || args.length) args.push(cur.trim());
+      args = args.filter(a => a !== '');
+    } else if (!rest) {
+      args = [];
+    } else if (rest.length >= 2 && rest[0] === '"' && rest[rest.length - 1] === '"') {
+      args = [chatEoqlUnquote(rest)];
+    } else {
+      // Prefix: the first word, then everything else as one argument — the
+      // interpreter below decides whether that first word is a real keyword
+      // for this operator or the start of a name that was never marked off.
+      const sp = rest.match(/^(\S+)\s+([\s\S]+)$/);
+      args = sp ? [sp[1], chatEoqlUnquote(sp[2])] : [rest];
     }
-    if (cur.trim() || args.length) args.push(cur.trim());
-    steps.push({ op, args: args.filter(a => a !== ''), text: seg.trim() });
-  }
-  return steps.length ? { steps } : null;
+    return { op, args, text: `${op} ${rest}`.trim() };
+  });
+  return { steps };
 }
 
 /* Which party a name means — exactly that name of that kind, else what the
@@ -11972,23 +12029,34 @@ function chatReadingFromEoql(parsed, q) {
     const [a0, a1] = s.args;
     const t0 = String(a0 || '').toLowerCase();
     if (s.op === 'SEG') {
-      if (['filed', 'date', 'dates', 'time', 'when', 'span'].includes(t0)) {
+      const whole = s.args.join(' ');
+      if (!whole) {
+        r.move = moveOf('SEG');
+        step({ op: 'SEG', grain: 'Pattern', basis: B.DECLARED, what: 'what to do', from: [s.text], result: r.move.say });
+      } else if (['filed', 'date', 'dates', 'time', 'when', 'span'].includes(t0) && a1) {
         const sc = chatParseSpan(a1);
         if (!sc) { r.error = `“${a1}” is not a span of filing dates — try 2025, 2022..2024, 2024-03-01.., or last 6 months`; break; }
         r.scope = sc;
         step({ op: 'SEG', grain: 'Ground', basis: B.DECLARED, what: 'timeframe asked', from: [s.text], result: sc.says });
-      } else if (t0 === 'by') {
+      } else if (t0 === 'by' && a1) {
         r.move = /month|time|year/.test(String(a1).toLowerCase()) ? moveOf('REC') : moveOf('SEG');
         step({ op: r.move.op, grain: 'Pattern', basis: B.DECLARED, what: 'what to do', from: [s.text], result: r.move.say });
-      } else if (['rows', 'cases', 'filings', 'where', 'filter'].includes(t0) || (t0 && !a1)) {
-        const id = String(a1 || a0).toLowerCase();
-        const f = CHAT_ROSTER_FILTERS.find(x => x.id === id) || CHAT_ROSTER_FILTERS.find(x => x.words.test(id));
-        if (!f) { r.error = `“${id}” names no filter — the rows can be: ${CHAT_ROSTER_FILTERS.map(x => x.id).join(', ')}`; break; }
+      } else if (['rows', 'cases', 'filings', 'where', 'filter'].includes(t0) && a1) {
+        const f = CHAT_ROSTER_FILTERS.find(x => x.id === a1.toLowerCase()) || CHAT_ROSTER_FILTERS.find(x => x.words.test(a1));
+        if (!f) { r.error = `“${a1}” names no filter — the rows can be: ${CHAT_ROSTER_FILTERS.map(x => x.id).join(', ')}`; break; }
         r.filter = f;
         step({ op: 'SEG', grain: 'Ground', basis: B.DECLARED, what: 'which filings to count', from: [s.text], result: f.say });
       } else {
-        r.move = moveOf('SEG');
-        step({ op: 'SEG', grain: 'Pattern', basis: B.DECLARED, what: 'what to do', from: [s.text], result: r.move.say });
+        /* No keyword in front to say which SEG this is — "SEG last 6 months"
+           left off "filed", "SEG unrepresented" left off "rows". Both are
+           common enough typed cold that guessing is worth it: try the whole
+           phrase as a filter, then as a span, before falling back to the
+           breakdown move that a bare SEG defaults to. */
+        const f = CHAT_ROSTER_FILTERS.find(x => x.id === whole.toLowerCase()) || CHAT_ROSTER_FILTERS.find(x => x.words.test(whole));
+        const sc = !f ? chatParseSpan(whole) : null;
+        if (f) { r.filter = f; step({ op: 'SEG', grain: 'Ground', basis: B.DECLARED, what: 'which filings to count', from: [s.text], result: f.say }); }
+        else if (sc) { r.scope = sc; step({ op: 'SEG', grain: 'Ground', basis: B.DECLARED, what: 'timeframe asked', from: [s.text], result: sc.says }); }
+        else { r.move = moveOf('SEG'); step({ op: 'SEG', grain: 'Pattern', basis: B.DECLARED, what: 'what to do', from: [s.text], result: r.move.say }); }
       }
     } else if (s.op === 'DEF' || s.op === 'CON') {
       if (!s.args.length) {
@@ -11996,10 +12064,12 @@ function chatReadingFromEoql(parsed, q) {
         step({ op: s.op, grain: 'Pattern', basis: B.DECLARED, what: 'what to do', from: [s.text], result: r.move.say });
         continue;
       }
-      const kind = a1 !== undefined ? (CHAT_EOQL_KIND[t0] || null) : null;
-      if (a1 !== undefined && !kind) { r.error = `“${a0}” is not a kind of party — landlord, attorney, defender or district`; break; }
-      const name = a1 !== undefined ? a1 : a0;
-      const e = chatEntityNamed(kind, name);
+      /* The kind word is optional: "DEF landlord MDHA" and "DEF MDHA" both
+         resolve, because a first word that isn't a real kind is the start
+         of a name nobody marked off, not a mistake to reject. */
+      const kind = a1 !== undefined ? CHAT_EOQL_KIND[t0] : null;
+      const name = (a1 !== undefined && kind) ? a1 : s.args.join(' ');
+      const e = chatEntityNamed(kind || null, name);
       if (!e) { r.error = `no ${kind || 'party'} named “${name}” is on this docket — type / to see who is`; break; }
       const isBest = !r.named.some(x => x.best);
       r.named.push({ entity: e, score: 1, on: e.nameTokens.slice(), best: isBest, tied: false });
@@ -12064,27 +12134,26 @@ function chatReadingFromEoql(parsed, q) {
 /* The pipeline a reading amounts to. Shown under every question. */
 function chatEoqlOf(reading) {
   if (!reading) return '';
-  const qt = (s) => `"${String(s).replace(/"/g, '\\"')}"`;
   const steps = [];
   const named = reading.named || [], intents = reading.intents || [];
   const best = named.find(n => n.best);
   const partner = best ? named.find(n => !n.best && !n.tied && n.entity !== best.entity && !n.on.every(t => best.on.includes(t))) : null;
   const roster = intents.includes('roster') && reading.kindDef && !best;
-  if (reading.scope) steps.push(`SEG(filed, ${chatEoqlSpan(reading.scope)})`);
-  if (roster) steps.push(`SIG(${CHAT_EOQL_PLURAL[reading.kindDef.kind]})`);
-  if (reading.filter) steps.push(`SEG(rows, ${reading.filter.id})`);
-  if (best) steps.push(`DEF(${best.entity.kind}, ${qt(best.entity.name)})`);
-  if (partner) steps.push(`CON(${partner.entity.kind}, ${qt(partner.entity.name)})`);
+  if (reading.scope) steps.push(`SEG filed ${chatEoqlSpan(reading.scope)}`);
+  if (roster) steps.push(`SIG ${CHAT_EOQL_PLURAL[reading.kindDef.kind]}`);
+  if (reading.filter) steps.push(`SEG rows ${reading.filter.id}`);
+  if (best) steps.push(`DEF ${best.entity.kind} ${best.entity.name}`);
+  if (partner) steps.push(`CON ${partner.entity.kind} ${partner.entity.name}`);
   const g = reading.grain === 'tract' ? 'tracts' : 'districts';
-  if (intents.includes('forecast')) steps.push(`REC(forecast, ${g})`);
-  else if (intents.includes('grouping')) steps.push(`SYN(groups, ${g})`);
-  else if (reading.grain && !best) steps.push(`REC(trend, ${g})`);
-  if (intents.includes('ratio')) steps.push(reading.expression ? `EVA(measure, ${qt(reading.expression)})` : 'EVA(measure)');
+  if (intents.includes('forecast')) steps.push(`REC forecast ${g}`);
+  else if (intents.includes('grouping')) steps.push(`SYN groups ${g}`);
+  else if (reading.grain && !best) steps.push(`REC trend ${g}`);
+  if (intents.includes('ratio')) steps.push(reading.expression ? `EVA measure ${reading.expression}` : 'EVA measure');
   const op = reading.move && reading.move.op;
   if (op && op !== 'DEF' && !roster && !intents.includes('forecast') && !intents.includes('grouping') && !intents.includes('ratio'))
-    steps.push({ SIG: 'SIG(rank)', SEG: 'SEG(by, district)', REC: 'REC(by, month)', CON: 'CON(meet)', EVA: 'EVA(rate)' }[op] || `${op}()`);
-  for (const v of reading.voids || []) steps.push(`NUL(${v.id})`);
-  if (!steps.length) steps.push(best ? 'DEF()' : 'NUL(unread)');
+    steps.push({ SIG: 'SIG rank', SEG: 'SEG by district', REC: 'REC by month', CON: 'CON meet', EVA: 'EVA rate' }[op] || op);
+  for (const v of reading.voids || []) steps.push(`NUL ${v.id}`);
+  if (!steps.length) steps.push(best ? 'DEF' : 'NUL unread');
   return steps.join(' → ');
 }
 
@@ -12092,7 +12161,9 @@ function chatEoqlOf(reading) {
 function chatEoqlSays(reading) {
   const parts = [];
   if (reading.scope) parts.push(reading.scope.says);
-  if (reading.kindDef && (reading.intents || []).includes('roster')) parts.push(reading.kindDef.plural + (reading.filter ? `, ${reading.filter.say}` : ''));
+  const rosterLine = reading.kindDef && (reading.intents || []).includes('roster');
+  if (rosterLine) parts.push(reading.kindDef.plural + (reading.filter ? `, ${reading.filter.say}` : ''));
+  else if (reading.filter) parts.push(`rows ${reading.filter.say}`);
   for (const n of reading.named || []) parts.push(`${n.entity.name} (${CHAT_KIND_LABEL[n.entity.kind] || n.entity.kind})`);
   if (reading.grain) parts.push(`${(reading.intents || []).includes('forecast') ? 'forecast' : (reading.intents || []).includes('grouping') ? 'groups' : 'trend'} by ${reading.grain}`);
   if (reading.expression) parts.push(`compute ${reading.expression}`);
@@ -13506,9 +13577,60 @@ function addChatMessage(role, html, provHtml) {
   div.className = 'chat-msg ' + role;
   const who = role === 'user' ? 'you' : role === 'error' ? 'error' : 'assistant · grounded in snapshot';
   div.innerHTML = `<div class="who">${who}</div><div class="bubble">${html}</div>${provHtml || ''}`;
+  chatCollapseFooter(div);
   screen.appendChild(div);
   screen.scrollTop = screen.scrollHeight;
   return div;
+}
+
+/* An answer should read as an answer first. `provHtml` above lands as up to
+   three sibling blocks — .prov-strip (the plain note + citation chips), the
+   reading's own <details>, and .export-strip (CSV/JSON, the derivation id,
+   the timeframe) — which used to sit stacked under the card as three open
+   rows. Folded here into one, at the single point every message already
+   passes through, so no caller changes: the note and the timeframe stay
+   visible (a proposition without its Ground isn't checkable — see
+   chatTimeframe), and citations, the reading steps and the export buttons
+   move into one disclosure right after it. */
+function chatCollapseFooter(div) {
+  const prov = div.querySelector(':scope > .prov-strip');
+  const reading = div.querySelector(':scope > .reading-audit');
+  const exportEl = div.querySelector(':scope > .export-strip');
+  if (!prov && !reading && !exportEl) return;
+  let anchor = div.querySelector(':scope > .bubble');
+
+  const noteEl = prov && prov.querySelector('.prov-note');
+  const tfEl = exportEl && exportEl.querySelector('.timeframe');
+  if (noteEl || tfEl) {
+    const line = document.createElement('div');
+    line.className = 'prov-note-line';
+    if (noteEl) line.appendChild(noteEl);
+    if (tfEl) line.appendChild(tfEl);
+    anchor.insertAdjacentElement('afterend', line);
+    anchor = line;
+  }
+
+  const details = document.createElement('details');
+  details.className = 'reading-audit';
+  const oldSummary = reading && reading.querySelector(':scope > summary');
+  const summary = document.createElement('summary');
+  summary.textContent = oldSummary ? oldSummary.textContent : 'Details';
+  details.appendChild(summary);
+  const cites = prov ? [...prov.querySelectorAll('.span-chip')] : [];
+  if (cites.length) {
+    const wrap = document.createElement('div');
+    wrap.className = 'prov-strip';
+    cites.forEach(c => wrap.appendChild(c));
+    details.appendChild(wrap);
+  }
+  if (reading) {
+    if (oldSummary) oldSummary.remove();
+    while (reading.firstChild) details.appendChild(reading.firstChild);
+    reading.remove();
+  }
+  if (exportEl) details.appendChild(exportEl);
+  if (prov) prov.remove();
+  anchor.insertAdjacentElement('afterend', details);
 }
 
 async function submitChat() {
