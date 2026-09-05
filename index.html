@@ -10290,7 +10290,7 @@ function entityProfileArtifact(e) {
   if (mm.length > 1) cells.push(['Busiest months', { links: mm.map(([k, v]) => ({ label: k, q: `${e.name} ${k}`, count: v })) }]);
   return {
     kind: 'table',
-    title: e.scoped && chatTurnScope ? `${e.name} — ${chatTurnScope.says}` : e.name,
+    title: e.scoped ? [e.name, chatTurnScope && chatTurnScope.says, chatTurnFilter && chatTurnFilter.say].filter(Boolean).join(' — ') : e.name,
     head: ['', ''],
     rows: cells.map(([k, v]) => ({ label: k, value: 0, cells: [k, v] })),
     ref: e.ref,
@@ -11404,7 +11404,7 @@ const CHAT_MEASURE_DEFS = {
 /* Walk the parsed expression and refuse anything that is not arithmetic over a
    declared measure. Done on the tree, not on the text, so no amount of
    quoting or spacing gets past it. */
-function chatVetExpression(math, expr, allowed) {
+function chatVetExpression(math, expr, allowed, noun = 'measure') {
   let node;
   try { node = math.parse(expr); }
   catch (e) { return { error: `that is not an expression I can read: ${e.message}` }; }
@@ -11422,8 +11422,88 @@ function chatVetExpression(math, expr, allowed) {
   });
   if (structural) return { error: structural };
   if (badFn.size) return { error: `not arithmetic I will run: ${[...badFn].join(', ')}` };
-  if (unknown.size) return { error: `there is no such measure in this record: ${[...unknown].join(', ')}`, unknown: [...unknown] };
+  if (unknown.size) return { error: `there is no such ${noun} in this record: ${[...unknown].join(', ')}`, unknown: [...unknown] };
   return { node };
+}
+
+/* ─── A filter written as a formula ────────────────────────────────────────
+   The measure layer above computes one number per district. This does the
+   other half of the same idea one level down: an expression over the fields
+   of a SINGLE CASE, evaluated per row, deciding which rows are in scope at
+   all. `SEG rows judgment > 5000 and represented == 0`.
+
+   The named filters (unrepresented, judgment, pending…) stay, because they
+   are what a person says out loud and they cannot be got subtly wrong. This
+   is for the ones nobody wrote a name for.
+
+   Same firewall as the measures, deliberately — `chatVetExpression` walks the
+   parsed tree and refuses assignment, indexing, property access, any function
+   off the arithmetic list, and any name that is not one of the fields below.
+   Nothing here is a string: every field is reduced to a number first, so a
+   quoted value can never reach the parser and the allowlist is the whole of
+   what an expression can touch.
+
+   Two spellings are translated in before parsing, because a formula is what
+   was asked for and this is what formulas look like: `&`/`|` for and/or, and
+   a lone `=` for equality — which mathjs would otherwise read as assignment
+   and the firewall would refuse. Dates are translated too: `3.23.24` is not
+   a number in any language, so date-shaped literals become the millisecond
+   they name, and `filed` carries the same units so the two compare. */
+const CHAT_ROW_FIELDS = {
+  filed: 'the filing date — compare it against a date, as in filed > 3.23.24',
+  judgment: 'the money judgment in dollars; 0 where none was recorded',
+  district: 'the council district number',
+  represented: '1 where an attorney appeared for the tenant, 0 where none did',
+  pending: '1 where the case is still open, 0 where it is closed',
+  closed: '1 where the case is closed, 0 where it is still open',
+};
+
+function chatRowValues(r) {
+  const amt = Number(r.judgment_amount);
+  const st = String(r.status || '').toUpperCase();
+  const d = chatDistrictNum(r.council_district);
+  return {
+    filed: parseUsDate(r.file_date),
+    judgment: Number.isFinite(amt) && amt > 0 ? amt : 0,
+    district: d ? +d : 0,
+    represented: String(r.Def_Attorney || '').trim() ? 1 : 0,
+    pending: st === 'PENDING' ? 1 : 0,
+    closed: st === 'CLOSED' ? 1 : 0,
+  };
+}
+
+function chatFilterSource(text) {
+  let s = String(text || '').trim();
+  s = s.replace(/&&|&/g, ' and ').replace(/\|\||\|/g, ' or ');
+  s = s.replace(/(^|[^<>!=])=(?!=)/g, '$1==');
+  s = s.replace(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/g, (_, y, mo, d) => String(new Date(+y, +mo - 1, +d).getTime()));
+  s = s.replace(/\b(\d{1,2})[./](\d{1,2})[./](\d{2,4})\b/g,
+    (_, mo, d, y) => String(new Date(+y < 100 ? 2000 + +y : +y, +mo - 1, +d).getTime()));
+  return s;
+}
+
+/* Does this text even want to be a formula? A comparison in it, and a name
+   this record actually holds — otherwise it is prose and belongs elsewhere. */
+function chatLooksLikeFilter(text) {
+  const t = String(text || '');
+  return /[<>]|=|\b(and|or)\b/.test(t) && Object.keys(CHAT_ROW_FIELDS).some(k => new RegExp(`\\b${k}\\b`, 'i').test(t));
+}
+
+async function chatRowFilter(expr) {
+  const math = await ensureChatMath();
+  const vet = chatVetExpression(math, chatFilterSource(expr), new Set(Object.keys(CHAT_ROW_FIELDS)), 'field');
+  if (vet.error) return { error: vet.error };
+  const code = vet.node.compile();
+  // Tried once here rather than in the loop: an expression that throws on a
+  // real row is refused now, so 78,000 evaluations need no guard each.
+  try { code.evaluate(chatRowValues(allRows[0] || {})); }
+  catch (e) { return { error: `that expression will not run over a case: ${e.message}` }; }
+  return {
+    id: 'expression', expr, say: `where ${expr}`,
+    predicate: { engine: 'mathjs 12.4.2, expression vetted on its parsed tree before evaluation',
+      fields: Object.fromEntries(Object.keys(CHAT_ROW_FIELDS).map(k => [k, CHAT_ROW_FIELDS[k]])) },
+    row: (r) => { const v = code.evaluate(chatRowValues(r)); return v === true || v === 1; },
+  };
 }
 
 /* "Filings per 1,000 residents" has a mechanical reading, and it is worth
@@ -12021,7 +12101,7 @@ function chatReadingFromEoql(parsed, q) {
     if (result !== undefined) log = K.appendTask(log, { kind: E.RESULT, task_id, result });
     return task_id;
   };
-  const r = { question: q, tokens: K.tokenize(q), kindDef: null, filter: null, grain: null, scope: null, move: null,
+  const r = { question: q, tokens: K.tokenize(q), kindDef: null, filter: null, filterExpr: null, grain: null, scope: null, move: null,
     intents: [], named: [], voids: [], openObligations: [], modelConsulted: null, expression: null, eoql: true, error: null };
   const moveOf = (op) => CHAT_MOVES.find(m => m.op === op) || null;
   if (parsed.error) { r.error = parsed.error; }
@@ -12042,19 +12122,36 @@ function chatReadingFromEoql(parsed, q) {
         r.move = /month|time|year/.test(String(a1).toLowerCase()) ? moveOf('REC') : moveOf('SEG');
         step({ op: r.move.op, grain: 'Pattern', basis: B.DECLARED, what: 'what to do', from: [s.text], result: r.move.say });
       } else if (['rows', 'cases', 'filings', 'where', 'filter'].includes(t0) && a1) {
-        const f = CHAT_ROSTER_FILTERS.find(x => x.id === a1.toLowerCase()) || CHAT_ROSTER_FILTERS.find(x => x.words.test(a1));
-        if (!f) { r.error = `“${a1}” names no filter — the rows can be: ${CHAT_ROSTER_FILTERS.map(x => x.id).join(', ')}`; break; }
-        r.filter = f;
-        step({ op: 'SEG', grain: 'Ground', basis: B.DECLARED, what: 'which filings to count', from: [s.text], result: f.say });
+        /* A comparison beats a name. "judgment > 5000" contains the word the
+           named judgment filter answers to, and that filter would otherwise
+           swallow it and quietly drop the "> 5000" — a filter that isn't the
+           one that was written. Written comparisons are unambiguous; the
+           named filters are for when nothing was written. */
+        const f = chatLooksLikeFilter(a1) ? null
+          : (CHAT_ROSTER_FILTERS.find(x => x.id === a1.toLowerCase()) || CHAT_ROSTER_FILTERS.find(x => x.words.test(a1)));
+        if (f) {
+          r.filter = f;
+          step({ op: 'SEG', grain: 'Ground', basis: B.DECLARED, what: 'which filings to count', from: [s.text], result: f.say });
+        } else if (chatLooksLikeFilter(a1)) {
+          // Compiled in askChat, where the math library can be awaited.
+          r.filterExpr = a1;
+          step({ op: 'SEG', grain: 'Ground', basis: B.DECLARED, what: 'which filings to count', from: [s.text], result: `where ${a1}` });
+        } else {
+          r.error = `“${a1}” names no filter — the rows can be ${CHAT_ROSTER_FILTERS.map(x => x.id).join(', ')}, `
+            + `or a formula over ${Object.keys(CHAT_ROW_FIELDS).join(', ')}`;
+          break;
+        }
       } else {
         /* No keyword in front to say which SEG this is — "SEG last 6 months"
-           left off "filed", "SEG unrepresented" left off "rows". Both are
-           common enough typed cold that guessing is worth it: try the whole
-           phrase as a filter, then as a span, before falling back to the
-           breakdown move that a bare SEG defaults to. */
-        const f = CHAT_ROSTER_FILTERS.find(x => x.id === whole.toLowerCase()) || CHAT_ROSTER_FILTERS.find(x => x.words.test(whole));
-        const sc = !f ? chatParseSpan(whole) : null;
+           left off "filed", "SEG unrepresented" left off "rows", "SEG
+           judgment > 5000" left it off too. Try the whole phrase as a named
+           filter, then as a formula, then as a span, before falling back to
+           the breakdown move that a bare SEG defaults to. */
+        const f = chatLooksLikeFilter(whole) ? null
+          : (CHAT_ROSTER_FILTERS.find(x => x.id === whole.toLowerCase()) || CHAT_ROSTER_FILTERS.find(x => x.words.test(whole)));
+        const sc = !f && !chatLooksLikeFilter(whole) ? chatParseSpan(whole) : null;
         if (f) { r.filter = f; step({ op: 'SEG', grain: 'Ground', basis: B.DECLARED, what: 'which filings to count', from: [s.text], result: f.say }); }
+        else if (chatLooksLikeFilter(whole)) { r.filterExpr = whole; step({ op: 'SEG', grain: 'Ground', basis: B.DECLARED, what: 'which filings to count', from: [s.text], result: `where ${whole}` }); }
         else if (sc) { r.scope = sc; step({ op: 'SEG', grain: 'Ground', basis: B.DECLARED, what: 'timeframe asked', from: [s.text], result: sc.says }); }
         else { r.move = moveOf('SEG'); step({ op: 'SEG', grain: 'Pattern', basis: B.DECLARED, what: 'what to do', from: [s.text], result: r.move.say }); }
       }
@@ -12141,7 +12238,8 @@ function chatEoqlOf(reading) {
   const roster = intents.includes('roster') && reading.kindDef && !best;
   if (reading.scope) steps.push(`SEG filed ${chatEoqlSpan(reading.scope)}`);
   if (roster) steps.push(`SIG ${CHAT_EOQL_PLURAL[reading.kindDef.kind]}`);
-  if (reading.filter) steps.push(`SEG rows ${reading.filter.id}`);
+  if (reading.filter) steps.push(`SEG rows ${reading.filter.id === 'expression' ? reading.filter.expr : reading.filter.id}`);
+  else if (reading.filterExpr) steps.push(`SEG rows ${reading.filterExpr}`);
   if (best) steps.push(`DEF ${best.entity.kind} ${best.entity.name}`);
   if (partner) steps.push(`CON ${partner.entity.kind} ${partner.entity.name}`);
   const g = reading.grain === 'tract' ? 'tracts' : 'districts';
@@ -12162,8 +12260,9 @@ function chatEoqlSays(reading) {
   const parts = [];
   if (reading.scope) parts.push(reading.scope.says);
   const rosterLine = reading.kindDef && (reading.intents || []).includes('roster');
-  if (rosterLine) parts.push(reading.kindDef.plural + (reading.filter ? `, ${reading.filter.say}` : ''));
-  else if (reading.filter) parts.push(`rows ${reading.filter.say}`);
+  const filterSays = reading.filter ? reading.filter.say : reading.filterExpr ? `where ${reading.filterExpr}` : null;
+  if (rosterLine) parts.push(reading.kindDef.plural + (filterSays ? `, ${filterSays}` : ''));
+  else if (filterSays) parts.push(`rows ${filterSays}`);
   for (const n of reading.named || []) parts.push(`${n.entity.name} (${CHAT_KIND_LABEL[n.entity.kind] || n.entity.kind})`);
   if (reading.grain) parts.push(`${(reading.intents || []).includes('forecast') ? 'forecast' : (reading.intents || []).includes('grouping') ? 'groups' : 'trend'} by ${reading.grain}`);
   if (reading.expression) parts.push(`compute ${reading.expression}`);
@@ -13088,6 +13187,10 @@ function chatDerive({ question, op, subject, join, dockets, refs, routed, artifa
       // The scope: the timeframe the question asked for, if it asked for
       // one, and the filing dates the figures are actually true of.
       scopeAsked: chatTurnScope ? { says: chatTurnScope.says, from: chatDate(chatTurnScope.from), to: chatDate(chatTurnScope.to), fromWords: chatTurnScope.words } : null,
+      rowsAsked: chatTurnFilter
+        ? { says: chatTurnFilter.say, id: chatTurnFilter.id, expression: chatTurnFilter.expr || null,
+            vetting: chatTurnFilter.predicate || null }
+        : null,
       timeframe: chatTimeframe(dockets),
     },
 
@@ -13167,6 +13270,7 @@ function chatExport(id, how) {
   L.push(`# corpus,${q(g.corpus.engine + '@' + g.corpus.commit)},passages,${g.corpus.passages}`);
   L.push(`# snapshot,${q(g.snapshot.key)},cases,${g.snapshot.cases},fetched,${q(g.snapshot.fetchedAt)}`);
   if (g.scopeAsked) L.push(`# timeframe_asked,${q(g.scopeAsked.says)},${q(g.scopeAsked.from || '')},${q(g.scopeAsked.to || '')}`);
+  if (g.rowsAsked) L.push(`# rows_asked,${q(g.rowsAsked.says)},${q(g.rowsAsked.expression || g.rowsAsked.id)}`);
   if (g.timeframe) L.push(`# timeframe,${q(g.timeframe.from)},${q(g.timeframe.to)},${q(g.timeframe.basis)}`
     + (g.timeframe.partialMonth ? `,still_filling,${q(g.timeframe.partialMonth)}` : ''));
   for (const p of sealed.provenance) L.push(`# source,${q(p.ref)},${q(p.resolved ? 'resolves' : 'does not resolve')}`);
@@ -13393,15 +13497,24 @@ function chatInScope(r, scope) {
   return (scope.from == null || t >= scope.from) && (scope.to == null || t <= scope.to);
 }
 
+/* Which rows this turn is about, on every axis of Ground it was given: the
+   timeframe asked, and the filter asked. Both narrow EVERYTHING that gets
+   counted — a party's card, a roster, a rate, a join — rather than only the
+   one branch that happened to read them, because a figure counted over rows
+   the question excluded is not an answer to that question. */
+let chatTurnFilter = null;
+
 function chatScopeRows(rows) {
-  return chatTurnScope ? rows.filter(r => chatInScope(r, chatTurnScope)) : rows;
+  let out = chatTurnScope ? rows.filter(r => chatInScope(r, chatTurnScope)) : rows;
+  if (chatTurnFilter) out = out.filter(chatTurnFilter.row);
+  return out;
 }
 
 /* A party's facts over this turn's timeframe — the all-time accumulator run
    over the rows in scope. Without a scope the all-time facts are returned as
    they are. Rank stays the all-time rank; the card says so. */
 function chatEntityScoped(entity) {
-  if (!chatTurnScope || !entity) return entity;
+  if ((!chatTurnScope && !chatTurnFilter) || !entity) return entity;
   const e = chatMkEntity(entity.kind, entity.name);
   for (const r of chatRowsFor(entity)) { chatNoteRow(e, r, chatParseDate(r.file_date) || null); chatNoteParty(e, r, entity.kind); }
   e.rank = entity.rank; e.of = entity.of; e.ref = entity.ref; e.nameTokens = entity.nameTokens;
@@ -13409,9 +13522,11 @@ function chatEntityScoped(entity) {
   return e;
 }
 
-// "counted from N live rows", N being the rows in this turn's timeframe.
+// "counted from N live rows", N being the rows this turn's Ground admits.
 function chatCountedFrom() {
-  return `counted from ${chatScopeRows(allRows).length.toLocaleString()} live rows${chatTurnScope ? ` filed ${chatTurnScope.says}` : ''}`;
+  return `counted from ${chatScopeRows(allRows).length.toLocaleString()} live rows`
+    + (chatTurnScope ? ` filed ${chatTurnScope.says}` : '')
+    + (chatTurnFilter ? ` ${chatTurnFilter.say}` : '');
 }
 
 function chatMoveArtifact(op, entity) {
@@ -13687,10 +13802,37 @@ async function askChat(q) {
   const reading = chatReadQuestion(q);
   chatCurrentReading = reading;
   chatTurnScope = reading.scope || null;
+  chatTurnFilter = null;
   /* A pipeline that could not be run says why, and the turn ends there. */
   if (reading.error) {
     addChatMessage('assistant', `<p>${escapeHtmlSafe(reading.error)}.</p>`);
     return;
+  }
+  /* A filter written as a formula is compiled HERE, before a single row is
+     counted: the math library has to be fetched, and a refusal has to happen
+     before any figure exists rather than after one is on screen. */
+  if (reading.filterExpr) {
+    chatSetStatus('reading the filter…', 'busy');
+    const f = await chatRowFilter(reading.filterExpr);
+    chatSetStatus(`ready — ${chatEngineModel || 'mechanical'}`, 'on');
+    if (myTurn !== chatTurn) return;
+    if (f.error) {
+      addChatMessage('assistant', `<p>${escapeHtmlSafe(f.error)}.</p>`
+        + `<p class="method-note">A case carries: `
+        + Object.entries(CHAT_ROW_FIELDS).map(([k, v]) => `<strong>${k}</strong> — ${escapeHtmlSafe(v)}`).join('; ')
+        + `.</p>`);
+      return;
+    }
+    reading.filter = f;
+    chatTurnFilter = f;
+  } else if (reading.filter && reading.eoql) {
+    /* Only a DECLARED filter narrows everything. A filter the natural reader
+       merely noticed in the wording must not: "what share of cases end in a
+       money judgment" matches the judgment filter on its own words, and
+       narrowing the whole turn by it would count 11,462 judgments out of
+       11,462 rows and answer 100%. The roster branch applies that one itself,
+       to the list it is building, which is the only place it was meant. */
+    chatTurnFilter = reading.filter;
   }
   /* The question, as the acts it was read into — under the question itself,
      where it can be pressed, edited and re-asked. */
