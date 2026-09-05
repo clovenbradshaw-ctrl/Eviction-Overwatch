@@ -739,6 +739,11 @@ tr:nth-child(even) td { background: rgba(var(--wash-rgb),0.015); }
 }
 .ll-buildings-toggle-btn:hover { background: var(--bg); color: var(--gold); border-color: var(--gold-dim); }
 
+/* Cross-fade target for the buildings <-> heat map swap -- see
+   updateLandlordsLayer(). Only these two panes animate; the highlight-ring
+   pane and everything else on the map is untouched. */
+.leaflet-llBuildingsPane-pane, .leaflet-llHeatPane-pane { transition: opacity 320ms ease; }
+
 /* ── The clip: a Premiere-style trim/scrub strip over the whole record ──
    Four date fields and a slider that did not know about each other became one
    object you can see and drag. The histogram behind the window is the point:
@@ -1758,7 +1763,10 @@ tr:nth-child(even) td { background: rgba(var(--wash-rgb),0.015); }
 #chat-view {
   display: flex; flex-direction: column;
   margin: 0 24px 24px;
-  height: calc(100vh - 240px);
+  /* Fallback for the instant before sizeChatView() measures the real chrome
+     above it (see the resize/visibility wiring near setVisibility). dvh so
+     mobile browser chrome doesn't clip the composer even in that instant. */
+  height: calc(100dvh - 240px);
   min-height: 480px;
 }
 .chat-bar {
@@ -3150,7 +3158,7 @@ function setLlLayerMode(mode) {
   llLayerMode = mode;
   document.querySelectorAll('#ll-layer-seg button').forEach(b => b.classList.toggle('on', b.dataset.val === mode));
   if (llBuildingsToggleControl?._paint) llBuildingsToggleControl._paint();
-  updateLandlordsLayer();
+  updateLandlordsLayer(true); // an explicit user swap, not a data repaint -- cross-fade it
   syncMapUrl();
 }
 let llOpenAddressKey = null;
@@ -5036,6 +5044,16 @@ async function renderMapView() {
     // before any data has loaded, rather than sitting on Leaflet's [0,0]
     // default until the fit-to-data below (robustBounds) eventually fires.
     leafletMap.setView(NASHVILLE_CENTER, NASHVILLE_ZOOM);
+    // Dedicated panes (rather than the default marker/overlay panes) so the
+    // buildings <-> heat map swap can cross-fade as one unit regardless of
+    // whether that unit is canvas (heat) or SVG markers + divIcon clusters
+    // (buildings) -- see updateLandlordsLayer(). The highlight ring gets its
+    // own pane on top of both so it keeps reading "on top of whichever
+    // eviction submode is active" instead of fading with the buildings pane
+    // it used to implicitly share.
+    leafletMap.createPane('llHeatPane').style.zIndex = 410;
+    leafletMap.createPane('llBuildingsPane').style.zIndex = 620;
+    leafletMap.createPane('llHighlightPane').style.zIndex = 630;
     L.control.zoom({ position: 'bottomleft' }).addTo(leafletMap);
     // A quick way back after panning/zooming away — same spot a reader
     // already expects controls to live, right under zoom.
@@ -6513,6 +6531,7 @@ function buildLandlordsLayers(properties, maxHeat, ctx = {}) {
   if (llHeatLayer) { leafletMap.removeLayer(llHeatLayer); llHeatLayer = null; }
   llClusterGroup = L.markerClusterGroup({
     maxClusterRadius: 50,
+    clusterPane: 'llBuildingsPane',
     iconCreateFunction: (cluster) => {
       const sum = cluster.getAllChildMarkers().reduce((a, m) => a + (m.options.heat || 0), 0);
       const tier = sum >= 25 ? 'tier-3' : sum >= 8 ? 'tier-2' : '';
@@ -6540,7 +6559,7 @@ function buildLandlordsLayers(properties, maxHeat, ctx = {}) {
       radius: signalRadiusFor(p, ctx),
       fillColor: signalColorFor(p, ctx), color: '#00000066', weight: 1,
       fillOpacity: 0.85, className: 'll-dot',
-      heat: p.heat,
+      heat: p.heat, pane: 'llBuildingsPane',
     });
     const recentStr = p.mostRecentDate ? new Date(p.mostRecentDate).toLocaleDateString() : '—';
     marker.bindTooltip(
@@ -6554,22 +6573,45 @@ function buildLandlordsLayers(properties, maxHeat, ctx = {}) {
 
   llHeatLayer = L.heatLayer(
     properties.map(p => [p.lat, p.lng, maxHeat ? p.heat / maxHeat : 0]),
-    { radius: 22, blur: 18, maxZoom: 17, gradient: { 0.2: '#8a7a3a', 0.5: '#e8a735', 0.8: '#e85d3a', 1.0: '#ff2d0a' } }
+    { radius: 22, blur: 18, maxZoom: 17, pane: 'llHeatPane', gradient: { 0.2: '#8a7a3a', 0.5: '#e8a735', 0.8: '#e85d3a', 1.0: '#ff2d0a' } }
   );
 }
 
-function updateLandlordsLayer() {
+// Fades the buildings <-> heat map swap on an explicit toggle (animate=true,
+// from setLlLayerMode) instead of a hard cut. The frequent data-only
+// repaints (time slider, half-life, play) call this too on every change
+// without asking for the animation -- re-fading on each of those would be a
+// flicker, not a transition, since the mode itself hasn't changed.
+function updateLandlordsLayer(animate = false) {
   if (!leafletMap || !llClusterGroup || !llHeatLayer) return;
-  if (llLayerMode === 'heat') {
-    if (leafletMap.hasLayer(llClusterGroup)) leafletMap.removeLayer(llClusterGroup);
-    if (!leafletMap.hasLayer(llHeatLayer)) llHeatLayer.addTo(leafletMap);
+  const showHeat = llLayerMode === 'heat';
+  const incoming = showHeat ? llHeatLayer : llClusterGroup;
+  const outgoing = showHeat ? llClusterGroup : llHeatLayer;
+  const incomingPane = leafletMap.getPane(showHeat ? 'llHeatPane' : 'llBuildingsPane');
+  const outgoingPane = leafletMap.getPane(showHeat ? 'llBuildingsPane' : 'llHeatPane');
+
+  if (animate && leafletMap.hasLayer(outgoing)) {
+    if (!leafletMap.hasLayer(incoming)) incoming.addTo(leafletMap);
+    incomingPane.style.opacity = 0;
+    incomingPane.getBoundingClientRect(); // force layout so this isn't coalesced with the opacity:1 below
+    incomingPane.style.opacity = 1;
+    outgoingPane.style.opacity = 0;
+    setTimeout(() => {
+      // Re-derive what SHOULD be outgoing right now rather than trusting the
+      // mode at the time this fade started -- a second toggle inside the
+      // 320ms window must not let this timeout evict the layer that toggle
+      // just faded back in.
+      const stillOutgoing = llLayerMode === 'heat' ? llClusterGroup : llHeatLayer;
+      if (outgoing === stillOutgoing && leafletMap.hasLayer(outgoing)) leafletMap.removeLayer(outgoing);
+    }, 320);
   } else {
-    if (leafletMap.hasLayer(llHeatLayer)) leafletMap.removeLayer(llHeatLayer);
-    if (!leafletMap.hasLayer(llClusterGroup)) llClusterGroup.addTo(leafletMap);
+    if (leafletMap.hasLayer(outgoing)) leafletMap.removeLayer(outgoing);
+    if (!leafletMap.hasLayer(incoming)) incoming.addTo(leafletMap);
+    incomingPane.style.opacity = 1;
   }
-  // The highlight ring layer rides on top of whichever eviction submode is
-  // active, since it answers a different question (which buildings are
-  // this owner's) than dots/heat do (how hot is each building right now).
+  // The highlight ring lives in its own always-opaque pane, on top of both,
+  // so it keeps reading "on top of whichever eviction submode is active"
+  // instead of fading with whichever of the two above is transitioning.
   if (llHighlightLayer && !leafletMap.hasLayer(llHighlightLayer)) llHighlightLayer.addTo(leafletMap);
 }
 
@@ -6674,7 +6716,7 @@ function rebuildLandlordHighlightLayer() {
     const marker = L.circleMarker([p.lat, p.lng], {
       radius: Math.max(12, llMarkerRadius(Math.min(p.evictionCount, 20))),
       color: '#c4a44a', weight: 3, fillColor: 'transparent', fillOpacity: 0,
-      className: 'll-highlight-ring',
+      className: 'll-highlight-ring', pane: 'llHighlightPane',
     });
     marker.bindTooltip(
       `<strong>${escapeHtml(p.addressDisplay)}</strong><br>${p.evictionCount} filing${p.evictionCount === 1 ? '' : 's'} all-time · linked to ${escapeHtml(llHighlightLabel || 'this owner')}`,
@@ -9388,6 +9430,21 @@ function escCloseLandlordProfile(e) {
 
 /* ───────────────────────── Dispatch ───────────────────────── */
 
+/* The header and tab bar above #chat-view don't have a fixed height — they
+   wrap on narrow windows and their text content varies (sync status, the
+   "updated" timestamp) — so a hardcoded `calc(100vh - Npx)` drifts out of
+   sync with the real chrome as soon as either does. Measure it instead: only
+   when the tab is actually visible, since a hidden element's own top is 0. */
+function sizeChatView() {
+  const el = document.getElementById('chat-view');
+  if (!el || el.style.display === 'none') return;
+  const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+  const top = el.getBoundingClientRect().top;
+  el.style.height = Math.max(480, vh - top - 24) + 'px';
+}
+window.addEventListener('resize', sizeChatView);
+if (window.visualViewport) window.visualViewport.addEventListener('resize', sizeChatView);
+
 function setVisibility() {
   const isCases     = viewMode === 'cases';
   const isDistricts = viewMode === 'districts';
@@ -9407,6 +9464,7 @@ function setVisibility() {
   document.getElementById('sources-view').style.display       = isSources   ? '' : 'none';
   document.getElementById('live-view').style.display          = isLive      ? '' : 'none';
   document.getElementById('chat-view').style.display          = isChat      ? '' : 'none';
+  if (isChat) sizeChatView();
   document.getElementById('timeline-district-group').style.display = isTimeline ? '' : 'none';
   document.getElementById('coverage-dir-group').style.display  = isCoverage ? '' : 'none';
   document.getElementById('map-mode-group').style.display      = isMap      ? '' : 'none';
