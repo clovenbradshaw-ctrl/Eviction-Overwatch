@@ -386,12 +386,32 @@ h1 {
   flex: 1 1 auto; background: var(--gold-dim); min-width: 1px;
 }
 .date-range-hist .bar.in-range { background: var(--gold); }
+/* The range handles must not read as data. They used to be var(--gold) -- the
+   exact fill of an in-range bar -- 8px wide and 24px tall, sitting immediately
+   after the last month in a 20px-tall chart whose tallest real bar is 18px. So
+   at the right edge the eye saw a 3px September bar followed by a 24px gold
+   block and read it as a filing spike, right where a reader is most likely to
+   be checking whether the scrape is current.
+   Now they are pale, thin, and bracket the chart from above and below, so they
+   read as boundary markers on the data rather than as part of it. */
 .drh-handle {
-  position: absolute; top: -2px; width: 8px; height: 24px; margin-left: -4px;
-  background: var(--gold); border: 1px solid var(--bg); border-radius: 2px;
-  cursor: ew-resize; box-shadow: 0 0 0 1px rgba(0,0,0,0.4);
+  position: absolute; top: -5px; width: 11px; height: 30px; margin-left: -5.5px;
+  background: transparent; border: 0; box-shadow: none;
+  cursor: ew-resize;
 }
-.drh-handle:hover, .drh-handle.dragging { background: #fff3d6; }
+.drh-handle::before {           /* stem: spans past the bars, so it brackets */
+  content: ''; position: absolute; left: 50%; top: 0; bottom: 0;
+  width: 2px; margin-left: -1px;
+  background: #f0e9d2; box-shadow: 0 0 0 1px rgba(0,0,0,0.75);
+}
+.drh-handle::after {            /* grip: a cap the pointer can find */
+  content: ''; position: absolute; left: 50%; top: -1px;
+  width: 11px; height: 6px; margin-left: -5.5px;
+  background: #f0e9d2; border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.75);
+}
+.drh-handle:hover::before, .drh-handle.dragging::before,
+.drh-handle:hover::after,  .drh-handle.dragging::after { background: #ffffff; }
 
 .table-header {
   display: flex; justify-content: space-between; align-items: center;
@@ -1769,6 +1789,17 @@ tr:nth-child(even) td { background: rgba(var(--wash-rgb),0.015); }
   height: calc(100dvh - 240px);
   min-height: 480px;
 }
+/* THE CONTROLS BELONG TO THE CASE TABLE. The chat reads every row of the
+   snapshot — never the filtered set — so on its tab the search box, the filter
+   chips, the date range, the histogram and the overview cards filter nothing
+   that is on screen. They used to be hidden only on phones ("on a desktop they
+   cost a strip"); measured, the strip was 530px of a 720px window, and the
+   conversation was left with its 480px floor and a page scroll to reach it.
+   Hidden at every width, so the window is the conversation's. */
+body.narrow-chat #local-toolbar,
+body.narrow-chat #coverage-headline,
+body.narrow-chat .stats-row-header,
+body.narrow-chat #stats-row { display: none; }
 .chat-bar {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 10px;
@@ -2168,15 +2199,8 @@ tr:nth-child(even) td { background: rgba(var(--wash-rgb),0.015); }
   input[type="text"], input:not([type]), input[type="search"], textarea { font-size: 16px; }
   select, button { font-size: 12px; }
 
-  /* THE CONTROLS BELONG TO THE CASE TABLE, so on a phone they are only shown
-     where they do something. Arriving at the chat tab used to mean scrolling
-     past a search box, five filter chips, a date range and a filings
-     histogram — all of which filter a table that is not on screen. On a
-     desktop they cost a strip; on a phone they cost the whole first screen. */
-  body.narrow-chat #local-toolbar,
-  body.narrow-chat #coverage-headline,
-  body.narrow-chat .stats-row-header,
-  body.narrow-chat #stats-row { display: none; }
+  /* The case-table controls are hidden on the chat tab at every width now —
+     see the body.narrow-chat rule beside #chat-view, above. */
 
   /* Any table wide enough to matter scrolls in its own box. */
   .table-wrap, .artifact-table-wrap, .coverage-wrap, .ra-wrap {
@@ -12010,11 +12034,28 @@ function chatSlashClose() {
   chatSlashIndex = -1;
 }
 
+/* The `/` can sit anywhere in the sentence — "how often does /mcc" — because
+   choosing a party must not end the question. It used to: a pick fired the
+   ordinary question about that party at once, so there was no way to name a
+   party AND say what to ask about it. The token is the last `/` that starts a
+   word, and everything after it is the search term. */
+function chatSlashToken(value) {
+  const m = value.match(/(^|\s)\/([^/]*)$/);
+  if (!m) return null;
+  return { start: value.length - m[0].length + m[1].length, term: m[2] };
+}
+
+/* A pick writes the name into the sentence where the `/` was and hands the
+   caret back, so the question can go on. A name left alone and sent still
+   asks the ordinary question about that party, exactly as a pick used to. */
 function chatSlashPick(name) {
   const input = document.getElementById('chat-input');
   chatSlashClose();
-  if (input) input.value = '';
-  askChat(name);
+  if (!input) { askChat(name); return; }
+  const tok = chatSlashToken(input.value);
+  input.value = (tok ? input.value.slice(0, tok.start) : '') + name + ' ';
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
 }
 
 function bindChatSlash() {
@@ -12022,8 +12063,8 @@ function bindChatSlash() {
   const box = document.getElementById('chat-slash');
   if (!input || !box) return;
   input.addEventListener('input', () => {
-    const v = input.value;
-    if (v.startsWith('/')) chatSlashRender(v.slice(1)); else chatSlashClose();
+    const tok = chatSlashToken(input.value);
+    if (tok) chatSlashRender(tok.term); else chatSlashClose();
   });
   input.addEventListener('keydown', (e) => {
     const rows = [...box.querySelectorAll('.slash-row')];
