@@ -156,7 +156,12 @@ h1 {
   color: var(--heading); letter-spacing: -0.02em;
 }
 
-.subtitle { margin-top: 4px; font-size: 11px; color: var(--muted); letter-spacing: 0.04em; }
+/* One line, not the two-line paragraph it grew into next to the title. The
+   whole string is still on the element's tooltip. */
+.subtitle {
+  margin-top: 4px; font-size: 11px; color: var(--muted); letter-spacing: 0.04em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+}
 .updated { font-size: 11px; color: var(--dim); text-align: right; }
 .bg-sync { font-size: 10px; color: var(--dim); margin-top: 4px; text-align: right; font-style: italic; }
 .bg-sync.active { color: var(--amber); }
@@ -321,6 +326,50 @@ h1 {
 .filter-row {
   display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
 }
+
+/* ── Less furniture ──────────────────────────────────────────────────────
+   The Map tab was carrying eleven stacked bands before you reached a map.
+   Three of them are answered better by something already inside the map, so
+   they come off it at every width, not just on a phone:
+     - the overview cards rank the same ground Hot Zones ranks;
+     - the filed-date histogram is a worse copy of the clip scrubber, which
+       also plays, scrubs and carries a half-life;
+     - the Buildings/Heat pair is a second copy of the button on the map,
+       and the note on that button already says this one is easy to lose in
+       a busy row and that its label collides with the Hot Zones grain
+       toggle directly beneath it.
+   The search box and the filter chips stay -- those steer the map. */
+#app[data-view="map"] .stats-row-header,
+#app[data-view="map"] #stats-row,
+#app[data-view="map"] #date-range-hist-wrap,
+#app[data-view="map"] #ll-mode-group { display: none !important; }
+
+/* Labels that only restate the control beside them: the tabs are visibly
+   views, the checkboxes are named "Census tracts" and "Evictions", and the
+   Find box says what it finds in its own placeholder. Dropping them is what
+   lets the view bar sit on one row instead of wrapping onto two.
+   :not(.ll-layer-check) matters -- each checkbox is itself wrapped in a
+   direct-child <label>, so an unqualified rule here hides the layer
+   controls along with their heading. */
+.view-bar > .group:first-child > label,
+#map-layers-group > label:not(.ll-layer-check),
+#map-search-group > label { display: none; }
+
+/* "Colour by" asked the reader to know what the three sorts mean before it
+   would tell them anything, and its own legend needed a paragraph to
+   explain the answer. Volume is the default and, by the legend's own
+   account, won every one of 17 causal cutoffs with nothing beating it --
+   so the map keeps doing that and stops asking. The control and its
+   legend are only hidden, not unwired: llSignalMode still reads 'volume'
+   and one line here brings the choice back. */
+#ll-signal-group, #ll-signal-legend { display: none !important; }
+
+/* The Code Violations chip was a block sibling of the chip row, so it fell
+   onto a line of its own -- one chip, one row. Laying the toolbar out as a
+   single wrapping row puts it back with the chips it belongs to. */
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+#search, #date-range-filter { flex: 1 1 100%; }
+#cv-filter-btn, #landlord-filter-chip, #holon-filter-chip { margin-top: 0 !important; }
 
 .filter-btn {
   padding: 4px 10px; font-size: 11px;
@@ -2272,17 +2321,6 @@ body.narrow-chat #stats-row { display: none; }
   /* Map needs a real height on a phone or it collapses to nothing. */
   #map, .map-pane { height: 60vh !important; min-height: 320px; }
 
-  /* Tapping "Map" on a phone used to land on no map at all: the view bar,
-     the case toolbar and the three overview cards stacked 887px of controls
-     above a map that starts below an 812px fold. The two things dropped
-     here are the two the Map tab already answers better inside the map --
-     Hot Zones ranks the same ground the overview cards rank, and the clip
-     scrubber does everything the filed-date histogram does and then some.
-     The search box and filter chips stay: those steer the map. */
-  #app[data-view="map"] .stats-row-header,
-  #app[data-view="map"] #stats-row,
-  #app[data-view="map"] #date-range-hist-wrap { display: none !important; }
-
   /* Hot Zones as a full-width sheet rather than a 288px card: at 375px that
      card sat on 77% of the map, and its collapse button sat *under* the
      Leaflet layer toggle, so the panel could not be got off the map at all.
@@ -2296,16 +2334,8 @@ body.narrow-chat #stats-row { display: none; }
   /* Zoom + recenter cleared the attribution strip they were sitting on. */
   .leaflet-bottom.leaflet-left { margin-bottom: 22px; }
 
-  /* The toolbar's Buildings/Heat pair is a second copy of the button sitting
-     on the map itself, which is the better of the two here: always in view,
-     no label of its own to collide with the Hot Zones grain toggle. Dropping
-     the copy takes a labelled row off the top of a phone screen. */
-  #app[data-view="map"] #ll-mode-group { display: none !important; }
-  /* Labels whose control already says the same thing in its placeholder or
-     its own options. */
-  #map-search-group > label { display: none; }
-  #map-search-group #map-search { width: 100% !important; }
   #map-search-group { flex: 1 1 100%; }
+  #map-search-group #map-search { width: 100% !important; }
 
   /* ── the chat tab ── */
   #chat-view { padding: 0 10px 10px; }
@@ -3581,7 +3611,11 @@ function updateSubtitle() {
   }
   const el = document.getElementById("subtitle");
   el.textContent = s;
-  el.title = 'Scraped = current per-case court records (one row per docket). Princeton = aggregated monthly filing totals (one row per tract-month, no dockets). Two independent counts of the same evictions — compare them, never sum them.';
+  // The line is clamped to one row in the header (it ran to a two-line
+  // paragraph beside the title), so the full count string goes in the
+  // tooltip alongside the explanation rather than being lost to the clamp.
+  el.title = s + '\n\n'
+    + 'Scraped = current per-case court records (one row per docket). Princeton = aggregated monthly filing totals (one row per tract-month, no dockets). Two independent counts of the same evictions — compare them, never sum them.';
 }
 
 /* ───────────────────────── Existing per-case stats / filters / table ───────────────────────── */
@@ -12280,12 +12314,13 @@ function chatReadingHtml(reading) {
    someone saying the filings there nearly tripled while representation stayed
    near zero. That second sentence is worth having, and a model can write it.
 
-   What it cannot do is produce a figure. Not "should not" — cannot: every
-   digit in what it writes is REMOVED before the sentence is rendered, and the
-   removal is visible, so a reader can see that the instrument took a number
-   out rather than that the model happened not to use one. The numbers are all
-   already on screen, in the table the sentence sits under, where each one has
-   an address and a working behind it.
+   What it cannot do is produce a figure. Not "should not" — cannot: a
+   sentence in which it wrote one is not shown at all (a year the table's own
+   title states is scope, not a figure, and survives). Figures reach the
+   sentence only by injection from the table it sits under, where each one
+   has an address and a working behind it; and a sentence carries at most one
+   of them, because two rows joined in one sentence is a relation the table
+   never stated (see chatSay).
 
    THE FOLD IT IS GIVEN is not the rows and not the corpus. It is the result
    that was just computed, written out in words — the same facts the reader is
@@ -12424,11 +12459,15 @@ async function chatSay(artifact, question, extra) {
     if (CHAT_RELATION_TALK.test(raw)) return null;
     const { html, removed, injected } = chatSayRender(raw, artifact);
     if (injected > 1) return null;
-    /* A figure taken out and nothing put in leaves less than a sentence.
-       Measured live: "In 2025 MDHA filed 1,614 cases" became "In MDHA filed
-       the most cases." — the year was a scope, not a figure, and with it gone
-       the words no longer say anything the table did not. */
-    if (removed && !injected) return null;
+    /* A figure taken out leaves a hole where it stood, and the hole is in the
+       grammar, not just the arithmetic. Measured live: "MDHA filed the most
+       cases in 2025 with 457 filings" rendered as "MDHA filed the most cases
+       in with a high volume of filings (457)" — the real figure attached at
+       the word "filings", the hole left at the count. A year the title states
+       is kept (it is scope, not a figure); any other figure the model wrote
+       means the sentence asked for — one with no numbers in it — was not the
+       sentence written, so none is shown. */
+    if (removed) return null;
     if (!html.replace(/<[^>]+>/g, '').trim()) return null;
     const note = injected
       ? `${injected} figure${injected > 1 ? 's' : ''} filled in from the table`
@@ -12939,6 +12978,7 @@ function chatDerive({ question, op, subject, join, dockets, refs, routed, artifa
       // The whole reasoning record, as the kernel projected it.
       reading: chatCurrentReading ? {
         question: chatCurrentReading.question,
+        eoql: chatEoqlOf(chatCurrentReading),
         steps: chatCurrentReading.tasks.map(t => ({
           act: t.cell && !t.cell.gap ? `${t.operator}·${t.grain}` : null,
           read_as: t.description, result: t.result,
@@ -13042,6 +13082,7 @@ function chatExport(id, how) {
   L.push(`# derivation,${q(sealed.id)}`);
   L.push(`# derived_at,${q(sealed.derivedAt)}`);
   L.push(`# question,${q(g.question)}`);
+  if (g.reading && g.reading.eoql) L.push(`# eoql,${q(g.reading.eoql)}`);
   L.push(`# move,${q(g.move + ' — ' + g.moveMeans)}`);
   if (g.subject) L.push(`# subject,${q(g.subject.name)},${q(g.subject.kind)},matched_on,${q(g.subject.matchedOn.join(' '))}`);
   if (g.join) L.push(`# join,${q(JSON.stringify(g.join))}`);
@@ -13518,6 +13559,16 @@ async function askChat(q) {
   const reading = chatReadQuestion(q);
   chatCurrentReading = reading;
   chatTurnScope = reading.scope || null;
+  /* A pipeline that could not be run says why, and the turn ends there. */
+  if (reading.error) {
+    addChatMessage('assistant', `<p>${escapeHtmlSafe(reading.error)}.</p>`);
+    return;
+  }
+  /* The question, as the acts it was read into — under the question itself,
+     where it can be pressed, edited and re-asked. */
+  if (userMsg) userMsg.insertAdjacentHTML('beforeend', chatEoqlChipHtml(reading));
+  const eoqlBox = document.getElementById('chat-eoql');
+  if (eoqlBox) { eoqlBox.classList.remove('open'); eoqlBox.innerHTML = ''; }
   /* SURF, ON EVERY TURN. The corpus is read for this question whatever the
      answer turns out to be, so every reply carries passages that can be opened
      — the roster, the computed measure and the forecast used to ship with no
@@ -13590,6 +13641,12 @@ async function askChat(q) {
      "what" (describe) or "for" (compare) tie it and win by coming first. */
   if (/\b(share|rate|percent|percentage|proportion)\b/i.test(q) && (!move || move.op === 'DEF' || move.op === 'CON'))
     move = CHAT_MOVES.find(m => m.op === 'EVA') || move;
+  // The pipeline shown under the question carries the move actually taken.
+  if (move && reading.move !== move) {
+    reading.move = move;
+    const chip = userMsg && userMsg.querySelector('.eoql-chip');
+    if (chip) { chip.textContent = chatEoqlOf(reading); chip.dataset.eoql = chip.textContent; }
+  }
   let routed = null;
 
   /* The model is called only for what the resolver could not read out of the
@@ -13865,6 +13922,14 @@ async function askChat(q) {
     && !asksTime && !asksShare
     && !reading.named.some(n => n.best)
     && !reading.intents.includes('ratio') && !reading.intents.includes('forecast');
+  /* When the roster stands down, the pipeline under the question must not
+     still promise one: the acts shown are the acts taken. */
+  if (!wantsRoster && reading.intents.includes('roster')) {
+    reading.intents = reading.intents.filter(i => i !== 'roster');
+    if (!reading.named.some(n => n.best)) reading.filter = null;
+    const chip = userMsg && userMsg.querySelector('.eoql-chip');
+    if (chip) { chip.textContent = chatEoqlOf(reading); chip.dataset.eoql = chip.textContent; }
+  }
   if (wantsRoster) {
     const filter = reading.filter;
     const ros = chatRosterArtifact(kindDef, filter);
@@ -13895,7 +13960,7 @@ async function askChat(q) {
       // If the question already IS an expression, it is used as written and no
       // model runs at all.
       const direct = Object.keys(CHAT_MEASURE_DEFS).some(k => q.includes(k)) && /[+\-*/]/.test(q);
-      let expr = direct ? q.trim() : chatReadPer(q);
+      let expr = reading.expression || (direct ? q.trim() : chatReadPer(q));
       let said = null;
       if (!expr && chatEngine) {
         const r = await chatEngine.chat.completions.create({
