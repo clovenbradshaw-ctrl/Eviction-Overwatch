@@ -3184,6 +3184,7 @@ function renderProvenance() {
 const SRC_SCRAPED   = 'Source: scraped court records (circuitclerk.nashville.gov).';
 const SRC_GEOCODED  = 'Source: geocoded from the case address during scrape (cases.json).';
 const SRC_DERIVED   = 'Source: derived locally from scraped cases.json fields.';
+const SRC_REP_DERIVED = 'Source: this case’s own GIS lookup returned no name (a known scraper gap); filled in from another case in the same council district, since a rep never differs within a district.';
 const SRC_PRINCETON = 'Source: Princeton Eviction Lab (Eviction Tracking System) monthly filings CSV, Nashville tract-months, evictionlab.org.';
 const SRC_MSS       = 'Source: Metro Social Services, Know Your Community 2026 (population & race/ethnicity from ACS 2023; other measures from ACS 2017–2021).';
 const SRC_TIGER     = 'Source: US Census TIGERweb tract polygons (Davidson County).';
@@ -3498,6 +3499,7 @@ function applyInitialCases(data) {
   // display layer hides them until the user unlocks.
   allRows = Object.entries(cases).map(([docket, c]) => ({ docket, ...c }));
   enrichCaseRows(allRows);
+  backfillCouncilReps(allRows);
   rebuildLocalAggregates();
   // Eager, not lazy-on-Map-tab-visit: buildPropertyIndex() is pure data
   // (groups allRows by geocoded address, no Leaflet/DOM involved), so
@@ -3585,6 +3587,7 @@ async function refetchSnapshot() {
   // Rebuild the render rows from the fresh set and repaint.
   allRows = Object.entries(cases).map(([docket, c]) => ({ docket, ...c }));
   enrichCaseRows(allRows);
+  backfillCouncilReps(allRows);
   rebuildLocalAggregates();
   llPropertyIndex = buildPropertyIndex(); // keep Top Landlords current on background refresh too
   _landlordRateIndex = null; // stale after a property-index rebuild
@@ -4429,6 +4432,9 @@ function caseRowHtml(r) {
     if (c.key === "council_district") v = shorten(v, "Council District ");
     if (c.key === "state_house_district") v = shorten(v, "State House District ");
     if (c.key === "us_congressional_district") v = shorten(v, "US Congressional District ");
+    if (c.key === "council_rep" && r.council_rep_derived) {
+      return `<td title="${escapeAttr(SRC_REP_DERIVED)}">${v}</td>`;
+    }
     return `<td>${v}</td>`;
   }).join("") + "</tr>";
 }
@@ -7298,6 +7304,32 @@ function enrichCaseRows(rows) {
     r.judgment_amount = extractJudgmentAmount(r);
     r.judgment_bucket = bucketJudgmentAmount(r.judgment_amount);
     r.tract_geoid     = tractGeoidFor(r);
+  }
+}
+
+/* The scraper looks up council_district and council_rep in the same GIS
+   call, but that call can return a district name with an empty
+   Representative field (or fail entirely on a case enriched before the rep
+   lookup existed) — and nothing ever retries it, so ~2/3 of cases carry a
+   district with no rep. A rep represents the whole district, never a single
+   case, so any case that resolved a name for a given council_district hands
+   that name to every other case sharing it. Runs once on load, mutating
+   council_rep in place so the table, dossiers, chat and exports all see it
+   without each needing to know this fallback exists. `council_rep_derived`
+   marks which rows got a name this way, for tooltips that want to say so. */
+function backfillCouncilReps(rows) {
+  const repByDistrict = {};
+  for (const r of rows) {
+    const d = normalizeDistrict(r.council_district);
+    if (d && r.council_rep && !repByDistrict[d]) repByDistrict[d] = r.council_rep;
+  }
+  for (const r of rows) {
+    if (r.council_rep || !r.council_district) continue;
+    const rep = repByDistrict[normalizeDistrict(r.council_district)];
+    if (rep) {
+      r.council_rep = rep;
+      r.council_rep_derived = true;
+    }
   }
 }
 
